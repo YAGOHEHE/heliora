@@ -1,0 +1,206 @@
+{
+  "formato": "heliora-diagrama/1",
+  "nombre": "Lazo de control con subsistema",
+  "sistema": {
+    "bloques": [
+      {
+        "id": "exp",
+        "nombre": "Exportar",
+        "params": {
+          "variable": "salida_lazo"
+        },
+        "tipo": "a_espacio",
+        "x": 800,
+        "y": 220
+      },
+      {
+        "id": "o",
+        "nombre": "Referencia y salida",
+        "params": {
+          "n": 2
+        },
+        "tipo": "osciloscopio",
+        "x": 800,
+        "y": 90
+      },
+      {
+        "id": "pi",
+        "nombre": "PI",
+        "params": {
+          "Ki": 1.0,
+          "Kp": 2.0,
+          "y_max": 5,
+          "y_min": -5
+        },
+        "tipo": "pi",
+        "x": 380,
+        "y": 90
+      },
+      {
+        "id": "planta",
+        "nombre": "Planta",
+        "params": {},
+        "sistema": {
+          "bloques": [
+            {
+              "id": "g",
+              "nombre": "Planta 1/(s²+2s+1)",
+              "params": {
+                "den": "[1, 2, 1]",
+                "num": "[1]"
+              },
+              "tipo": "funcion_transferencia",
+              "x": 200,
+              "y": 60
+            },
+            {
+              "id": "in",
+              "nombre": "u",
+              "params": {
+                "numero": 1
+              },
+              "tipo": "entrada",
+              "x": 40,
+              "y": 80
+            },
+            {
+              "id": "out",
+              "nombre": "y",
+              "params": {
+                "numero": 1
+              },
+              "tipo": "salida",
+              "x": 420,
+              "y": 80
+            }
+          ],
+          "conexiones": [
+            {
+              "a": [
+                "out",
+                "u"
+              ],
+              "de": [
+                "g",
+                "y"
+              ]
+            },
+            {
+              "a": [
+                "g",
+                "u"
+              ],
+              "de": [
+                "in",
+                "y"
+              ]
+            }
+          ]
+        },
+        "tipo": "subsistema",
+        "x": 580,
+        "y": 90
+      },
+      {
+        "id": "r",
+        "nombre": "Referencia",
+        "params": {
+          "t0": 1.0,
+          "y0": 0.0,
+          "y1": 1.0
+        },
+        "tipo": "escalon",
+        "x": 40,
+        "y": 100
+      },
+      {
+        "id": "s",
+        "nombre": "Error",
+        "params": {
+          "signos": "+-"
+        },
+        "tipo": "suma",
+        "x": 220,
+        "y": 100
+      }
+    ],
+    "conexiones": [
+      {
+        "a": [
+          "planta",
+          "in1"
+        ],
+        "de": [
+          "pi",
+          "y"
+        ]
+      },
+      {
+        "a": [
+          "exp",
+          "u"
+        ],
+        "de": [
+          "planta",
+          "out1"
+        ]
+      },
+      {
+        "a": [
+          "o",
+          "u2"
+        ],
+        "de": [
+          "planta",
+          "out1"
+        ]
+      },
+      {
+        "a": [
+          "s",
+          "u2"
+        ],
+        "de": [
+          "planta",
+          "out1"
+        ]
+      },
+      {
+        "a": [
+          "o",
+          "u1"
+        ],
+        "de": [
+          "r",
+          "y"
+        ]
+      },
+      {
+        "a": [
+          "s",
+          "u1"
+        ],
+        "de": [
+          "r",
+          "y"
+        ]
+      },
+      {
+        "a": [
+          "pi",
+          "e"
+        ],
+        "de": [
+          "s",
+          "y"
+        ]
+      }
+    ]
+  },
+  "solver": {
+    "atol": 1e-06,
+    "metodo": "dopri",
+    "rtol": 0.0001,
+    "t_fin": 12.0
+  }
+}

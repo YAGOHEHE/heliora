@@ -1,0 +1,142 @@
+{
+  "formato": "heliora-diagrama/1",
+  "nombre": "Circuito RC: respuesta al escalón",
+  "sistema": {
+    "bloques": [
+      {
+        "id": "c",
+        "nombre": "C 1 µF",
+        "params": {
+          "C": 1e-06
+        },
+        "tipo": "capacitor",
+        "x": 480,
+        "y": 120
+      },
+      {
+        "id": "o",
+        "nombre": "Tensión del condensador",
+        "params": {
+          "n": 1
+        },
+        "tipo": "osciloscopio",
+        "x": 860,
+        "y": 80
+      },
+      {
+        "id": "r",
+        "nombre": "R 1 kΩ",
+        "params": {
+          "R": 1000.0
+        },
+        "tipo": "resistor",
+        "x": 280,
+        "y": 60
+      },
+      {
+        "id": "t",
+        "nombre": "Tierra",
+        "params": {},
+        "tipo": "tierra",
+        "x": 280,
+        "y": 240
+      },
+      {
+        "id": "v",
+        "nombre": "Fuente 10 V",
+        "params": {
+          "V": 10.0
+        },
+        "tipo": "fuente_dc",
+        "x": 80,
+        "y": 80
+      },
+      {
+        "id": "vm",
+        "nombre": "v_C",
+        "params": {},
+        "tipo": "voltimetro",
+        "x": 660,
+        "y": 60
+      }
+    ],
+    "conexiones": [
+      {
+        "a": [
+          "t",
+          "t"
+        ],
+        "de": [
+          "c",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "vm",
+          "n"
+        ],
+        "de": [
+          "c",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "vm",
+          "p"
+        ],
+        "de": [
+          "c",
+          "p"
+        ]
+      },
+      {
+        "a": [
+          "c",
+          "p"
+        ],
+        "de": [
+          "r",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "t",
+          "t"
+        ],
+        "de": [
+          "v",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "r",
+          "p"
+        ],
+        "de": [
+          "v",
+          "p"
+        ]
+      },
+      {
+        "a": [
+          "o",
+          "u1"
+        ],
+        "de": [
+          "vm",
+          "v"
+        ]
+      }
+    ]
+  },
+  "solver": {
+    "atol": 1e-06,
+    "metodo": "dopri",
+    "rtol": 0.0001,
+    "t_fin": 0.005
+  }
+}

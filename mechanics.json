@@ -1,0 +1,518 @@
+{
+ "version": 1,
+ "values": [
+  {
+   "name": "tolerancia relativa por defecto",
+   "group": "solvers",
+   "value": 0.001,
+   "source": "toolbox/matlab/funfun/private/odearguments.m, línea 125"
+  },
+  {
+   "name": "tolerancia absoluta por defecto",
+   "group": "solvers",
+   "value": 1e-06,
+   "source": "toolbox/matlab/funfun/private/odearguments.m, línea 136"
+  },
+  {
+   "name": "fracción de paso máximo",
+   "group": "solvers",
+   "value": 0.1,
+   "source": "toolbox/matlab/funfun/private/odearguments.m, línea 166"
+  },
+  {
+   "name": "exponente del control de paso",
+   "group": "solvers",
+   "value": 0.2,
+   "source": "toolbox/matlab/funfun/ode45.m, línea 139"
+  },
+  {
+   "name": "factor de seguridad",
+   "group": "solvers",
+   "value": 0.8,
+   "source": "toolbox/matlab/funfun/ode45.m, línea 316"
+  },
+  {
+   "name": "reducción mínima del paso",
+   "group": "solvers",
+   "value": 0.1,
+   "source": "toolbox/matlab/funfun/ode45.m, línea 316"
+  },
+  {
+   "name": "crecimiento máximo del paso",
+   "group": "solvers",
+   "value": 5,
+   "source": "toolbox/matlab/funfun/ode45.m, línea 451"
+  },
+  {
+   "name": "orden máximo del solver rígido",
+   "group": "solvers",
+   "value": 5,
+   "source": "toolbox/matlab/funfun/ode15s.m, línea 180"
+  },
+  {
+   "name": "pesos de RK4",
+   "group": "solvers",
+   "value": "h/6·(k1 + 2k2 + 2k3 + k4)",
+   "source": "function 0x38620 (slvrODE4::takeStep) en libmwsl_solver_obsolete.dylib"
+  },
+  {
+   "name": "lista de solvers del original",
+   "group": "solvers",
+   "value": "ode1, ode14x, ode15s, ode113, ode2, ode23, ode23s, ode23t, ode23tb, ode3, ode4, ode45, ode5, ode8",
+   "source": "function 0x6720 (slvrSolverPkg::registerAllSolvers) en libmwsl_solver_obsolete.dylib"
+  },
+  {
+   "name": "CS1H-330MS Voc",
+   "group": "fotovoltaica",
+   "value": 44.2,
+   "unit": "V",
+   "source": "Parts.sqlite3, CanadianSolar CS1H330MS"
+  },
+  {
+   "name": "CS1H-330MS Isc",
+   "group": "fotovoltaica",
+   "value": 9.68,
+   "unit": "A",
+   "source": "Parts.sqlite3, CanadianSolar CS1H330MS"
+  },
+  {
+   "name": "CS1H-330MS Vmp",
+   "group": "fotovoltaica",
+   "value": 37.0,
+   "unit": "V",
+   "source": "Parts.sqlite3, CanadianSolar CS1H330MS"
+  },
+  {
+   "name": "CS1H-330MS Imp",
+   "group": "fotovoltaica",
+   "value": 8.92,
+   "unit": "A",
+   "source": "Parts.sqlite3, CanadianSolar CS1H330MS"
+  },
+  {
+   "name": "CS1H-330MS celdas",
+   "group": "fotovoltaica",
+   "value": 66,
+   "source": "Parts.sqlite3, CanadianSolar CS1H330MS, N_series"
+  },
+  {
+   "name": "AS-6M30-HC Voc",
+   "group": "fotovoltaica",
+   "value": 40.2,
+   "unit": "V",
+   "source": "Parts.sqlite3, Amerisolar AS_6M30_HC_320W"
+  },
+  {
+   "name": "AS-6M30-HC Isc",
+   "group": "fotovoltaica",
+   "value": 10.14,
+   "unit": "A",
+   "source": "Parts.sqlite3, Amerisolar AS_6M30_HC_320W"
+  },
+  {
+   "name": "AS-6M30-HC Vmp",
+   "group": "fotovoltaica",
+   "value": 33.4,
+   "unit": "V",
+   "source": "Parts.sqlite3, Amerisolar AS_6M30_HC_320W"
+  },
+  {
+   "name": "AS-6M30-HC Imp",
+   "group": "fotovoltaica",
+   "value": 9.59,
+   "unit": "A",
+   "source": "Parts.sqlite3, Amerisolar AS_6M30_HC_320W"
+  },
+  {
+   "name": "banda prohibida",
+   "group": "fotovoltaica",
+   "value": 1.121,
+   "unit": "eV",
+   "source": "modelo de De Soto, igual que pvlib; el original usa 1.12 (Parts.sqlite3, EG)"
+  },
+  {
+   "name": "coeficiente de Isc",
+   "group": "fotovoltaica",
+   "value": 0.0005,
+   "unit": "1/K",
+   "source": "Parts.sqlite3, TIPH1"
+  },
+  {
+   "name": "coeficiente de Voc de los módulos del catálogo",
+   "group": "fotovoltaica",
+   "value": -0.0029,
+   "unit": "1/K",
+   "estimated": true
+  },
+  {
+   "name": "IGBT E_on",
+   "group": "potencia",
+   "value": 139.96,
+   "unit": "mJ",
+   "source": "Parts.sqlite3, Infineon FZ600R12KE3, Eon_scalar"
+  },
+  {
+   "name": "IGBT E_off",
+   "group": "potencia",
+   "value": 174.78,
+   "unit": "mJ",
+   "source": "Parts.sqlite3, Infineon FZ600R12KE3, Eoff_scalar"
+  },
+  {
+   "name": "IGBT corriente de referencia",
+   "group": "potencia",
+   "value": 1191.06,
+   "unit": "A",
+   "source": "Parts.sqlite3, Infineon FZ600R12KE3, Iout_scalar"
+  },
+  {
+   "name": "IGBT tensión de referencia",
+   "group": "potencia",
+   "value": 600,
+   "unit": "V",
+   "source": "Parts.sqlite3, Infineon FZ600R12KE3, Voff"
+  },
+  {
+   "name": "IGBT V_ce0",
+   "group": "potencia",
+   "value": 0.8,
+   "unit": "V",
+   "source": "recta ajustada a Von_data a 125 °C, Parts.sqlite3, FZ600R12KE3"
+  },
+  {
+   "name": "IGBT R_on",
+   "group": "potencia",
+   "value": 0.002,
+   "unit": "Ω",
+   "source": "recta ajustada a Von_data a 125 °C, Parts.sqlite3, FZ600R12KE3"
+  },
+  {
+   "name": "diodo V_f",
+   "group": "potencia",
+   "value": 0.9,
+   "unit": "V",
+   "estimated": true
+  },
+  {
+   "name": "diodo R_d",
+   "group": "potencia",
+   "value": 0.002,
+   "unit": "Ω",
+   "estimated": true
+  },
+  {
+   "name": "diodo E_rr",
+   "group": "potencia",
+   "value": 42,
+   "unit": "mJ",
+   "estimated": true
+  },
+  {
+   "name": "armónicos del THD",
+   "group": "potencia",
+   "value": 50,
+   "estimated": true
+  },
+  {
+   "name": "constante de extinción en conducción discontinua",
+   "group": "potencia",
+   "value": 1e-05,
+   "unit": "s",
+   "estimated": true
+  },
+  {
+   "name": "λ de EWMA",
+   "group": "estadística",
+   "value": 0.4,
+   "source": "toolbox/stats/stats/controlchart.m, línea 93"
+  },
+  {
+   "name": "límites de control",
+   "group": "estadística",
+   "value": 3,
+   "unit": "σ",
+   "source": "toolbox/stats/stats/controlchart.m, línea 94"
+  },
+  {
+   "name": "nivel de significación",
+   "group": "estadística",
+   "value": 0.05,
+   "source": "toolbox/stats/stats/wblfit.m, línea 25"
+  },
+  {
+   "name": "árboles de Isolation Forest",
+   "group": "aprendizaje",
+   "value": 100,
+   "source": "toolbox/stats/anomaly/IsolationForest.m, línea 254"
+  },
+  {
+   "name": "puntos por árbol",
+   "group": "aprendizaje",
+   "value": 256,
+   "source": "toolbox/stats/anomaly/IsolationForest.m, línea 255"
+  },
+  {
+   "name": "coeficiente de potencia en los KPI",
+   "group": "mantenimiento",
+   "value": -0.0037,
+   "unit": "1/°C",
+   "estimated": true
+  },
+  {
+   "name": "estirar el paso hasta el tope",
+   "group": "solvers",
+   "value": 1.1,
+   "source": "toolbox/matlab/funfun/ode45.m, línea 225"
+  },
+  {
+   "name": "reducción tras el segundo rechazo",
+   "group": "solvers",
+   "value": 0.5,
+   "source": "toolbox/matlab/funfun/ode45.m, línea 316"
+  },
+  {
+   "name": "cota inferior del cociente de crecimiento",
+   "group": "solvers",
+   "value": 0.2,
+   "source": "libmwsl_solver_obsolete.dylib, slvrODE45::computeNextH 0x3a034"
+  },
+  {
+   "name": "factor de error del paso siguiente",
+   "group": "solvers",
+   "value": 1.25,
+   "source": "libmwsl_solver_obsolete.dylib, slvrODE45::computeNextH 0x3a034"
+  },
+  {
+   "name": "estado que limita el paso (se anota el de mayor error)",
+   "group": "solvers",
+   "value": 1,
+   "source": "libmwslexec_solver.dylib, ODE45::computeError 0x8385c (campos +0x240 y +0x248)"
+  },
+  {
+   "name": "ode15s: factor de error del orden k",
+   "group": "solvers",
+   "value": 1.2,
+   "source": "libmwsl_solver_obsolete.dylib, slvrODE15S::computeNextH 0x17fe8 (documentado; Heliora usa SciPy BDF)"
+  },
+  {
+   "name": "ode15s: factor del orden k-1",
+   "group": "solvers",
+   "value": 1.3,
+   "source": "libmwsl_solver_obsolete.dylib, slvrODE15S::computeNextH 0x17fe8"
+  },
+  {
+   "name": "ode15s: factor del orden k+1",
+   "group": "solvers",
+   "value": 1.4,
+   "source": "libmwsl_solver_obsolete.dylib, slvrODE15S::computeNextH 0x17fe8"
+  },
+  {
+   "name": "ode15s: reducción mínima",
+   "group": "solvers",
+   "value": 0.1,
+   "source": "libmwsl_solver_obsolete.dylib, slvrODE15S::computeNextH 0x17fe8"
+  },
+  {
+   "name": "cruces: diferencia de señal mínima para la secante",
+   "group": "cruces por cero",
+   "value": 2.842170943040401e-14,
+   "source": "libmwsl_solver_obsolete.dylib, slvrZcDetector ctor 0x514c4"
+  },
+  {
+   "name": "cruces: ancho final del intervalo",
+   "group": "cruces por cero",
+   "value": 128,
+   "unit": "eps(t)",
+   "source": "libmwsl_solver_obsolete.dylib, slvrZcDetector ctor 0x514c4"
+  },
+  {
+   "name": "cruces: iteraciones máximas de acotación",
+   "group": "cruces por cero",
+   "value": 100000,
+   "source": "libmwslexec_solver.dylib, zc::DefaultDetector ctor 0xbf970"
+  },
+  {
+   "name": "cruces: eventos seguidos máximos",
+   "group": "cruces por cero",
+   "value": 1000,
+   "source": "libmwslexec_solver.dylib, zc::DefaultDetector ctor 0xbf970"
+  },
+  {
+   "name": "cruces: tolerancia de eventos seguidos",
+   "group": "cruces por cero",
+   "value": 1280,
+   "unit": "eps(t)",
+   "source": "libmwslexec_solver.dylib, zc::DefaultDetector ctor 0xbf970"
+  },
+  {
+   "name": "cruces: corrección de Illinois (reducción del extremo retenido)",
+   "group": "cruces por cero",
+   "value": 0.5,
+   "source": "libmwsl_solver_obsolete.dylib, slvrZcClassic::bracketEvent 0x4fefc; libmwslexec_solver.dylib, zc::DefaultDetector::updateBracket 0xc185c"
+  },
+  {
+   "name": "lazos: algoritmo por defecto",
+   "group": "lazos algebraicos",
+   "value": "región de confianza",
+   "source": "simulink.slx, configSet0.json (AlgebraicLoopSolver = TrustRegion); libmwslexec_solver.dylib, ne::TrustRegion::solve 0xb0354"
+  },
+  {
+   "name": "lazos: evaluaciones máximas por incógnita",
+   "group": "lazos algebraicos",
+   "value": 200,
+   "source": "libmwslexec_solver.dylib, ne::NonLinearSolver ctor 0xad7e0"
+  },
+  {
+   "name": "lazos: radio inicial de la región",
+   "group": "lazos algebraicos",
+   "value": 100,
+   "unit": "·|z|",
+   "source": "libmwslexec_solver.dylib, ne::TrustRegion::solve 0xb0354: constante 0x4059000000000000 (100) por la norma de z en 0xb04b4-0xb04e0"
+  },
+  {
+   "name": "lazos: razón mínima para aceptar un paso",
+   "group": "lazos algebraicos",
+   "value": 0.0001,
+   "source": "libmwslexec_solver.dylib, ne::TrustRegion::solve 0xb0354: constante 0x3F1A36E2EB1C432D (1e-4) en 0xb1510-0xb1524"
+  },
+  {
+   "name": "lazos: razón para ampliar la región",
+   "group": "lazos algebraicos",
+   "value": 0.5,
+   "source": "libmwslexec_solver.dylib, ne::TrustRegion::solve 0xb0354: fmov d9, #0.5 (0xb0598), comparada con ρ en 0xb1494"
+  },
+  {
+   "name": "lazos: razón por debajo de la cual se reduce",
+   "group": "lazos algebraicos",
+   "value": 0.1,
+   "source": "libmwslexec_solver.dylib, ne::TrustRegion::solve 0xb0354: constante 0x3FB999999999999A (0.1) en x27, comparada con ρ en 0xb147c"
+  },
+  {
+   "name": "PWM: periodo",
+   "group": "modulación",
+   "value": "1/fc",
+   "unit": "s",
+   "source": "toolbox/physmod/elec/sli/sfun/sFuncPwm.mexmaca64, sub_38cc 0x38cc y sub_3980 0x3980"
+  },
+  {
+   "name": "PWM: recorte del ciclo de trabajo",
+   "group": "modulación",
+   "value": "[1/res, 1-1/res]",
+   "source": "toolbox/physmod/elec/sli/sfun/sFuncPwm.mexmaca64, sub_3980 0x3980"
+  },
+  {
+   "name": "PWM: resolución por defecto (res)",
+   "group": "modulación",
+   "value": 10000,
+   "estimated": true,
+   "source": "estimado: el valor por defecto no se encontró en el binario"
+  },
+  {
+   "name": "PWM centrado: subida",
+   "group": "modulación",
+   "value": "base + T·(1-D)/2",
+   "unit": "s",
+   "source": "toolbox/physmod/elec/sli/sfun/sFuncPwm.mexmaca64, sub_3980 0x3980 (modo 4)"
+  },
+  {
+   "name": "PWM centrado: bajada",
+   "group": "modulación",
+   "value": "base + T·(1+D)/2",
+   "unit": "s",
+   "source": "toolbox/physmod/elec/sli/sfun/sFuncPwm.mexmaca64, sub_3980 0x3980 (modo 4)"
+  },
+  {
+   "name": "PWM de flanco de bajada: bajada",
+   "group": "modulación",
+   "value": "base + T·D",
+   "unit": "s",
+   "source": "toolbox/physmod/elec/sli/sfun/sFuncPwm.mexmaca64, sub_3980 0x3980 (modo 1)"
+  },
+  {
+   "name": "PWM de flanco de subida: subida",
+   "group": "modulación",
+   "value": "base + T·(1-D)",
+   "unit": "s",
+   "source": "toolbox/physmod/elec/sli/sfun/sFuncPwm.mexmaca64, sub_3980 0x3980 (modo 2)"
+  },
+  {
+   "name": "lazos: pasos aceptados seguidos que amplían la región",
+   "group": "lazos algebraicos",
+   "value": 2,
+   "source": "libmwslexec_solver.dylib, ne::TrustRegion::solve 0xb0354: ccmp x8, #0x2 en 0xb1498 (contador en +0x330)"
+  },
+  {
+   "name": "lazos: tolerancia de predicción exacta |ρ-1|",
+   "group": "lazos algebraicos",
+   "value": 0.1,
+   "source": "libmwslexec_solver.dylib, ne::TrustRegion::solve 0xb0354: fabs(ρ - 1) comparado con 0.1 en 0xb14c0-0xb14d8"
+  },
+  {
+   "name": "lazos: factor de ampliación del radio",
+   "group": "lazos algebraicos",
+   "value": 2.0,
+   "source": "libmwslexec_solver.dylib, ne::TrustRegion::solve 0xb0354: fadd d3, d3, d3 (2·|p|) en 0xb14ac y fmov d2, #2.0 en 0xb14c8"
+  },
+  {
+   "name": "lazos: reducción del radio al rechazar",
+   "group": "lazos algebraicos",
+   "value": 0.5,
+   "source": "libmwslexec_solver.dylib, ne::TrustRegion::solve 0xb0354: fmov d2, #0.5 y fmul en 0xb14fc-0xb1508"
+  },
+  {
+   "name": "paso inicial de Dormand-Prince: factor",
+   "group": "solvers",
+   "value": 0.8,
+   "source": "libmwslexec_solver.dylib, ODE45::computeInitialStepSize 0x83a70: constante 0x3FE999999999999A"
+  },
+  {
+   "name": "paso inicial de Dormand-Prince: exponente",
+   "group": "solvers",
+   "value": 0.2,
+   "source": "libmwslexec_solver.dylib, ODE45::computeInitialStepSize 0x83a70: constante 0x3FC999999999999A en pow(rtol, 0.2)"
+  },
+  {
+   "name": "linealización: factor inicial de la perturbación (√eps)",
+   "group": "linealización",
+   "value": 1.4901161193847656e-08,
+   "source": "libmwslexec_solver.dylib, ApproximateJacobian (constructor) 0xf98: fsqrt de eps, campo +0x28"
+  },
+  {
+   "name": "linealización: factor máximo de la perturbación",
+   "group": "linealización",
+   "value": 0.1,
+   "source": "libmwslexec_solver.dylib, ApproximateJacobian (constructor) 0xf98: 0x3FB999999999999A en +0x38; usado en numjac 0xaeea8"
+  },
+  {
+   "name": "linealización: aumento del factor si el paso se anula",
+   "group": "linealización",
+   "value": 100.0,
+   "source": "libmwslexec_solver.dylib, NonLinearSparseApproximateJacobian::perturbation 0xaf664: constante 0x4059000000000000"
+  },
+  {
+   "name": "linealización: diferencias",
+   "group": "linealización",
+   "value": "centrales",
+   "source": "libmwslexec_solver.dylib, NonLinearSparseApproximateJacobian::multiVariablesCentralDiffFuncEvaluate 0xaf6d4"
+  },
+  {
+   "name": "linealización: perturbación por defecto de cada puerto",
+   "group": "linealización",
+   "value": "auto",
+   "source": "libmwsimulink.dylib, GetDefaultPerturbationForJacobian 0xb80c4c"
+  },
+  {
+   "name": "linealización: umbral de escala del paso",
+   "group": "linealización",
+   "value": 1.0,
+   "estimated": true,
+   "source": "propio: el original usa un umbral que fija quien lo llama (o el menor |x| no nulo o √eps, 0xaecd0-0xaed18); con √eps el redondeo dominaría en estados nulos"
+  },
+  {
+   "name": "linealización: entradas del Jacobiano por bloques antes de perturbar todo el modelo",
+   "group": "linealización",
+   "value": 26843545,
+   "source": "libmwsimulink.dylib, sl::jacobian::modelNeedsUseFullPerturbation 0x764fe8 (constante 0x1999999); en Heliora, límite de coeficientes del modelo lineal (linealizar.py, MAX_ENTRADAS_JACOBIANO)"
+  }
+ ]
+}

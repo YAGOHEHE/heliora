@@ -1,0 +1,16 @@
+# Rust
+/target/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Artefactos generados por el motor
+engine/ultima_validacion.json
+*.joblib
+
+# Sistema
+.DS_Store

@@ -1,0 +1,558 @@
+//! Módulo 1: consola interactiva, editor de scripts, variables y figuras.
+use crate::app::{Compartido, Variable};
+use crate::grafica::{self, Figura};
+use crate::motor::Motor;
+use crate::tema;
+use egui::text::{LayoutJob, TextFormat};
+use egui::{FontId, Key};
+use serde_json::{json, Value};
+use std::path::PathBuf;
+
+enum Linea {
+    Orden(String),
+    Salida(String),
+    Error(String),
+    Nota(String),
+}
+
+pub struct Guion {
+    pub nombre: String,
+    pub ruta: Option<PathBuf>,
+    pub texto: String,
+    pub sucio: bool,
+    pub motor: bool,
+}
+
+pub struct Calculo {
+    historia: Vec<Linea>,
+    entrada: String,
+    ordenes: Vec<String>,
+    pos_orden: Option<usize>,
+    pub guiones: Vec<Guion>,
+    pub activo: usize,
+    figuras: Vec<Figura>,
+    fig_activa: usize,
+    id_eval: Option<u64>,
+    id_ver: Option<(u64, String)>,
+    id_leer: Option<(u64, String, usize)>,
+    id_guardar: Option<u64>,
+    tabla: Option<(String, Vec<String>, Vec<Vec<String>>, usize)>,
+    enfocar: bool,
+    bajar: bool,
+    pub aviso: String,
+}
+
+const GUION_INICIAL: &str = "# Ejemplo: álgebra lineal, FFT, interpolación, optimización y gráficas.
+# Pulsa «Ejecutar» o usa la consola. Están disponibles np, pd, linalg, optimize, interpolate,
+# signal, stats, plot(), scatter(), bar(), hist(), surf(), plot3(), integrar(), cargar() y guardar().
+
+A = np.array([[4.0, 1.0], [2.0, 3.0]])
+b = np.array([1.0, 2.0])
+x = linalg.solve(A, b)
+autovalores = linalg.eigvals(A)
+print('Solución de A·x = b:', x)
+print('Autovalores:', autovalores)
+
+# FFT de una señal con armónicos
+fs = 2000.0
+t = np.arange(0, 0.2, 1 / fs)
+senal = np.sin(2 * np.pi * 50 * t) + 0.2 * np.sin(2 * np.pi * 250 * t)
+espectro = np.abs(np.fft.rfft(senal)) * 2 / t.size
+frec = np.fft.rfftfreq(t.size, 1 / fs)
+plot(frec, espectro, 'Espectro', titulo='FFT de una señal con 5.º armónico', xlabel='Hz', ylabel='Amplitud')
+
+# Interpolación y optimización
+xs = np.linspace(0, 10, 11)
+spline = interpolate.CubicSpline(xs, np.sin(xs))
+fino = np.linspace(0, 10, 300)
+plot(fino, spline(fino), 'Spline', titulo='Interpolación cúbica', xlabel='x', ylabel='y')
+scatter(xs, np.sin(xs), 'Datos', nueva=False)
+mejor = optimize.minimize_scalar(lambda v: (v - 2) ** 2 + 1)
+print('Mínimo en', mejor.x)
+
+# Superficie 3D
+X, Y = np.meshgrid(np.linspace(-3, 3, 50), np.linspace(-3, 3, 50))
+surf(X, Y, np.sin(X) * np.cos(Y), 'Superficie')
+";
+
+impl Calculo {
+    pub fn nuevo() -> Calculo {
+        Calculo {
+            historia: vec![Linea::Nota("Consola de Python con NumPy y SciPy. Escribe una expresión y pulsa Intro.".into())],
+            entrada: String::new(),
+            ordenes: vec![],
+            pos_orden: None,
+            guiones: vec![Guion { nombre: "ejemplo.py".into(), ruta: None, texto: GUION_INICIAL.into(), sucio: false, motor: false }],
+            activo: 0,
+            figuras: vec![],
+            fig_activa: 0,
+            id_eval: None,
+            id_ver: None,
+            id_leer: None,
+            id_guardar: None,
+            tabla: None,
+            enfocar: false,
+            bajar: false,
+            aviso: String::new(),
+        }
+    }
+
+    pub fn abrir_codigo(&mut self, motor: &mut Motor, ruta: String, linea: usize) {
+        if let Some(i) = self.guiones.iter().position(|g| g.ruta.as_ref().is_some_and(|r| r.display().to_string() == ruta)) {
+            self.activo = i;
+            return;
+        }
+        self.id_leer = Some((motor.llamar("leer_archivo", json!({"ruta": ruta})), ruta, linea));
+    }
+
+    pub fn recibir(&mut self, id: u64, ok: bool, v: &Value, err: &str, c: &mut Compartido) -> bool {
+        if Some(id) == self.id_eval {
+            self.id_eval = None;
+            if ok {
+                let s = v["salida"].as_str().unwrap_or("");
+                if !s.is_empty() {
+                    self.historia.push(Linea::Salida(s.trim_end().to_string()));
+                }
+                if let Some(r) = v["resultado"].as_str() {
+                    self.historia.push(Linea::Salida(r.to_string()));
+                }
+                if let Some(e) = v["error"].as_str() {
+                    self.historia.push(Linea::Error(e.to_string()));
+                }
+                if let Some(f) = v["figuras"].as_array() {
+                    if !f.is_empty() {
+                        for g in f {
+                            self.figuras.push(Figura::desde_json(g));
+                        }
+                        self.fig_activa = self.figuras.len() - 1;
+                    }
+                }
+                c.fijar_variables(&v["variables"]);
+            } else {
+                self.historia.push(Linea::Error(err.to_string()));
+            }
+            self.bajar = true;
+            return true;
+        }
+        if self.id_ver.as_ref().is_some_and(|a| a.0 == id) {
+            let nombre = self.id_ver.take().unwrap().1;
+            if ok {
+                let col = v["columnas"].as_array().map(|c| c.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+                let fil = v["filas"].as_array().map(|f| f.iter().map(|r| r.as_array().map(|c| c.iter().map(|x| x.as_str().unwrap_or("").to_string()).collect()).unwrap_or_default()).collect()).unwrap_or_default();
+                self.tabla = Some((nombre, col, fil, v["total"].as_u64().unwrap_or(0) as usize));
+            }
+            return true;
+        }
+        if self.id_leer.as_ref().is_some_and(|a| a.0 == id) {
+            let (_, ruta, linea) = self.id_leer.take().unwrap();
+            if ok {
+                let texto = v.as_str().unwrap_or("").to_string();
+                let p = PathBuf::from(&ruta);
+                let nombre = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                self.guiones.push(Guion { nombre, ruta: Some(p), texto, sucio: false, motor: true });
+                self.activo = self.guiones.len() - 1;
+                self.aviso = format!("Código de la librería abierto (la clase del bloque empieza en la línea {linea}). Al guardar, el motor recarga los bloques.");
+            } else {
+                self.aviso = err.to_string();
+            }
+            return true;
+        }
+        if Some(id) == self.id_guardar {
+            self.id_guardar = None;
+            self.aviso = if ok { "Guardado y recargado.".to_string() } else { format!("Error: {err}") };
+            return true;
+        }
+        false
+    }
+
+    fn enviar(&mut self, motor: &mut Motor) {
+        let t = self.entrada.trim().to_string();
+        if t.is_empty() || self.id_eval.is_some() {
+            return;
+        }
+        self.historia.push(Linea::Orden(t.clone()));
+        self.ordenes.push(t.clone());
+        self.pos_orden = None;
+        self.entrada.clear();
+        self.id_eval = Some(motor.llamar("evaluar", json!({"codigo": t})));
+        self.bajar = true;
+    }
+
+    pub fn correr_guion(&mut self, motor: &mut Motor) {
+        if let Some(g) = self.guiones.get(self.activo) {
+            self.historia.push(Linea::Nota(format!("» ejecutando {}", g.nombre)));
+            self.id_eval = Some(motor.llamar("ejecutar_script", json!({"codigo": g.texto})));
+            self.bajar = true;
+        }
+    }
+
+    pub fn ui(&mut self, ui: &mut egui::Ui, motor: &mut Motor, c: &mut Compartido) {
+        egui::SidePanel::right("derecha_calc").default_width(ui.available_width() * 0.46).width_range(320.0..=1100.0).frame(tema::marco_panel()).show_inside(ui, |ui| {
+            egui::TopBottomPanel::top("vars").resizable(true).default_height(210.0).height_range(90.0..=500.0).frame(egui::Frame::new()).show_inside(ui, |ui| self.variables(ui, motor, c));
+            egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 8))).show_inside(ui, |ui| self.panel_figuras(ui, c));
+        });
+        egui::CentralPanel::default().frame(tema::marco_panel()).show_inside(ui, |ui| {
+            egui::TopBottomPanel::top("guion").resizable(true).default_height(ui.available_height() * 0.54).height_range(120.0..=ui.available_height() - 120.0).frame(egui::Frame::new()).show_inside(ui, |ui| self.editor(ui, motor));
+            egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 6))).show_inside(ui, |ui| self.consola(ui, motor));
+        });
+        self.ventana_tabla(ui.ctx());
+    }
+
+    fn editor(&mut self, ui: &mut egui::Ui, motor: &mut Motor) {
+        ui.horizontal_wrapped(|ui| {
+            tema::titulo(ui, "Scripts");
+            let mut cerrar = None;
+            for i in 0..self.guiones.len() {
+                let t = format!("{}{}", self.guiones[i].nombre, if self.guiones[i].sucio { " •" } else { "" });
+                if ui.selectable_label(self.activo == i, t).clicked() {
+                    self.activo = i;
+                }
+                if self.activo == i && self.guiones.len() > 1 && ui.small_button("×").clicked() {
+                    cerrar = Some(i);
+                }
+            }
+            if let Some(i) = cerrar {
+                self.guiones.remove(i);
+                self.activo = self.activo.min(self.guiones.len() - 1);
+            }
+            if ui.small_button("+").on_hover_text("Nuevo script").clicked() {
+                self.guiones.push(Guion { nombre: format!("script{}.py", self.guiones.len() + 1), ruta: None, texto: String::new(), sucio: false, motor: false });
+                self.activo = self.guiones.len() - 1;
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if tema::boton_principal(ui, "▶ Ejecutar").clicked() {
+                    self.correr_guion(motor);
+                }
+                if ui.button("Guardar").clicked() {
+                    self.guardar_guion(motor);
+                }
+                if ui.button("Abrir").clicked() {
+                    if let Some(r) = rfd::FileDialog::new().add_filter("Python", &["py"]).pick_file() {
+                        if let Ok(t) = std::fs::read_to_string(&r) {
+                            let nombre = r.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                            self.guiones.push(Guion { nombre, ruta: Some(r), texto: t, sucio: false, motor: false });
+                            self.activo = self.guiones.len() - 1;
+                        }
+                    }
+                }
+            });
+        });
+        if !self.aviso.is_empty() {
+            ui.label(egui::RichText::new(&self.aviso).small().color(tema::p().texto));
+        }
+        let activo = self.activo.min(self.guiones.len().saturating_sub(1));
+        egui::Frame::new().fill(tema::p().fondo).corner_radius(6).inner_margin(6).show(ui, |ui| {
+            egui::ScrollArea::both().id_salt("scroll_guion").auto_shrink([false, false]).show(ui, |ui| {
+                let Some(g) = self.guiones.get_mut(activo) else { return };
+                let lineas = g.texto.split('\n').count().max(1);
+                let numeros: String = (1..=lineas).map(|i| format!("{i:>4}")).collect::<Vec<_>>().join("\n");
+                let mut lay = |ui: &egui::Ui, b: &dyn egui::TextBuffer, _ancho: f32| {
+                    let j = resaltar(b.as_str());
+                    ui.fonts_mut(|f| f.layout_job(j))
+                };
+                ui.horizontal_top(|ui| {
+                    ui.label(egui::RichText::new(numeros).monospace().color(tema::p().texto_3));
+                    let r = ui.add(egui::TextEdit::multiline(&mut g.texto).code_editor().frame(false).desired_width(f32::INFINITY).desired_rows(12).layouter(&mut lay));
+                    if r.changed() {
+                        g.sucio = true;
+                    }
+                });
+            });
+        });
+    }
+
+    fn guardar_guion(&mut self, motor: &mut Motor) {
+        let Some(g) = self.guiones.get_mut(self.activo) else { return };
+        if g.ruta.is_none() {
+            g.ruta = rfd::FileDialog::new().add_filter("Python", &["py"]).set_file_name(&g.nombre).save_file();
+            if let Some(r) = &g.ruta {
+                g.nombre = r.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            }
+        }
+        if let Some(r) = &g.ruta {
+            if g.motor {
+                motor.llamar("escribir_archivo", json!({"ruta": r.display().to_string(), "texto": g.texto}));
+                self.id_guardar = Some(motor.llamar("recargar_librerias", json!({})));
+                g.sucio = false;
+            } else if std::fs::write(r, &g.texto).is_ok() {
+                g.sucio = false;
+                self.aviso = format!("Guardado en {}", r.display());
+            }
+        }
+    }
+
+    fn consola(&mut self, ui: &mut egui::Ui, motor: &mut Motor) {
+        ui.horizontal(|ui| {
+            tema::titulo(ui, "Consola");
+            if self.id_eval.is_some() {
+                ui.spinner();
+                if ui.small_button("Detener").clicked() {
+                    motor.llamar("cancelar", json!({}));
+                }
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("Limpiar").clicked() {
+                    self.historia.clear();
+                }
+            });
+        });
+        let alto = (ui.available_height() - 44.0).max(50.0);
+        egui::Frame::new().fill(tema::p().fondo).corner_radius(6).inner_margin(8).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            egui::ScrollArea::vertical().id_salt("scroll_consola").max_height(alto).auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
+                for l in &self.historia {
+                    match l {
+                        Linea::Orden(t) => {
+                            ui.label(egui::RichText::new(format!("» {t}")).monospace().color(tema::p().texto));
+                        }
+                        Linea::Salida(t) => {
+                            ui.label(egui::RichText::new(t).monospace());
+                        }
+                        Linea::Error(t) => {
+                            ui.label(egui::RichText::new(t).monospace().color(tema::p().falla));
+                        }
+                        Linea::Nota(t) => {
+                            ui.label(egui::RichText::new(t).color(tema::p().texto_2));
+                        }
+                    }
+                }
+                if self.bajar {
+                    ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
+                    self.bajar = false;
+                }
+            });
+        });
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("»").monospace().color(tema::p().acento));
+            let r = ui.add(
+                egui::TextEdit::multiline(&mut self.entrada)
+                    .code_editor()
+                    .desired_rows(1)
+                    .desired_width(ui.available_width() - 6.0)
+                    .hint_text("Escribe aquí: A = np.eye(3)")
+                    .return_key(Some(egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, Key::Enter))),
+            );
+            if self.enfocar {
+                r.request_focus();
+                self.enfocar = false;
+            }
+            if r.has_focus() {
+                let (enter, arriba, abajo) = ui.input(|i| (i.key_pressed(Key::Enter) && !i.modifiers.shift, i.key_pressed(Key::ArrowUp), i.key_pressed(Key::ArrowDown)));
+                if enter {
+                    self.enviar(motor);
+                    self.enfocar = true;
+                }
+                if arriba && !self.entrada.contains('\n') && !self.ordenes.is_empty() {
+                    let p = self.pos_orden.map(|x| x.saturating_sub(1)).unwrap_or(self.ordenes.len() - 1);
+                    self.pos_orden = Some(p);
+                    self.entrada = self.ordenes[p].clone();
+                }
+                if abajo && !self.entrada.contains('\n') {
+                    if let Some(p) = self.pos_orden {
+                        if p + 1 < self.ordenes.len() {
+                            self.pos_orden = Some(p + 1);
+                            self.entrada = self.ordenes[p + 1].clone();
+                        } else {
+                            self.pos_orden = None;
+                            self.entrada.clear();
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    fn variables(&mut self, ui: &mut egui::Ui, motor: &mut Motor, c: &mut Compartido) {
+        ui.horizontal(|ui| {
+            tema::titulo(ui, "Espacio de trabajo");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("Borrar todo").clicked() {
+                    motor.llamar("limpiar_espacio", json!({}));
+                    c.variables.clear();
+                }
+                if ui.small_button("Importar datos").on_hover_text("CSV o Parquet").clicked() {
+                    if let Some(r) = rfd::FileDialog::new().add_filter("Datos", &["csv", "parquet"]).pick_file() {
+                        let nombre: String = r.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "datos".into()).chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
+                        c.id_vars = Some(motor.llamar("importar_datos", json!({"ruta": r.display().to_string(), "nombre": nombre})));
+                    }
+                }
+            });
+        });
+        let vars: Vec<Variable> = c.variables.clone();
+        egui::ScrollArea::vertical().id_salt("scroll_vars").auto_shrink([false, false]).show(ui, |ui| {
+            if vars.is_empty() {
+                ui.label(egui::RichText::new("Aún no hay variables. Ejecuta el script de ejemplo o escribe en la consola.").color(tema::p().texto_2));
+            }
+            egui::Grid::new("g_vars").num_columns(5).striped(true).spacing([10.0, 3.0]).show(ui, |ui| {
+                if !vars.is_empty() {
+                    for t in ["Nombre", "Tipo", "Tamaño", "Contenido", ""] {
+                        ui.label(egui::RichText::new(t).small().color(tema::p().texto_2));
+                    }
+                    ui.end_row();
+                }
+                for v in &vars {
+                    if ui.link(egui::RichText::new(&v.nombre).monospace()).on_hover_text("Ver contenido").clicked() {
+                        self.id_ver = Some((motor.llamar("ver_variable", json!({"nombre": v.nombre})), v.nombre.clone()));
+                    }
+                    ui.label(egui::RichText::new(&v.tipo).small().color(tema::p().texto_2));
+                    ui.label(egui::RichText::new(&v.forma).small());
+                    let corto: String = v.resumen.chars().take(26).collect();
+                    ui.label(egui::RichText::new(corto).small().color(tema::p().texto_2));
+                    ui.horizontal(|ui| {
+                        if ui.small_button("Exportar").on_hover_text("Guardar en CSV o Parquet").clicked() {
+                            if let Some(r) = rfd::FileDialog::new().add_filter("CSV", &["csv"]).add_filter("Parquet", &["parquet"]).set_file_name(format!("{}.csv", v.nombre)).save_file() {
+                                motor.llamar("guardar_variable", json!({"nombre": v.nombre, "ruta": r.display().to_string()}));
+                            }
+                        }
+                        if ui.small_button("×").clicked() {
+                            c.id_vars = Some(motor.llamar("borrar_variable", json!({"nombre": v.nombre})));
+                        }
+                    });
+                    ui.end_row();
+                }
+            });
+        });
+    }
+
+    fn panel_figuras(&mut self, ui: &mut egui::Ui, c: &mut Compartido) {
+        ui.horizontal_wrapped(|ui| {
+            tema::titulo(ui, "Figuras");
+            let mut quitar = None;
+            for i in 0..self.figuras.len() {
+                let t = self.figuras[i].titulo();
+                let nombre = if t.is_empty() { format!("Figura {}", i + 1) } else { t.chars().take(22).collect() };
+                if ui.selectable_label(self.fig_activa == i, nombre).clicked() {
+                    self.fig_activa = i;
+                }
+                if self.fig_activa == i && ui.small_button("×").clicked() {
+                    quitar = Some(i);
+                }
+            }
+            if let Some(i) = quitar {
+                self.figuras.remove(i);
+                self.fig_activa = self.fig_activa.saturating_sub(1);
+            }
+        });
+        let alto = (ui.available_height() - 30.0).max(120.0);
+        let i = self.fig_activa;
+        if let Some(f) = self.figuras.get_mut(i) {
+            if let Some(a) = grafica::mostrar(ui, f, egui::Id::new(("fig", i)), alto) {
+                c.exportar(ui.ctx(), a, f);
+            }
+        } else {
+            ui.add_space(30.0);
+            ui.vertical_centered(|ui| {
+                ui.label(egui::RichText::new("Las gráficas aparecerán aquí: prueba plot(x, y) o surf(X, Y, Z).").color(tema::p().texto_2));
+            });
+        }
+    }
+
+    fn ventana_tabla(&mut self, ctx: &egui::Context) {
+        let mut abierta = self.tabla.is_some();
+        let mut titulo = String::new();
+        if let Some((n, _, _, t)) = &self.tabla {
+            titulo = format!("{n} ({t} filas)");
+        }
+        egui::Window::new(titulo).id(egui::Id::new("tabla_var")).open(&mut abierta).default_size([640.0, 420.0]).show(ctx, |ui| {
+            if let Some((_, col, fil, _)) = &self.tabla {
+                egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+                    egui::Grid::new("g_tabla").striped(true).num_columns(col.len()).show(ui, |ui| {
+                        for c in col {
+                            ui.label(egui::RichText::new(c).strong().color(tema::p().texto));
+                        }
+                        ui.end_row();
+                        for f in fil {
+                            for x in f {
+                                ui.label(egui::RichText::new(x).monospace());
+                            }
+                            ui.end_row();
+                        }
+                    });
+                });
+            }
+        });
+        if !abierta {
+            self.tabla = None;
+        }
+    }
+}
+
+/// Resaltado sencillo de sintaxis de Python.
+pub fn resaltar(texto: &str) -> LayoutJob {
+    const CLAVES: [&str; 30] = ["def", "class", "return", "if", "else", "elif", "for", "while", "in", "import", "from", "as", "with", "try", "except", "finally", "raise", "lambda", "not", "and", "or", "is", "None", "True", "False", "pass", "break", "continue", "yield", "self"];
+    let f = FontId::monospace(13.5);
+    let mut j = LayoutJob::default();
+    let normal = TextFormat { font_id: f.clone(), color: tema::p().texto, ..Default::default() };
+    let clave = TextFormat { font_id: f.clone(), color: tema::p().series[2], ..Default::default() };
+    let cadena = TextFormat { font_id: f.clone(), color: tema::p().series[2], ..Default::default() };
+    let coment = TextFormat { font_id: f.clone(), color: tema::p().texto_3, ..Default::default() };
+    let numero = TextFormat { font_id: f.clone(), color: tema::p().series[1], ..Default::default() };
+    let func = TextFormat { font_id: f.clone(), color: tema::p().acento_2, ..Default::default() };
+    let c: Vec<(usize, char)> = texto.char_indices().collect();
+    let fin_de = |k: usize| if k < c.len() { c[k].0 } else { texto.len() };
+    let mut i = 0;
+    while i < c.len() {
+        let ch = c[i].1;
+        let ini = c[i].0;
+        if ch == '#' {
+            let mut k = i;
+            while k < c.len() && c[k].1 != '\n' {
+                k += 1;
+            }
+            j.append(&texto[ini..fin_de(k)], 0.0, coment.clone());
+            i = k;
+        } else if ch == '"' || ch == '\'' {
+            let triple = i + 2 < c.len() && c[i + 1].1 == ch && c[i + 2].1 == ch;
+            let mut k = i + if triple { 3 } else { 1 };
+            while k < c.len() {
+                if c[k].1 == '\\' {
+                    k += 2;
+                    continue;
+                }
+                if triple {
+                    if k + 2 < c.len() && c[k].1 == ch && c[k + 1].1 == ch && c[k + 2].1 == ch {
+                        k += 3;
+                        break;
+                    }
+                } else if c[k].1 == ch || c[k].1 == '\n' {
+                    k += 1;
+                    break;
+                }
+                k += 1;
+            }
+            let k = k.min(c.len());
+            j.append(&texto[ini..fin_de(k)], 0.0, cadena.clone());
+            i = k;
+        } else if ch.is_ascii_digit() {
+            let mut k = i;
+            while k < c.len() && (c[k].1.is_ascii_alphanumeric() || c[k].1 == '.') {
+                k += 1;
+            }
+            j.append(&texto[ini..fin_de(k)], 0.0, numero.clone());
+            i = k;
+        } else if ch.is_alphabetic() || ch == '_' {
+            let mut k = i;
+            while k < c.len() && (c[k].1.is_alphanumeric() || c[k].1 == '_') {
+                k += 1;
+            }
+            let pal = &texto[ini..fin_de(k)];
+            let fmt = if CLAVES.contains(&pal) {
+                clave.clone()
+            } else if k < c.len() && c[k].1 == '(' {
+                func.clone()
+            } else {
+                normal.clone()
+            };
+            j.append(pal, 0.0, fmt);
+            i = k;
+        } else {
+            let mut k = i + 1;
+            while k < c.len() && !(c[k].1.is_alphanumeric() || matches!(c[k].1, '_' | '#' | '"' | '\'')) {
+                k += 1;
+            }
+            j.append(&texto[ini..fin_de(k)], 0.0, normal.clone());
+            i = k;
+        }
+    }
+    j
+}

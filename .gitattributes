@@ -1,0 +1,14 @@
+# Heliora: diagramas y código como texto con fin de línea LF, para diffs limpios
+*.json      text eol=lf diff
+*.py        text eol=lf diff=python
+*.rs        text eol=lf diff=rust
+*.md        text eol=lf
+*.toml      text eol=lf
+*.csv       text eol=lf
+*.yml       text eol=lf
+# Binarios: nunca se mezclan ni se convierten
+*.parquet   binary
+*.png       binary
+*.pdf       binary
+*.ttf       binary
+*.joblib    binary

@@ -1,0 +1,252 @@
+{
+  "formato": "heliora-diagrama/1",
+  "nombre": "Sombreado parcial con MPPT",
+  "sistema": {
+    "bloques": [
+      {
+        "id": "G",
+        "nombre": "Irradiancia",
+        "params": {
+          "c": 1000.0
+        },
+        "tipo": "constante",
+        "x": 40,
+        "y": 40
+      },
+      {
+        "id": "T",
+        "nombre": "Temperatura de celda",
+        "params": {
+          "c": 35.0
+        },
+        "tipo": "constante",
+        "x": 40,
+        "y": 130
+      },
+      {
+        "id": "boost",
+        "nombre": "Boost",
+        "params": {
+          "L": 0.001,
+          "R": 0.01,
+          "i0": 150.0
+        },
+        "tipo": "boost_prom",
+        "x": 500,
+        "y": 70
+      },
+      {
+        "id": "bus",
+        "nombre": "Bus de 750 V",
+        "params": {
+          "V": 750.0
+        },
+        "tipo": "fuente_dc",
+        "x": 680,
+        "y": 90
+      },
+      {
+        "id": "cpv",
+        "nombre": "C entrada",
+        "params": {
+          "C": 0.002,
+          "v0": 420.0
+        },
+        "tipo": "capacitor",
+        "x": 380,
+        "y": 170
+      },
+      {
+        "id": "mppt",
+        "nombre": "MPPT",
+        "params": {
+          "Ts": 0.005,
+          "d0": 0.45,
+          "dd": 0.002
+        },
+        "tipo": "mppt",
+        "x": 380,
+        "y": 300
+      },
+      {
+        "id": "o",
+        "nombre": "Potencia y tensión",
+        "params": {
+          "cada": 5,
+          "n": 2
+        },
+        "tipo": "osciloscopio",
+        "x": 700,
+        "y": 300
+      },
+      {
+        "id": "pv",
+        "nombre": "Arreglo con sombra",
+        "params": {
+          "Np": 20,
+          "Ns": 12,
+          "n_sombra": 8,
+          "sombra": "[1]*24 + [0.4]*12"
+        },
+        "tipo": "arreglo_fv_sombra",
+        "x": 200,
+        "y": 70
+      },
+      {
+        "id": "tierra",
+        "nombre": "Tierra",
+        "params": {},
+        "tipo": "tierra",
+        "x": 500,
+        "y": 240
+      }
+    ],
+    "conexiones": [
+      {
+        "a": [
+          "pv",
+          "G"
+        ],
+        "de": [
+          "G",
+          "y"
+        ]
+      },
+      {
+        "a": [
+          "pv",
+          "T"
+        ],
+        "de": [
+          "T",
+          "y"
+        ]
+      },
+      {
+        "a": [
+          "tierra",
+          "t"
+        ],
+        "de": [
+          "boost",
+          "com"
+        ]
+      },
+      {
+        "a": [
+          "mppt",
+          "i"
+        ],
+        "de": [
+          "boost",
+          "i_L"
+        ]
+      },
+      {
+        "a": [
+          "bus",
+          "p"
+        ],
+        "de": [
+          "boost",
+          "out"
+        ]
+      },
+      {
+        "a": [
+          "tierra",
+          "t"
+        ],
+        "de": [
+          "bus",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "tierra",
+          "t"
+        ],
+        "de": [
+          "cpv",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "boost",
+          "in"
+        ],
+        "de": [
+          "cpv",
+          "p"
+        ]
+      },
+      {
+        "a": [
+          "boost",
+          "d"
+        ],
+        "de": [
+          "mppt",
+          "d"
+        ]
+      },
+      {
+        "a": [
+          "tierra",
+          "t"
+        ],
+        "de": [
+          "pv",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "cpv",
+          "p"
+        ],
+        "de": [
+          "pv",
+          "p"
+        ]
+      },
+      {
+        "a": [
+          "o",
+          "u1"
+        ],
+        "de": [
+          "pv",
+          "pot"
+        ]
+      },
+      {
+        "a": [
+          "mppt",
+          "v"
+        ],
+        "de": [
+          "pv",
+          "v"
+        ]
+      },
+      {
+        "a": [
+          "o",
+          "u2"
+        ],
+        "de": [
+          "pv",
+          "v"
+        ]
+      }
+    ]
+  },
+  "solver": {
+    "metodo": "rk4",
+    "paso": 2e-05,
+    "t_fin": 0.6
+  }
+}

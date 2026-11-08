@@ -1,0 +1,26 @@
+name: Comprobación
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  motor-y-ventana:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Entorno del motor
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -q -r engine/requirements.txt
+      - name: Validación por fases
+        working-directory: engine
+        run: ../.venv/bin/python -W ignore validar_todo.py
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compilar sin avisos
+        run: RUSTFLAGS="-D warnings" cargo build
+      - name: Pruebas de la ventana y del puente con el motor
+        run: cargo test
