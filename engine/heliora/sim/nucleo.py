@@ -90,33 +90,51 @@ _UNARIOS = {ast.UAdd: operator.pos, ast.USub: operator.neg, ast.Not: operator.no
 _COMPARADORES = {ast.Eq: operator.eq, ast.NotEq: operator.ne, ast.Lt: operator.lt, ast.LtE: operator.le,
                  ast.Gt: operator.gt, ast.GtE: operator.ge, ast.In: lambda a, b: a in b, ast.NotIn: lambda a, b: a not in b}
 
-# Atributos que dan acceso a ficheros, a la evaluación de texto o a otros módulos del sistema.
-_ATRIBUTOS_DENEGADOS = frozenset({
-    "load", "loads", "save", "savez", "savez_compressed", "savetxt", "loadtxt", "genfromtxt", "fromfile", "tofile",
-    "memmap", "fromregex", "dump", "dumps", "ctypeslib", "testing", "f2py", "distutils", "eval", "query", "io",
-    "loadmat", "savemat", "DataSource", "show_config", "source", "lookfor"})
-_MODULOS_PERMITIDOS = ("numpy", "scipy", "math")
+# Lista blanca: una expresión de parámetro es matemática sobre datos. Solo se alcanzan estas
+# funciones de NumPy y estos atributos de matrices y tablas; cualquier otro acceso (ficheros,
+# módulos, métodos que reciben el nombre de otro método como texto) queda fuera por construcción.
+_NUMPY_PERMITIDO = frozenset({
+    "pi", "e", "inf", "nan", "sqrt", "cbrt", "exp", "expm1", "log", "log10", "log2", "log1p", "sin", "cos", "tan",
+    "arcsin", "arccos", "arctan", "arctan2", "sinh", "cosh", "tanh", "arcsinh", "arccosh", "arctanh", "hypot",
+    "deg2rad", "rad2deg", "radians", "degrees", "abs", "absolute", "sign", "floor", "ceil", "round", "trunc",
+    "power", "maximum", "minimum", "clip", "sum", "prod", "mean", "median", "std", "var", "max", "min", "cumsum",
+    "cumprod", "diff", "interp", "array", "asarray", "linspace", "logspace", "arange", "zeros", "ones", "full",
+    "eye", "diag", "dot", "outer", "cross", "concatenate", "stack", "hstack", "vstack", "reshape", "transpose",
+    "real", "imag", "conj", "angle", "float64", "int64", "complex128", "isfinite", "where"})
+_ATRIBUTOS_DATOS = frozenset({
+    "T", "real", "imag", "shape", "size", "ndim", "sum", "prod", "mean", "std", "var", "min", "max", "cumsum",
+    "flatten", "ravel", "reshape", "transpose", "conj", "item", "values", "to_numpy", "iloc", "loc", "columns"})
 _EXPONENTE_MAX = 10_000
+_ELEMENTOS_MAX = 1_000_000
+
+
+def _es_dato(v):
+    """Valor de datos que una expresión puede leer: número, matriz, lista o tabla, nunca código."""
+    if isinstance(v, (bool, int, float, complex, np.number, np.ndarray, list, tuple)):
+        return True
+    return type(v).__module__.partition(".")[0] == "pandas" and type(v).__name__ in ("DataFrame", "Series")
 
 
 def _atributo_seguro(objeto, nombre):
-    """Lee `objeto.nombre` si el acceso está permitido; en otro caso lanza `ValueError`."""
-    prohibido = nombre.startswith("_") or nombre in _ATRIBUTOS_DENEGADOS
-    if prohibido or (nombre.startswith(("read_", "to_")) and nombre != "to_numpy"):
+    """Lee `objeto.nombre` si está en la lista blanca; en otro caso lanza `ValueError`."""
+    if objeto is np:
+        if nombre not in _NUMPY_PERMITIDO:
+            raise ValueError(f"«np.{nombre}» no está permitido en una expresión")
+        return getattr(np, nombre)
+    es_indexador = type(objeto).__name__ in ("_iLocIndexer", "_LocIndexer")
+    if es_indexador or not _es_dato(objeto) or nombre not in _ATRIBUTOS_DATOS:
         raise ValueError(f"el atributo «{nombre}» no está permitido en una expresión")
-    valor = getattr(objeto, nombre)
-    if isinstance(valor, types.ModuleType) and valor.__name__.partition(".")[0] not in _MODULOS_PERMITIDOS:
-        raise ValueError(f"el módulo «{nombre}» no está permitido en una expresión")
-    return valor
+    return getattr(objeto, nombre)
 
 
 class _Evaluador:
     """Evalúa una expresión de Python recorriendo su AST con una lista blanca de nodos.
 
-    Admite literales, nombres del espacio, operadores, comparaciones, subíndices, listas, tuplas,
-    atributos que no empiezan por `_` y llamadas a funciones de `_ESPACIO_MAT` o a métodos de un
-    valor. Rechaza lambdas, comprensiones, cadenas formateadas y el acceso a ficheros o a módulos
-    del sistema, de modo que un diagrama ajeno no pueda ejecutar código al simular.
+    Admite literales, nombres de datos del espacio, operadores, comparaciones, subíndices, listas,
+    tuplas, las funciones de `_ESPACIO_MAT`, las de NumPy de `_NUMPY_PERMITIDO` y los atributos de
+    `_ATRIBUTOS_DATOS`. Todo lo demás (lambdas, comprensiones, cadenas formateadas, módulos,
+    funciones del espacio de trabajo, nombres con `_`) se rechaza, de modo que un diagrama ajeno
+    no pueda ejecutar código ni tocar archivos al simular.
     """
 
     def __init__(self, espacio):
@@ -137,9 +155,12 @@ class _Evaluador:
         return n.value
 
     def n_Name(self, n):
-        if n.id not in self.ns:
+        if n.id.startswith("_") or n.id not in self.ns:
             raise NameError(f"la variable «{n.id}» no está definida")
-        return self.ns[n.id]
+        v = self.ns[n.id]
+        if not (_es_dato(v) or n.id in _ESPACIO_MAT and v is _ESPACIO_MAT[n.id]):
+            raise ValueError(f"«{n.id}» no es un dato y no se puede usar en una expresión")
+        return v
 
     def n_List(self, n):
         return [self(e) for e in n.elts]
@@ -180,6 +201,32 @@ class _Evaluador:
 
     def n_Attribute(self, n):
         return _atributo_seguro(self(n.value), n.attr)
+
+    def n_ListComp(self, n):
+        # Tablas como [[f(a, b) for b in ejes] for a in ejes]: cada bucle recorre datos y liga un
+        # nombre simple en un ámbito propio, sin tocar el espacio de nombres de fuera
+        salida = []
+
+        def recorrer(i, ambito):
+            if i == len(n.generators):
+                if len(salida) >= _ELEMENTOS_MAX:
+                    raise ValueError("la comprensión genera demasiados elementos")
+                salida.append(_Evaluador(ambito)(n.elt))
+                return
+            g = n.generators[i]
+            if not isinstance(g.target, ast.Name) or g.target.id.startswith("_") or g.is_async:
+                raise ValueError("en una comprensión, la variable del bucle debe ser un nombre simple")
+            datos = _Evaluador(ambito)(g.iter)
+            if not isinstance(datos, (list, tuple, np.ndarray)):
+                raise ValueError("una comprensión solo puede recorrer listas, tuplas o matrices")
+            for x in datos:
+                hijo = dict(ambito)
+                hijo[g.target.id] = x
+                if all(_Evaluador(hijo)(c) for c in g.ifs):
+                    recorrer(i + 1, hijo)
+
+        recorrer(0, self.ns)
+        return salida
 
     def n_Subscript(self, n):
         return self(n.value)[self._indice(n.slice)]
@@ -226,6 +273,13 @@ def evaluar_expresion(texto, espacio):
 _COMA_DECIMAL = re.compile(r"^[-+]?\d+,\d+(?:[eE][-+]?\d+)?$")
 
 
+def espacio_de_expresion(espacio):
+    """Nombres que ve una expresión: las funciones matemáticas y solo los datos del espacio de trabajo."""
+    ns = {k: v for k, v in (espacio or {}).items() if not str(k).startswith("_") and _es_dato(v)}
+    ns.update(_ESPACIO_MAT)
+    return ns
+
+
 def evaluar_numero(valor, espacio=None, unidad="", vacio=None):
     """Convierte un parámetro a número o arreglo.
 
@@ -268,10 +322,7 @@ def evaluar_numero(valor, espacio=None, unidad="", vacio=None):
             return np.asarray(v, dtype=float)
     except (ValueError, SyntaxError):
         pass
-    ns = dict(_ESPACIO_MAT)
-    if espacio:
-        ns.update(espacio)
-    r = evaluar_expresion(texto, ns)
+    r = evaluar_expresion(texto, espacio_de_expresion(espacio))
     if isinstance(r, (list, tuple)):
         return np.asarray(r, dtype=float)
     return r

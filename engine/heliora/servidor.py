@@ -220,12 +220,12 @@ class Motor:
 
     def borrar_variable(self, nombre):
         """Atiende la orden `borrar_variable`: elimina la variable y devuelve las restantes."""
-        self.espacio.ns.pop(nombre, None)
+        self.espacio.borrar(nombre)
         return self.espacio.variables()
 
     def limpiar_espacio(self):
-        """Atiende la orden `limpiar_espacio`: reinicia el espacio de trabajo y devuelve una lista vacía."""
-        self.espacio.reiniciar()
+        """Atiende la orden `limpiar_espacio`: borra todas las variables (también del próximo guardado) y devuelve una lista vacía."""
+        self.espacio.borrar_todo()
         return []
 
     def guardar_variable(self, nombre, ruta):
@@ -246,14 +246,23 @@ class Motor:
         """
         return self.espacio.guardar_en(carpeta)
 
-    def cargar_espacio(self, carpeta):
+    def cargar_espacio(self, carpeta, confiar=False, solo=None, limpiar=False):
         """Carga las variables guardadas en una carpeta, con o sin índice (carpetas antiguas).
 
+        Args:
+            carpeta: carpeta `datos` del proyecto.
+            confiar: si es True, lee también los objetos joblib (`.pkl`), que pueden ejecutar código.
+            solo: lista de nombres que se cargan (p. ej. los pendientes que la persona confirmó).
+            limpiar: si es True, vacía antes el espacio de trabajo (abrir un proyecto no mezcla estados).
+
         Returns:
-            {"variables": descripción de las variables del espacio, "errores": mensajes de lo que no se pudo leer}.
+            {"variables": descripción de las variables del espacio, "errores": mensajes de lo que no se
+            pudo leer, "pendientes": objetos `.pkl` sin cargar a la espera de confirmación}.
         """
-        errores = self.espacio.cargar_de(carpeta)
-        return {"variables": self.espacio.variables(), "errores": errores}
+        if limpiar:
+            self.espacio.reiniciar()
+        errores, pendientes = self.espacio.cargar_de(carpeta, confiar, solo)
+        return {"variables": self.espacio.variables(), "errores": errores, "pendientes": pendientes}
 
     def columnas(self, ruta):
         """Devuelve los nombres de columna de una tabla (CSV, TSV, TXT o Parquet), para los desplegables."""
@@ -431,12 +440,31 @@ class Motor:
                 compile(texto, str(ruta), "exec")
             except SyntaxError as e:
                 raise ValueError(f"No se guardó: error de sintaxis en la línea {e.lineno}: {e.msg}") from None
-        # Se escribe el texto tal cual, con LF: en Windows el modo texto lo convertiría a CRLF
-        tmp = str(ruta) + ".tmp~"
+        ruta = str(ruta)
+        anterior = None
+        es_libreria = ruta.endswith(".py") and os.path.abspath(ruta).startswith(os.path.dirname(os.path.abspath(__file__)) + os.sep)
+        if es_libreria and os.path.isfile(ruta):
+            with open(ruta, encoding="utf8", newline="") as f:
+                anterior = f.read()
+        self._escribir_texto(ruta, texto)
+        if es_libreria:
+            # Un módulo que compila pero falla al importarse (NameError...) dejaría el motor sin
+            # catálogo en el próximo arranque: se comprueba ahora y, si falla, se repone el anterior
+            try:
+                self.recargar_librerias()
+            except BaseException as e:
+                if anterior is not None:
+                    self._escribir_texto(ruta, anterior)
+                raise ValueError(f"No se guardó: el código falla al cargarse ({type(e).__name__}: {e})") from None
+        return True
+
+    @staticmethod
+    def _escribir_texto(ruta, texto):
+        """Escribe el texto tal cual, con LF (en Windows el modo texto lo convertiría a CRLF), de forma atómica."""
+        tmp = ruta + ".tmp~"
         with open(tmp, "w", encoding="utf8", newline="\n") as f:
             f.write(texto)
         os.replace(tmp, ruta)
-        return True
 
     def recargar_librerias(self):
         """Vuelve a leer el código de los bloques tras editarlo."""
@@ -479,11 +507,7 @@ class Motor:
         if not os.path.isfile(ruta):
             raise ValueError(f"No existe el archivo «{ruta}».")
         comprobar_nombre_salida(nombre, "Importar", "Nombre de la tabla", self.espacio.ns, self.espacio.base, set(), set(self.espacio.ns))
-        if ruta.lower().endswith((".tsv", ".txt")):
-            import pandas as pd
-            self.espacio.ns[nombre] = pd.read_csv(ruta, sep=None, engine="python")
-        else:
-            self.espacio.cargar(ruta, nombre)
+        self.espacio.cargar(ruta, nombre)
         return self.espacio.variables()
 
     def buscar_modulos_cec(self, texto):
@@ -743,8 +767,9 @@ def _fijar_parametro(d, destino, valor):
 def _espacio_picklable(ns, base=()):
     """Subconjunto del espacio de trabajo que se puede enviar a los procesos de trabajo."""
     import numpy as np
+    import pandas as pd
     base = set(base or ())
-    ok = (int, float, complex, bool, str, list, tuple, np.ndarray)
+    ok = (int, float, complex, bool, str, list, tuple, np.ndarray, pd.DataFrame, pd.Series)
     return {k: v for k, v in ns.items()
             if k not in base and not str(k).startswith("_") and isinstance(v, ok)}
 

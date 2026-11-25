@@ -7,7 +7,8 @@
 #   plataforma: x86_64-pc-windows-msvc | aarch64-apple-darwin | x86_64-apple-darwin
 set -euo pipefail
 
-DESTINO="$1"
+# Ruta absoluta: la comprobación final se ejecuta tras un cd
+DESTINO="$(mkdir -p "$1" && cd "$1" && pwd)"
 PLATAFORMA="$2"
 # Versión fijada: el mismo instalador se reconstruye igual en cada ejecución
 PBS_FECHA="20241016"

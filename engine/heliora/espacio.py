@@ -204,6 +204,7 @@ class Espacio:
 
     def reiniciar(self):
         """Recrea el espacio de nombres de la consola con solo las funciones y librerías base."""
+        self.borradas = set()
         import scipy
         from scipy import integrate, interpolate, linalg, optimize, signal, stats
 
@@ -243,15 +244,38 @@ class Espacio:
             self.ns[self.nombre_variable(nombre)] = d
         return d
 
-    def guardar_en(self, carpeta):
-        """Guarda las variables del usuario en una carpeta (ver `almacen.guardar`) y devuelve guardados y omitidos."""
-        return almacen.guardar({k: v for k, v in self.ns.items() if self.es_usuario(k, v)}, carpeta)
+    def borrar(self, nombre):
+        """Elimina una variable y la anota para que el próximo guardado borre también su archivo."""
+        self.ns.pop(nombre, None)
+        self.borradas.add(nombre)
 
-    def cargar_de(self, carpeta):
-        """Carga en el espacio las variables guardadas en una carpeta y devuelve la lista de errores de lectura."""
-        variables, errores = almacen.cargar(carpeta, self.base)
+    def borrar_todo(self):
+        """Elimina todas las variables del usuario y las anota como borradas."""
+        self.borradas |= {k for k, v in self.ns.items() if self.es_usuario(k, v)}
+        borradas = self.borradas
+        self.reiniciar()
+        self.borradas = borradas
+
+    def guardar_en(self, carpeta):
+        """Guarda las variables del usuario en una carpeta (ver `almacen.guardar`) y devuelve guardados, conservados y omitidos."""
+        meta = {"salidas_herr": sorted(self.ns.get("_salidas_herr", ()))}
+        r = almacen.guardar({k: v for k, v in self.ns.items() if self.es_usuario(k, v)}, carpeta, self.borradas, meta)
+        self.borradas = set()
+        return r
+
+    def cargar_de(self, carpeta, confiar=False, solo=None):
+        """Carga en el espacio las variables guardadas en una carpeta.
+
+        Returns:
+            Tupla (errores, pendientes): mensajes de lectura y objetos `.pkl` que esperan confirmación.
+        """
+        variables, errores, pendientes = almacen.cargar(carpeta, self.base, confiar, solo)
         self.ns.update(variables)
-        return errores
+        salidas = almacen.leer_meta(carpeta).get("salidas_herr", [])
+        self.ns.setdefault("_salidas_herr", set()).update(n for n in salidas if isinstance(n, str))
+        if solo is None:
+            self.borradas = set()
+        return errores, pendientes
 
     def guardar(self, dato, ruta):
         """Guarda un DataFrame o un arreglo en CSV o Parquet, según la extensión."""

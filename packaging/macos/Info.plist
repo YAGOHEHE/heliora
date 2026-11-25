@@ -15,7 +15,7 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleVersion</key>
-    <string>VERSION</string>
+    <string>VERSION_NUMERO</string>
     <key>CFBundleShortVersionString</key>
     <string>VERSION</string>
     <key>CFBundleDevelopmentRegion</key>

@@ -189,6 +189,9 @@ pub struct App {
     carpeta: Option<PathBuf>,
     guardado: Option<Guardado>,
     abriendo: Option<Abriendo>,
+    /// Objetos de Python (`.pkl`) de un proyecto abierto que esperan confirmación: carpeta y nombres
+    pkl_pendientes: Option<(PathBuf, Vec<String>)>,
+    id_pkl: Option<u64>,
     pidiendo_columnas: HashMap<u64, String>,
     aviso: String,
     instalando: Option<Receiver<String>>,
@@ -252,6 +255,8 @@ impl App {
             carpeta: None,
             guardado: None,
             abriendo: None,
+            pkl_pendientes: None,
+            id_pkl: None,
             pidiendo_columnas: HashMap::new(),
             aviso: String::new(),
             instalando: None,
@@ -319,10 +324,25 @@ impl App {
             if ok {
                 self.compartido.fijar_variables(&v["variables"]);
                 a.problemas.extend(v["errores"].as_array().into_iter().flatten().filter_map(|e| e.as_str()).map(|e| format!("datos: {e}")));
+                let pendientes: Vec<String> = v["pendientes"].as_array().into_iter().flatten().filter_map(|e| e.as_str().map(String::from)).collect();
+                if !pendientes.is_empty() {
+                    self.pkl_pendientes = Some((a.carpeta.join("datos"), pendientes));
+                }
             } else {
                 a.problemas.push(format!("datos del espacio de trabajo: {err}"));
             }
             self.aviso = resumen_apertura(&a.carpeta, &a.problemas);
+            return;
+        }
+        if Some(id) == self.id_pkl {
+            self.id_pkl = None;
+            if ok {
+                self.compartido.fijar_variables(&v["variables"]);
+                let errores: Vec<&str> = v["errores"].as_array().into_iter().flatten().filter_map(|e| e.as_str()).collect();
+                self.aviso = if errores.is_empty() { "Objetos de Python cargados".into() } else { format!("Objetos de Python con errores: {}", errores.join("; ")) };
+            } else {
+                self.aviso = format!("No se pudieron cargar los objetos de Python: {err}");
+            }
             return;
         }
         if let Some(ruta) = self.pidiendo_columnas.remove(&id) {
@@ -684,12 +704,18 @@ impl App {
         self.mantenimiento.estado = Value::Null;
         self.mantenimiento.tablero = Value::Null;
         self.mantenimiento.ruta = None;
-        if m.exists() {
-            if let Err(e) = self.mantenimiento.cargar_de(&m, &mut self.motor) {
-                problemas.push(format!("mantenimiento: {e}"));
-            }
-        }
-        if self.mantenimiento.estado.is_null() {
+        self.pkl_pendientes = None;
+        // La carga del plan es asíncrona: el plan de ejemplo solo se pide si el proyecto no trae uno,
+        // porque su respuesta llegaría después y sustituiría al plan del proyecto
+        let cargando_plan = m.exists()
+            && match self.mantenimiento.cargar_de(&m, &mut self.motor) {
+                Ok(()) => true,
+                Err(e) => {
+                    problemas.push(format!("mantenimiento: {e}"));
+                    false
+                }
+            };
+        if !cargando_plan {
             self.mantenimiento.iniciar(&mut self.motor);
         }
         let (guiones, errores) = crate::calculo::guiones_de(&c.join("scripts"));
@@ -965,6 +991,26 @@ impl App {
         });
     }
 
+    /// Aviso de los objetos de Python de un proyecto que no se cargaron al abrirlo: leer un `.pkl`
+    /// puede ejecutar código, así que solo se cargan si la persona confía en el proyecto.
+    fn panel_pkl(&mut self, ctx: &egui::Context) {
+        let Some((carpeta, nombres)) = self.pkl_pendientes.clone() else { return };
+        let pal = tema::p();
+        egui::TopBottomPanel::top("pkl_pendientes").frame(egui::Frame::new().fill(pal.campo).inner_margin(10).stroke(egui::Stroke::new(1.0_f32, pal.borde))).show(ctx, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                tema::estado(ui, tema::Nivel::Alerta, &format!("El proyecto trae {} objetos de Python sin cargar ({}).", nombres.len(), nombres.join(", ")));
+                ui.label(egui::RichText::new("Leerlos puede ejecutar código: cárgalos solo si confías en quien te pasó el proyecto.").small().color(pal.texto_2));
+                if ui.button("Cargar objetos").clicked() {
+                    self.id_pkl = Some(self.motor.llamar("cargar_espacio", json!({"carpeta": carpeta.display().to_string(), "confiar": true, "solo": nombres})));
+                    self.pkl_pendientes = None;
+                }
+                if ui.button("No cargar").clicked() {
+                    self.pkl_pendientes = None;
+                }
+            });
+        });
+    }
+
     fn panel_sin_motor(&mut self, ctx: &egui::Context) {
         let Some(c) = self.motor.caido.clone() else { return };
         egui::TopBottomPanel::top("sin_motor").frame(egui::Frame::new().fill(tema::p().falla_fondo).inner_margin(10)).show(ctx, |ui| {
@@ -1115,6 +1161,7 @@ impl eframe::App for App {
         self.barra_superior(ctx);
         self.pie(ctx);
         self.panel_sin_motor(ctx);
+        self.panel_pkl(ctx);
         self.barra_modulos(ctx);
         egui::CentralPanel::default().frame(egui::Frame::new().fill(tema::p().fondo)).show(ctx, |ui| {
             let herr = self.herramientas.clone();

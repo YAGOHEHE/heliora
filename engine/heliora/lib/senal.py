@@ -17,7 +17,7 @@ import math
 
 import numpy as np
 
-from ..sim.nucleo import Bloque, BloqueDiscreto, P, _ESPACIO_MAT, registrar
+from ..sim.nucleo import Bloque, BloqueDiscreto, P, espacio_de_expresion, evaluar_expresion, registrar
 
 INF = math.inf
 
@@ -254,9 +254,7 @@ def _evaluar_texto(valor, espacio):
     """Evalúa una expresión que puede dar listas de distinto largo (puntos de ruptura por eje)."""
     if not isinstance(valor, str):
         return valor
-    ns = dict(_ESPACIO_MAT)
-    ns.update(espacio or {})
-    return eval(valor, {"__builtins__": {}}, ns)  # expresión escrita por el propio usuario
+    return evaluar_expresion(valor, espacio_de_expresion(espacio))
 
 
 class _TablaN(Bloque):

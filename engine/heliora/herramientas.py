@@ -961,13 +961,14 @@ def ml_predecir(c, origen, variable, ruta, tabla, salida):
 
 
 @herramienta("mantenimiento", "mt_muestra", "Generar datos SCADA de muestra", [
-    ("nombre", "Nombre de la tabla", "texto", "scada"), ("dias", "Días", "entero", 730), ("inversores", "Inversores", "entero", 2), ("p_nom", "Potencia por inversor [kW]", "num", 500.0),
+    ("nombre", "Nombre de la tabla", "salida", "scada"), ("dias", "Días", "entero", 730), ("inversores", "Inversores", "entero", 2), ("p_nom", "Potencia por inversor [kW]", "num", 500.0),
     ("lat", "Latitud [°]", "num", 40.4), ("lon", "Longitud [°]", "num", -3.7)
-], "Datos SCADA")
+], "Datos SCADA", limites={"nombre": dict(obligatorio=True), "dias": dict(min=1), "inversores": dict(min=1), "p_nom": dict(min=0, abierto_min=True),
+                           "lat": dict(min=-90, max=90), "lon": dict(min=-180, max=180)})
 def mt_muestra(c, nombre, dias, inversores, p_nom, lat, lon):
     """Crea datos sintéticos con fallas conocidas para aprender el flujo de análisis."""
     d, v = mt.generar_scada(dias=dias, inversores=inversores, p_nom_kw=p_nom, lat=lat, lon=lon)
-    c.ns[nombre] = d
+    c.guardar_salida(nombre, d)
     q = mt.resumen_calidad(d)
     c.kv("Datos generados", [("Filas", q["filas"]), ("Inversores", q["inversores"]), ("Desde", q["desde"]), ("Hasta", q["hasta"]), ("Paso", q["paso_min"], "min")])
     c.texto("Fallas inyectadas, para comprobar el análisis: degradación de 0.7 %/año, suciedad de 0.2 %/día con lluvias, "
@@ -975,11 +976,12 @@ def mt_muestra(c, nombre, dias, inversores, p_nom, lat, lon):
     return c.informe("Datos SCADA de muestra")
 
 
-@herramienta("mantenimiento", "mt_importar", "Importar SCADA desde CSV o Parquet", [("ruta", "Archivo", "ruta", ""), ("nombre", "Nombre de la tabla", "texto", "scada")], "Datos SCADA")
+@herramienta("mantenimiento", "mt_importar", "Importar SCADA desde CSV o Parquet", [("ruta", "Archivo", "ruta", ""), ("nombre", "Nombre de la tabla", "salida", "scada")], "Datos SCADA",
+            limites={"ruta": dict(obligatorio=True), "nombre": dict(obligatorio=True)})
 def mt_importar(c, ruta, nombre):
     """Lee el archivo, reconoce alias de columnas (potencia, tensiones, corrientes, temperaturas, irradiancia, alarmas) y revisa la calidad."""
     d, q = mt.importar_scada(ruta)
-    c.ns[nombre] = d
+    c.guardar_salida(nombre, d)
     c.kv("Calidad de los datos", [("Filas", q["filas"]), ("Inversores", q["inversores"]), ("Desde", q["desde"]), ("Hasta", q["hasta"]), ("Paso", q["paso_min"], "min"),
                                   ("Cobertura temporal", _pct(q["cobertura"])), ("Filas repetidas eliminadas", q["duplicados"])])
     c.texto("Columnas: " + ", ".join(q["columnas"]))
@@ -997,7 +999,8 @@ def _p_inv(d, p_nom):
     return float(p_nom)
 
 
-@herramienta("mantenimiento", "mt_kpi", "KPIs de la planta", [("tabla", "Tabla SCADA", "tabla", "scada"), ("p_nom", "Potencia nominal por inversor [kW]", "num", 500.0), ("gamma", "Coef. de potencia [1/°C]", "num", -0.0037)], "KPIs")
+@herramienta("mantenimiento", "mt_kpi", "KPIs de la planta", [("tabla", "Tabla SCADA", "tabla", "scada"), ("p_nom", "Potencia nominal por inversor [kW]", "num", 500.0), ("gamma", "Coef. de potencia [1/°C]", "num", -0.0037)], "KPIs",
+            limites={"p_nom": dict(min=0, abierto_min=True)})
 def mt_kpi(c, tabla, p_nom, gamma):
     """Performance Ratio, disponibilidad, energía perdida y rendimiento del inversor."""
     d = c.df(tabla)
@@ -1021,13 +1024,13 @@ def mt_kpi(c, tabla, p_nom, gamma):
     x = np.arange(len(E))
     c.grafica(figura("Energía mensual", "Mes", "MWh", [serie(x, E.to_numpy(), "Energía", "barras")]))
     c.grafica(figura("PR mensual", "Mes", "PR", [serie(x, pr.to_numpy(), "PR")]))
-    c.ns["kpi_inversores"] = t
+    c.guardar_salida("kpi_inversores", t)
     return c.informe("KPIs de la planta")
 
 
 @herramienta("mantenimiento", "mt_fallas", "Detección de fallas", [
     ("tabla", "Tabla SCADA", "tabla", "scada"), ("p_nom", "Potencia nominal por inversor [kW]", "num", 500.0), ("gamma", "Coef. de potencia [1/°C]", "num", -0.0037), ("t_lim", "Límite de T de IGBT [°C]", "num", 85.0)
-], "Fallas")
+], "Fallas", limites={"p_nom": dict(min=0, abierto_min=True), "t_lim": dict(min=0, abierto_min=True)})
 def mt_fallas(c, tabla, p_nom, gamma, t_lim):
     """Busca degradación de módulos, suciedad, strings caídos, sobretemperatura de IGBT y desviación del modelo físico."""
     d = c.df(tabla)
@@ -1062,7 +1065,7 @@ def mt_fallas(c, tabla, p_nom, gamma, t_lim):
         al = dv["cusum"]["alarma"]
         filas.append(["Desviación del modelo", nombre, f"mediana {dv['razon'].median():.3f}", f"{len(al)} días con alarma CUSUM", "alerta" if al else "normal"])
     c.tabla("Hallazgos", ["Tipo", "Equipo", "Valor", "Detalle", "Estado"], filas)
-    c.ns["hallazgos"] = pd.DataFrame(filas, columns=["tipo", "equipo", "valor", "detalle", "estado"])
+    c.guardar_salida("hallazgos", pd.DataFrame(filas, columns=["tipo", "equipo", "valor", "detalle", "estado"]))
     n = sum(1 for f in filas if f[4] == "falla")
     c.aviso("falla" if n else "bueno", f"{n} fallas activas que requieren una orden de trabajo." if n else "No hay fallas activas.")
     return c.informe("Detección de fallas")
@@ -1070,7 +1073,7 @@ def mt_fallas(c, tabla, p_nom, gamma, t_lim):
 
 @herramienta("mantenimiento", "mt_fiabilidad", "Fiabilidad y vida útil", [
     ("tabla", "Tabla SCADA", "tabla", "scada"), ("t_actual", "Horas de servicio actuales", "num", 500.0), ("umbral", "Límite de degradación (PR relativo)", "num", 0.8), ("p_nom", "Potencia nominal por inversor [kW]", "num", 500.0)
-], "Fiabilidad")
+], "Fiabilidad", limites={"t_actual": dict(min=0), "umbral": dict(min=0, max=1, abierto_min=True, abierto_max=True), "p_nom": dict(min=0, abierto_min=True)})
 def mt_fiabilidad(c, tabla, t_actual, umbral, p_nom):
     """MTBF, MTTR, disponibilidad intrínseca, Weibull de los tiempos entre fallos y vida remanente."""
     d = c.df(tabla)
@@ -1229,7 +1232,8 @@ def ctl_pi(c, modelo, num, den, mf, wc):
         c.aviso("falla", str(ex))
     w, mag, fase = ct.bode(Ln, Ld)
     c.grafica(figura("Bode del lazo con el PI", "ω [rad/s]", "|L| [dB]", [serie(w, mag, "|L(jω)|")], lineas_h=[0.0], log_x=True))
-    c.ns["pi_kp"], c.ns["pi_ti"] = r["Kp"], r["Ti"]
+    c.guardar_salida("pi_kp", r["Kp"])
+    c.guardar_salida("pi_ti", r["Ti"])
     return c.informe("Ajuste de un PI")
 
 

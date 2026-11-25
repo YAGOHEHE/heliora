@@ -38,6 +38,11 @@ Name: "es"; MessagesFile: "compiler:Languages\Spanish.isl"
 [Tasks]
 Name: "escritorio"; Description: "Crear un acceso directo en el Escritorio"; GroupDescription: "Accesos directos:"
 
+[InstallDelete]
+; Una actualización sustituye entero el motor y su Python: no quedan módulos de la versión anterior
+Type: filesandordirs; Name: "{app}\engine"
+Type: filesandordirs; Name: "{app}\python"
+
 [Files]
 Source: "{#Origen}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 

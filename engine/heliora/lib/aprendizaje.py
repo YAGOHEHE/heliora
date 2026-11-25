@@ -184,7 +184,8 @@ def _entrenar(tarea, X, y, nombre, validacion, pliegues, semilla, pct, orden, hi
     crear = crear_regresor if tarea == "regresion" else crear_clasificador
     metricas = _metricas_reg if tarea == "regresion" else _metricas_clas
     partes = particiones(n, validacion, pliegues, semilla, pct, None if tarea == "regresion" else y, orden)
-    pred = np.full(n, np.nan) if tarea == "regresion" else np.full(n, y[0])
+    # Con el dtype de toda la columna: el de y[0] recortaría las etiquetas de texto más largas
+    pred = np.full(n, np.nan) if tarea == "regresion" else np.empty(n, dtype=np.asarray(y).dtype)
     valida = np.zeros(n, dtype=bool)
     en_entrenamiento = []
     for tr, te in partes:

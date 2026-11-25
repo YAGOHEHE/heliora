@@ -46,10 +46,11 @@ def expresiones_seguras(m):
     m.verdad("lista de expresiones [1, 2*pi]", abs(evaluar_numero("[1, 2*pi]")[1] - 2 * np.pi) < 1e-12)
     m.error("coma decimal «0,5»", evaluar_numero("0,5"), 0.5, 0.0)
     m.error("condicional 1 if Vdc > 1 else 0", evaluar_numero("1 if Vdc > 1 else 0", ns), 1.0, 0.0)
-    for texto in ("().__class__.__base__.__subclasses__()", "(lambda: 1)()", "[x for x in (1, 2)]", "open('x')",
+    for texto in ("().__class__.__base__.__subclasses__()", "(lambda: 1)()", "[x.__class__ for x in (1, 2)]", "[x for x in v.__class__.__mro__]", "open('x')",
                   "np.load('x.npy')", "v.__class__", "__import__('os')", "9**9**9", "np.lib.npyio.os"):
         e = _error(evaluar_numero, texto, ns)
         m.verdad(f"rechaza {texto}", isinstance(e, (ValueError, AttributeError)), str(e)[:70])
+    m.verdad("comprensión sobre datos [2*x for x in (1, 2)]", list(evaluar_numero("[2*x for x in (1, 2)]")) == [2.0, 4.0])
     m.verdad("campo vacío es un error «falta valor»", "falta valor" in str(_error(evaluar_numero, "  ")))
     d = diagrama("x", [bloque("g", "ganancia", nombre="G", k="().__class__.__base__.__subclasses__()"),
                        bloque("c", "constante", c=1.0), bloque("o", "osciloscopio")],
@@ -72,8 +73,10 @@ def espacio_ida_y_vuelta(m):
         m.verdad("lo no serializable se declara omitido", [o["nombre"] for o in r["omitidos"]] == ["f"], str(r["omitidos"]))
         m.verdad("una variable con nombre de símbolo base se guarda", "stats" in r["guardados"])
         e2 = Espacio()
-        errores = e2.cargar_de(td)
+        errores, pendientes = e2.cargar_de(td)
         m.verdad("sin errores de lectura", errores == [], str(errores))
+        m.verdad("la tupla (joblib) espera confirmación", pendientes == ["tup"], str(pendientes))
+        e2.cargar_de(td, confiar=True, solo=pendientes)
         m.verdad("A y a distintas", np.array_equal(e2.ns["A"], e.ns["A"]) and np.array_equal(e2.ns["a"], e.ns["a"]))
         m.verdad("complejos intactos", np.array_equal(e2.ns["c"], e.ns["c"]))
         m.verdad("matriz 3D intacta", np.array_equal(e2.ns["T"], e.ns["T"]) and e2.ns["T"].ndim == 3)
@@ -85,7 +88,7 @@ def espacio_ida_y_vuelta(m):
         _escribir(td, "viejo.csv", "t;pot\n0;1,5\n1;2,5\n", "cp1252")
         pd.DataFrame({"x": [1, 2]}).to_parquet(os.path.join(td, "tabla.parquet"))
         e3 = Espacio()
-        m.verdad("carpeta antigua sin índice", e3.cargar_de(td) == [] and set(e3.ns) >= {"viejo", "tabla"})
+        m.verdad("carpeta antigua sin índice", e3.cargar_de(td) == ([], []) and set(e3.ns) >= {"viejo", "tabla"})
         m.error("coma decimal en carpeta antigua", e3.ns["viejo"]["pot"].iloc[0], 1.5, 0.0)
 
 

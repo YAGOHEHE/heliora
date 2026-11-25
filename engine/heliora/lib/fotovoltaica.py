@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import bisect
 import math
+import re
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -239,11 +240,22 @@ def _base_cec():
 
 
 def buscar_cec(texto, limite=50):
-    """Busca módulos en la base CEC de pvlib: cada palabra del texto debe aparecer en el nombre (sin distinguir mayúsculas)."""
-    palabras = texto.lower().split()
+    """Busca módulos en la base CEC de pvlib: cada palabra del texto debe aparecer en el nombre.
+
+    pvlib guarda los nombres con «_» en lugar de guiones, puntos y espacios («CS6K-300MS» es
+    «CS6K_300MS»), así que el texto y los nombres se comparan sin distinguir mayúsculas y con esos
+    signos unificados.
+    """
+    palabras = [_clave_cec(p) for p in texto.split()]
+    palabras = [p for p in palabras if p.strip("_")]
     if not palabras:
         return []
-    return [c for c in _base_cec().columns if all(p in c.lower() for p in palabras)][:int(limite)]
+    return [c for c in dict.fromkeys(_base_cec().columns) if all(p in _clave_cec(c) for p in palabras)][:int(limite)]
+
+
+def _clave_cec(texto):
+    """Forma de comparación de un nombre CEC: minúsculas y cualquier signo que no sea letra o cifra como «_»."""
+    return re.sub(r"[^0-9a-z]", "_", str(texto).lower())
 
 
 def modulo_cec(nombre):
@@ -252,6 +264,8 @@ def modulo_cec(nombre):
     if nombre not in base.columns:
         raise ValueError(f"El módulo «{nombre}» no está en la base CEC; búscalo con el selector.")
     d = base[nombre]
+    if getattr(d, "ndim", 1) == 2:
+        d = d.iloc[:, 0]
     return ModuloFV(nombre=nombre, Voc=float(d["V_oc_ref"]), Isc=float(d["I_sc_ref"]), Vmp=float(d["V_mp_ref"]),
                     Imp=float(d["I_mp_ref"]), Ns=int(d["N_s"]), alfa_sc=float(d["alpha_sc"]), beta_oc=float(d["beta_oc"]))
 
