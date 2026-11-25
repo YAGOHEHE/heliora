@@ -283,8 +283,66 @@ pub fn puertos_de(b: &BloqueD, cat: &HashMap<String, Ficha>) -> (Vec<PuertoD>, f
     (v, alto)
 }
 
-fn color_categoria(cat: &str) -> Color32 {
-    tema::color_familia(cat)
+/// Franja del nodo y marca de la librería: eléctrica si el bloque tiene puertos eléctricos,
+/// señal si procesa señales; ninguna para fuentes y sumideros de señal.
+fn color_ficha(f: &Ficha) -> Option<Color32> {
+    if !f.e.is_empty() || !f.e3.is_empty() {
+        Some(tema::p().electrica)
+    } else if matches!(f.categoria.as_str(), "Fuentes" | "Sumideros") {
+        None
+    } else {
+        Some(tema::p().senal)
+    }
+}
+
+/// Grupo de la librería al que pertenece una categoría del catálogo.
+fn grupo_de(cat: &str) -> String {
+    match cat {
+        "Matemática" | "Señales" => "Matemática y señales".into(),
+        "Continuo" | "Discontinuidades" => "Continuo y discontinuidades".into(),
+        c => c.split(" · ").next().unwrap_or(c).to_string(),
+    }
+}
+
+fn etiqueta_metodo(m: &str) -> &'static str {
+    match m {
+        "euler" => "Euler (fijo)",
+        "rk4" => "RK4 (fijo)",
+        "bdf" => "BDF (rígido)",
+        _ => "Dormand-Prince",
+    }
+}
+
+/// Cable en ángulo recto: sale y entra en horizontal con un tramo vertical intermedio; si el
+/// destino queda detrás del origen, rodea por la altura media.
+fn ortogonal(a: Pos2, a_izq: bool, b: Pos2, b_izq: bool, z: f32) -> Vec<Pos2> {
+    let tramo = 14.0 * z;
+    let sa = if a_izq { -1.0 } else { 1.0 };
+    let sb = if b_izq { -1.0 } else { 1.0 };
+    let ax = a.x + sa * tramo;
+    let bx = b.x + sb * tramo;
+    if sa != sb && (bx - ax) * sa >= 0.0 {
+        let mx = (ax + bx) / 2.0;
+        vec![a, Pos2::new(mx, a.y), Pos2::new(mx, b.y), b]
+    } else if sa == sb {
+        let x = if sa > 0.0 { ax.max(bx) } else { ax.min(bx) };
+        vec![a, Pos2::new(x, a.y), Pos2::new(x, b.y), b]
+    } else {
+        let my = a.y.max(b.y) + 40.0 * z;
+        vec![a, Pos2::new(ax, a.y), Pos2::new(ax, my), Pos2::new(bx, my), Pos2::new(bx, b.y), b]
+    }
+}
+
+/// Bloques del nivel indicado por la ruta, sin pedir acceso mutable.
+fn nivel_ref<'a>(raiz: &'a Sistema, ruta: &[String]) -> &'a Sistema {
+    let mut s = raiz;
+    for r in ruta {
+        match s.bloques.iter().find(|b| &b.id == r).and_then(|b| b.sistema.as_ref()) {
+            Some(x) => s = x,
+            None => break,
+        }
+    }
+    s
 }
 
 fn color_cable(c: Clase) -> Color32 {
@@ -308,6 +366,13 @@ fn parametro_principal(b: &BloqueD, f: Option<&Ficha>) -> String {
 }
 
 // ================================================================= Estado del editor
+
+/// Resumen de la última simulación para el inspector.
+pub struct Ultima {
+    pub solver: String,
+    pub paso: String,
+    pub huella: String,
+}
 
 enum Arrastre {
     Nada,
@@ -351,6 +416,19 @@ pub struct Editor {
     pub id_lin: Option<u64>,
     lineal: Option<herramientas::Informe>,
     ver_lineal: bool,
+    /// Tipos de bloque añadidos hace poco, el más reciente primero (como mucho 3)
+    pub recientes: Vec<String>,
+    /// Cables en ángulo recto en lugar de curvas
+    pub ordenar_cables: bool,
+    /// JSON canónico del diagrama tal como se guardó o abrió; vacío si no se ha guardado
+    guardado_json: String,
+    /// Solver con el que se lanzó la simulación en curso
+    solver_enviado: Map<String, Value>,
+    pub ultima: Option<Ultima>,
+    /// Procedencia de la última simulación (huellas y versiones del motor)
+    procedencia: Value,
+    /// Zona del lienzo en el último cuadro, para colocar bloques en su centro
+    area_lienzo: Rect,
 }
 
 impl Editor {
@@ -368,7 +446,7 @@ impl Editor {
             arrastre: Arrastre::Nada,
             nuevo: None,
             buscar: String::new(),
-            cat_abiertas: ["Fuentes", "Fotovoltaica"].iter().map(|s| s.to_string()).collect(),
+            cat_abiertas: ["Fotovoltaica"].iter().map(|s| s.to_string()).collect(),
             deshacer: vec![],
             rehacer: vec![],
             contador: 0,
@@ -387,6 +465,13 @@ impl Editor {
             id_lin: None,
             lineal: None,
             ver_lineal: false,
+            recientes: vec![],
+            ordenar_cables: false,
+            guardado_json: String::new(),
+            solver_enviado: Map::new(),
+            ultima: None,
+            procedencia: Value::Null,
+            area_lienzo: Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 500.0)),
         }
     }
 
@@ -395,7 +480,7 @@ impl Editor {
         let mut cats: Vec<String> = f.iter().map(|x| x.categoria.clone()).collect();
         cats.sort();
         cats.dedup();
-        let prio = ["Fuentes", "Matemática", "Continuo", "Discreto", "Discontinuidades", "Señales", "Sumideros", "Subsistemas", "Eléctrica · Pasivos", "Eléctrica · Fuentes", "Eléctrica · Semiconductores", "Eléctrica · Medición", "Potencia · Convertidores", "Potencia · Filtros", "Potencia · Modulación", "Potencia · Control", "Potencia · Medición", "Fotovoltaica", "Almacenamiento", "Máquinas", "Mecánica", "Térmica"];
+        let prio = ["Fuentes", "Matemática", "Señales", "Continuo", "Discontinuidades", "Discreto", "Sumideros", "Eléctrica · Pasivos", "Eléctrica · Fuentes", "Eléctrica · Semiconductores", "Eléctrica · Medición", "Potencia · Convertidores", "Potencia · Filtros", "Potencia · Modulación", "Potencia · Control", "Potencia · Medición", "Fotovoltaica", "Almacenamiento", "Máquinas", "Mecánica", "Térmica", "Subsistemas"];
         let mut orden: Vec<String> = prio.iter().filter(|p| cats.iter().any(|c| c == *p)).map(|s| s.to_string()).collect();
         for c in cats {
             if !orden.contains(&c) {
@@ -406,22 +491,24 @@ impl Editor {
         self.fichas = f.into_iter().map(|x| (x.tipo.clone(), x)).collect();
     }
 
-    pub fn cargar_valor(&mut self, v: &Value) {
-        if let Ok(d) = serde_json::from_value::<Diagrama>(v.clone()) {
-            self.diagrama = d;
-            self.ruta.clear();
-            self.sel.clear();
-            self.sel_hilo = None;
-            self.resultado.clear();
-            self.stats.clear();
-            self.avisos.clear();
-            self.error = None;
-            self.centrar = true;
-            self.deshacer.clear();
-            self.rehacer.clear();
-        } else {
-            self.error = Some("El archivo no es un diagrama válido.".into());
-        }
+    /// Carga un diagrama desde JSON; si no lo es, deja el actual intacto y devuelve el error.
+    pub fn cargar_valor(&mut self, v: &Value) -> Result<(), String> {
+        let d = serde_json::from_value::<Diagrama>(v.clone()).map_err(|_| "El archivo no es un diagrama válido.".to_string())?;
+        self.diagrama = d;
+        self.ruta.clear();
+        self.sel.clear();
+        self.sel_hilo = None;
+        self.resultado.clear();
+        self.stats.clear();
+        self.avisos.clear();
+        self.error = None;
+        self.centrar = true;
+        self.deshacer.clear();
+        self.rehacer.clear();
+        self.guardado_json.clear();
+        self.ultima = None;
+        self.lazos.clear();
+        Ok(())
     }
 
     pub fn pedir_ejemplo(&mut self, motor: &mut Motor, clave: &str) {
@@ -443,8 +530,10 @@ impl Editor {
         if Some(id) == self.id_ejemplo {
             self.id_ejemplo = None;
             if ok {
-                self.cargar_valor(valor);
-                self.archivo = None;
+                match self.cargar_valor(valor) {
+                    Ok(()) => self.archivo = None,
+                    Err(e) => self.error = Some(e),
+                }
             } else {
                 self.error = Some(err.to_string());
             }
@@ -487,16 +576,32 @@ impl Editor {
                 self.stats = s;
                 self.avisos = lista_txt(&valor["avisos"]);
                 self.lazos = valor["lazos"].as_array().map(|a| a.iter().map(lista_txt).collect()).unwrap_or_default();
+                self.procedencia = valor["procedencia"].clone();
                 if self.pestana >= self.resultado.len() {
                     self.pestana = 0;
                 }
                 c.fijar_variables(&valor["variables"]);
             } else {
                 self.error = Some(err.to_string());
+                self.procedencia = Value::Null;
             }
+            self.ultima = Some(self.resumen_ultima());
             return true;
         }
         false
+    }
+
+    /// Solver, paso y huella de la simulación que acaba de terminar.
+    fn resumen_ultima(&self) -> Ultima {
+        let d = &self.solver_enviado;
+        let metodo = d.get("metodo").and_then(|v| v.as_str()).unwrap_or("dopri");
+        let fijo = metodo == "euler" || metodo == "rk4";
+        let paso = if fijo { format!("{} s", valor_txt(d.get("paso"))) } else { format!("variable · rtol {}", valor_txt(d.get("rtol"))) };
+        Ultima {
+            solver: format!("{metodo} · {}", if fijo { "paso fijo" } else { "paso variable" }),
+            paso,
+            huella: self.procedencia["sha256"].as_str().unwrap_or("").to_string(),
+        }
     }
 
     pub fn avance(&mut self, id: u64, f: f32) -> bool {
@@ -593,6 +698,9 @@ impl Editor {
         self.sistema().bloques.push(b);
         self.sel.clear();
         self.sel.insert(id);
+        self.recientes.retain(|t| t != tipo);
+        self.recientes.insert(0, tipo.to_string());
+        self.recientes.truncate(3);
     }
 
     fn borrar_seleccion(&mut self) {
@@ -730,6 +838,7 @@ impl Editor {
             Ok(v) => {
                 self.error = None;
                 self.avance = 0.0;
+                self.solver_enviado = self.diagrama.solver.clone();
                 self.id_sim = Some(motor.llamar("simular", json!({"diagrama": v})));
             }
             Err(e) => self.error = Some(e.to_string()),
@@ -778,35 +887,138 @@ impl Editor {
     }
 
     /// Guarda el diagrama en JSON canónico: claves ordenadas, bloques por id, conexiones por
-    /// extremos y sangría fija, para que un cambio pequeño dé un diff de Git pequeño.
-    pub fn guardar_en(&self, ruta: &std::path::Path) -> Result<(), String> {
+    /// extremos y sangría fija, para que un cambio pequeño dé un diff de Git pequeño. Esa ruta
+    /// pasa a ser el archivo del diagrama, contra el que se miden los cambios sin guardar.
+    pub fn guardar_en(&mut self, ruta: &std::path::Path) -> Result<(), String> {
         let t = json_canonico(&self.diagrama)?;
-        crate::app::escribir_atomico(ruta, t.as_bytes())
+        crate::app::escribir_atomico(ruta, t.as_bytes())?;
+        self.guardado_json = t;
+        self.archivo = Some(ruta.to_path_buf());
+        Ok(())
     }
 
     pub fn abrir_de(&mut self, ruta: &std::path::Path) -> Result<(), String> {
         let t = std::fs::read_to_string(ruta).map_err(|e| e.to_string())?;
         let v: Value = serde_json::from_str(&t).map_err(|e| e.to_string())?;
-        self.cargar_valor(&v);
+        self.cargar_valor(&v)?;
         self.archivo = Some(ruta.to_path_buf());
+        self.guardado_json = json_canonico(&self.diagrama).unwrap_or_default();
         Ok(())
+    }
+
+    // ============================================================= API para la ventana
+
+    /// Hay cambios sin guardar (o el diagrama nunca se ha guardado).
+    pub fn sucio(&self) -> bool {
+        self.guardado_json.is_empty() || json_canonico(&self.diagrama).ok().as_deref() != Some(self.guardado_json.as_str())
+    }
+
+    /// Resumen del solver para la barra superior, p. ej. «RK4 fijo · 0 → 1.0 s · h 5e-5».
+    pub fn resumen_solver(&self) -> String {
+        let d = &self.diagrama.solver;
+        let metodo = d.get("metodo").and_then(|v| v.as_str()).unwrap_or("dopri");
+        let nombre = match metodo {
+            "euler" => "Euler fijo",
+            "rk4" => "RK4 fijo",
+            "bdf" => "BDF",
+            _ => "Dormand-Prince",
+        };
+        let t0 = valor_txt(d.get("t_ini"));
+        let t0 = if t0.is_empty() { "0".to_string() } else { t0 };
+        let fin = if matches!(metodo, "euler" | "rk4") { format!("h {}", valor_txt(d.get("paso"))) } else { format!("rtol {}", valor_txt(d.get("rtol"))) };
+        format!("{nombre} · {t0} → {} s · {fin}", valor_txt(d.get("t_fin")))
+    }
+
+    /// Ajustes del solver en el desplegable de la barra superior.
+    pub fn panel_solver_rapido(&mut self, ui: &mut egui::Ui) {
+        tema::titulo(ui, "Solver");
+        ui.add_space(4.0);
+        self.panel_solver(ui);
+    }
+
+    /// Versiones de Python y de las librerías con las que corrió la última simulación.
+    pub fn versiones(&self) -> String {
+        let p = &self.procedencia;
+        let v = |k: &str| p["librerias"][k].as_str().map(|x| format!(" {x}")).unwrap_or_default();
+        let py = p["python"].as_str().map(|x| format!(" {x}")).unwrap_or_default();
+        format!("Python{py} · NumPy{} · SciPy{} · pvlib{}", v("numpy"), v("scipy"), v("pvlib"))
+    }
+
+    /// Bloques del nivel que se está viendo.
+    pub fn bloques_visibles(&self) -> usize {
+        nivel_ref(&self.diagrama.sistema, &self.ruta).bloques.len()
+    }
+
+    /// Bloques del catálogo y ejemplos, para la paleta de comandos.
+    pub fn entradas_paleta(&self) -> Vec<crate::comandos::Entrada> {
+        use crate::comandos::{Accion, Entrada};
+        let mut f: Vec<&Ficha> = self.fichas.values().collect();
+        f.sort_by(|a, b| a.nombre.cmp(&b.nombre));
+        let mut v: Vec<Entrada> = f.into_iter().map(|x| Entrada::nueva("Bloque", x.nombre.clone(), x.categoria.clone(), Accion::Bloque(x.tipo.clone()))).collect();
+        v.extend(self.ejemplos.iter().map(|(k, n)| Entrada::nueva("Ejemplo", n.clone(), "", Accion::Ejemplo(k.clone()))));
+        v
+    }
+
+    pub fn encuadrar(&mut self) {
+        self.centrar = true;
+    }
+
+    /// Añade un bloque en el centro de la vista actual (rejilla de 4 px).
+    pub fn agregar_al_centro(&mut self, tipo: &str) {
+        let a = self.area_lienzo;
+        let q = (a.center() - a.min - self.pan) / self.zoom - Vec2::new(ANCHO / 2.0, 32.0);
+        self.agregar(tipo, Vec2::new((q.x / 4.0).round() * 4.0, (q.y / 4.0).round() * 4.0));
+    }
+
+    pub fn nuevo_diagrama(&mut self) {
+        self.instantanea();
+        self.diagrama = diagrama_vacio();
+        self.ruta.clear();
+        self.sel.clear();
+        self.archivo = None;
+        self.guardado_json.clear();
+        self.resultado.clear();
+        self.stats.clear();
+        self.ultima = None;
+        self.error = None;
+        self.avisos.clear();
+        self.lazos.clear();
+    }
+
+    pub fn abrir_diagrama(&mut self) {
+        if let Some(r) = rfd::FileDialog::new().add_filter("Diagrama JSON", &["json"]).pick_file() {
+            if let Err(e) = self.abrir_de(&r) {
+                self.error = Some(e);
+            }
+        }
+    }
+
+    pub fn guardar_diagrama(&mut self) {
+        let ruta = self.archivo.clone().or_else(|| rfd::FileDialog::new().add_filter("Diagrama JSON", &["json"]).set_file_name("diagrama.json").save_file());
+        if let Some(r) = ruta {
+            if let Err(e) = self.guardar_en(&r) {
+                self.error = Some(e);
+            }
+        }
     }
 
     // ============================================================= Interfaz
 
     pub fn ui(&mut self, ui: &mut egui::Ui, motor: &mut Motor, c: &mut Compartido) {
-        egui::TopBottomPanel::top("barra_bloques").frame(tema::marco_panel()).show_inside(ui, |ui| self.barra(ui, motor));
-        egui::SidePanel::left("paleta").default_width(218.0).width_range(170.0..=320.0).frame(tema::marco_panel()).show_inside(ui, |ui| self.paleta(ui));
-        egui::SidePanel::right("inspector").default_width(300.0).width_range(240.0..=460.0).frame(tema::marco_panel()).show_inside(ui, |ui| self.inspector(ui, c));
+        let pal = tema::p();
+        let marco = |m: egui::Margin| egui::Frame::new().fill(pal.panel).inner_margin(m).stroke(Stroke::new(1.0_f32, pal.linea));
+        egui::SidePanel::left("paleta").default_width(232.0).width_range(190.0..=340.0).frame(marco(egui::Margin { left: 12, right: 12, top: 12, bottom: 8 })).show_inside(ui, |ui| self.paleta(ui));
+        egui::SidePanel::right("inspector").default_width(280.0).width_range(240.0..=460.0).frame(marco(egui::Margin::ZERO)).show_inside(ui, |ui| self.inspector(ui, c));
+        egui::TopBottomPanel::top("barra_bloques").exact_height(40.0).frame(marco(egui::Margin::symmetric(10, 0))).show_inside(ui, |ui| self.barra(ui, motor));
         if !self.resultado.is_empty() || self.error.is_some() || !self.stats.is_empty() {
             egui::TopBottomPanel::bottom("osciloscopios")
                 .resizable(true)
                 .default_height(self.alto_osc)
-                .height_range(120.0..=700.0)
-                .frame(tema::marco_panel())
+                .height_range(140.0..=700.0)
+                .frame(marco(egui::Margin::ZERO))
                 .show_inside(ui, |ui| self.osciloscopios(ui, c));
         }
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(tema::p().fondo)).show_inside(ui, |ui| self.lienzo(ui));
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.fondo)).show_inside(ui, |ui| self.lienzo(ui));
         if self.ver_lineal {
             let mut abierta = true;
             if let Some(inf) = self.lineal.as_mut() {
@@ -825,84 +1037,23 @@ impl Editor {
         }
     }
 
+    /// Barra del lienzo: edición, vista, linealización, migas de subsistema, leyenda y zoom.
     fn barra(&mut self, ui: &mut egui::Ui, motor: &mut Motor) {
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("Nuevo").clicked() {
-                self.instantanea();
-                self.diagrama = diagrama_vacio();
-                self.ruta.clear();
-                self.archivo = None;
-                self.resultado.clear();
-                self.stats.clear();
-            }
-            if ui.button("Abrir").clicked() {
-                if let Some(r) = rfd::FileDialog::new().add_filter("Diagrama JSON", &["json"]).pick_file() {
-                    if let Err(e) = self.abrir_de(&r) {
-                        self.error = Some(e);
-                    }
-                }
-            }
-            if ui.button("Guardar").clicked() {
-                let ruta = self.archivo.clone().or_else(|| rfd::FileDialog::new().add_filter("Diagrama JSON", &["json"]).set_file_name("diagrama.json").save_file());
-                if let Some(r) = ruta {
-                    match self.guardar_en(&r) {
-                        Ok(_) => self.archivo = Some(r),
-                        Err(e) => self.error = Some(e),
-                    }
-                }
-            }
-            egui::ComboBox::from_id_salt("ejemplos").selected_text("Ejemplos").width(110.0).show_ui(ui, |ui| {
-                for (k, n) in self.ejemplos.clone() {
-                    if ui.selectable_label(false, n).clicked() {
-                        self.pedir_ejemplo(motor, &k);
-                    }
-                }
-            });
-            ui.separator();
-            ui.add(egui::TextEdit::singleline(&mut self.diagrama.nombre).desired_width(180.0).hint_text("Nombre del diagrama"));
-            ui.separator();
-            if ui.add_enabled(!self.deshacer.is_empty(), egui::Button::new("↶")).on_hover_text("Deshacer (Ctrl+Z)").clicked() {
+        let pal = tema::p();
+        ui.horizontal_centered(|ui| {
+            if ui.add_enabled(!self.deshacer.is_empty(), egui::Button::new("↶").min_size(Vec2::new(30.0, 28.0))).on_hover_text("Deshacer (Ctrl+Z)").clicked() {
                 self.deshacer_ya();
             }
-            if ui.add_enabled(!self.rehacer.is_empty(), egui::Button::new("↷")).on_hover_text("Rehacer").clicked() {
+            if ui.add_enabled(!self.rehacer.is_empty(), egui::Button::new("↷").min_size(Vec2::new(30.0, 28.0))).on_hover_text("Rehacer (Ctrl+Mayús+Z)").clicked() {
                 self.rehacer_ya();
             }
-            if ui.button("Encuadrar").clicked() {
-                self.centrar = true;
+            if ui.button("Encuadrar").on_hover_text("Ajusta la vista a todo el diagrama").clicked() {
+                self.encuadrar();
             }
-            ui.separator();
-            let metodo = self.diagrama.solver.get("metodo").and_then(|v| v.as_str()).unwrap_or("dopri").to_string();
-            let etiqueta = |m: &str| match m {
-                "euler" => "Euler (fijo)",
-                "rk4" => "RK4 (fijo)",
-                "bdf" => "BDF (rígido)",
-                _ => "Dormand-Prince",
-            };
-            egui::ComboBox::from_id_salt("solver").selected_text(etiqueta(&metodo)).width(130.0).show_ui(ui, |ui| {
-                for m in ["euler", "rk4", "dopri", "bdf"] {
-                    if ui.selectable_label(metodo == m, etiqueta(m)).clicked() {
-                        self.diagrama.solver.insert("metodo".into(), json!(m));
-                    }
-                }
-            });
-            ui.label("Hasta");
-            let mut tf = valor_txt(self.diagrama.solver.get("t_fin"));
-            if ui.add(egui::TextEdit::singleline(&mut tf).desired_width(56.0)).changed() {
-                self.diagrama.solver.insert("t_fin".into(), texto_a_valor(&tf));
-            }
-            ui.label("s");
-            if self.id_sim.is_some() {
-                if ui.button("■ Detener").clicked() {
-                    motor.llamar("cancelar", json!({}));
-                }
-                ui.add(egui::ProgressBar::new(self.avance).desired_width(120.0).show_percentage());
-            } else if tema::boton_principal(ui, "▶ Simular").clicked() {
-                self.ejecutar(motor);
+            if ui.add(egui::Button::new("Ordenar cables").selected(self.ordenar_cables)).on_hover_text("Traza los cables en ángulo recto en lugar de en curva").clicked() {
+                self.ordenar_cables = !self.ordenar_cables;
             }
             let ocupado = self.id_lin.is_some() || self.id_sim.is_some();
-            if self.id_lin.is_some() {
-                ui.spinner();
-            }
             if ui
                 .add_enabled(!ocupado, egui::Button::new("Linealizar aquí"))
                 .on_hover_text("Modelo lineal en el punto de operación (simula hasta el final y refina con Newton). Entrada: la primera fuente. Salida: el bloque seleccionado o el primer osciloscopio. Abre su Bode, su escalón y sus polos.")
@@ -910,21 +1061,23 @@ impl Editor {
             {
                 self.linealizar(motor);
             }
-            if self.lineal.is_some() && !self.ver_lineal && ui.small_button("Ver modelo lineal").clicked() {
+            if self.id_lin.is_some() {
+                ui.spinner();
+            }
+            if self.lineal.is_some() && !self.ver_lineal && ui.button("Ver modelo lineal").clicked() {
                 self.ver_lineal = true;
             }
-        });
-        // Migas del camino dentro de los subsistemas
-        if !self.ruta.is_empty() {
-            ui.horizontal(|ui| {
-                if ui.small_button("Modelo").clicked() {
+            // Migas del camino dentro de los subsistemas
+            if !self.ruta.is_empty() {
+                ui.add_space(8.0);
+                if ui.add(egui::Button::new(egui::RichText::new("Modelo").color(pal.texto_3)).frame(false)).clicked() {
                     self.ruta.clear();
                     self.sel.clear();
                     self.centrar = true;
                 }
                 let r = self.ruta.clone();
                 for (i, p) in r.iter().enumerate() {
-                    ui.label(">");
+                    ui.label(egui::RichText::new("/").color(pal.texto_3));
                     let n = {
                         let mut s = &self.diagrama.sistema;
                         let mut nom = p.clone();
@@ -938,121 +1091,222 @@ impl Editor {
                         }
                         nom
                     };
-                    if ui.small_button(n).clicked() {
+                    let color = if i + 1 == r.len() { pal.texto } else { pal.texto_3 };
+                    if ui.add(egui::Button::new(egui::RichText::new(n).color(color)).frame(false)).clicked() {
                         self.ruta.truncate(i + 1);
                         self.sel.clear();
                         self.centrar = true;
                     }
                 }
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 12.0;
+                if ui.add(egui::Button::new(egui::RichText::new(format!("{:.0} %", self.zoom * 100.0)).font(tema::fuente_mono(12.0)).color(pal.texto_3)).frame(false)).on_hover_text("Volver al 100 %").clicked() {
+                    self.zoom = 1.0;
+                }
+                for (texto, color) in [("señal", pal.senal), ("eléctrica", pal.electrica)] {
+                    ui.label(egui::RichText::new(texto).size(12.0).color(pal.texto_3));
+                    let (r, _) = ui.allocate_exact_size(Vec2::new(14.0, 2.0), Sense::hover());
+                    ui.painter().rect_filled(r, 0.0, color);
+                }
             });
+        });
+    }
+
+    /// Fila de la librería: altura 28 px, fondo REALCE al pasar el puntero; se puede arrastrar.
+    fn fila_libreria(ui: &mut egui::Ui, texto: &str, sangria: f32, marca: Option<Color32>, color: Color32) -> egui::Response {
+        let (r, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::click_and_drag());
+        let pal = tema::p();
+        if resp.hovered() {
+            ui.painter().rect_filled(r, 5.0, pal.realce);
+        }
+        let mut x = r.left() + 8.0 + sangria;
+        if let Some(c) = marca {
+            tema::cuadrado(ui.painter(), Pos2::new(x + 4.0, r.center().y), c);
+            x += 16.0;
+        }
+        let recorte = Rect::from_min_max(r.min, Pos2::new(r.right() - 26.0, r.bottom()));
+        ui.painter().with_clip_rect(recorte).text(Pos2::new(x, r.center().y), Align2::LEFT_CENTER, texto, FontId::proportional(13.0), color);
+        resp
+    }
+
+    /// Arrastrar una ficha al lienzo la añade donde se suelta; el doble clic, en cascada.
+    fn atender_ficha(&mut self, r: &egui::Response, f: &Ficha) {
+        if r.hovered() && !f.doc.is_empty() {
+            r.clone().on_hover_text(primera_linea(&f.doc));
+        }
+        if r.drag_started() {
+            self.nuevo = Some(f.tipo.clone());
+        }
+        if r.double_clicked() {
+            self.agregar_al_centro(&f.tipo);
         }
     }
 
     fn paleta(&mut self, ui: &mut egui::Ui) {
-        tema::titulo(ui, "Librería de bloques");
-        ui.add(egui::TextEdit::singleline(&mut self.buscar).hint_text("Buscar bloque...").desired_width(f32::INFINITY));
+        let pal = tema::p();
+        tema::titulo(ui, "Librería");
+        ui.add_space(2.0);
+        egui::Frame::new().fill(pal.fondo).stroke(Stroke::new(1.0_f32, pal.borde)).corner_radius(6).inner_margin(egui::Margin::symmetric(8, 4)).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(Vec2::new(13.0, 18.0), Sense::hover());
+                let c = r.center() - Vec2::new(1.0, 1.0);
+                ui.painter().circle_stroke(c, 4.0, Stroke::new(1.5_f32, pal.texto_3));
+                ui.painter().line_segment([c + Vec2::new(3.0, 3.0), c + Vec2::new(5.5, 5.5)], Stroke::new(1.5_f32, pal.texto_3));
+                ui.add(egui::TextEdit::singleline(&mut self.buscar).hint_text("Filtrar…").frame(false).desired_width(f32::INFINITY));
+            });
+        });
         ui.add_space(4.0);
         if self.fichas.is_empty() {
-            ui.label(egui::RichText::new("Esperando al motor de cálculo...").color(tema::p().texto_2));
+            ui.label(egui::RichText::new("Esperando al motor de cálculo…").color(pal.texto_2));
             return;
         }
         let filtro = self.buscar.to_lowercase();
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for cat in self.orden_cat.clone() {
-                let mut items: Vec<Ficha> = self.fichas.values().filter(|f| f.categoria == cat && (filtro.is_empty() || f.nombre.to_lowercase().contains(&filtro))).cloned().collect();
+        let seccion = |ui: &mut egui::Ui, t: &str| {
+            ui.add_space(6.0);
+            ui.label(egui::RichText::new(t).size(11.0).color(pal.texto_3));
+        };
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 1.0;
+            if filtro.is_empty() && !self.recientes.is_empty() {
+                seccion(ui, "Recientes");
+                for t in self.recientes.clone() {
+                    let Some(f) = self.fichas.get(&t).cloned() else { continue };
+                    let r = Self::fila_libreria(ui, &f.nombre, 0.0, Some(color_ficha(&f).unwrap_or(pal.linea_fuerte)), pal.texto);
+                    self.atender_ficha(&r, &f);
+                }
+            }
+            seccion(ui, "Categorías");
+            for (grupo, cats) in self.grupos() {
+                let mut items: Vec<(String, Ficha)> = vec![];
+                for cat in &cats {
+                    let mut lista: Vec<Ficha> = self.fichas.values().filter(|f| &f.categoria == cat && (filtro.is_empty() || f.nombre.to_lowercase().contains(&filtro))).cloned().collect();
+                    lista.sort_by(|a, b| a.nombre.cmp(&b.nombre));
+                    items.extend(lista.into_iter().map(|f| (cat.clone(), f)));
+                }
                 if items.is_empty() {
                     continue;
                 }
-                items.sort_by(|a, b| a.nombre.cmp(&b.nombre));
-                let abierta = !filtro.is_empty() || self.cat_abiertas.contains(&cat);
-                let color = color_categoria(&cat);
-                // El color de la familia va en un cuadrado de 7 px; el nombre, en TEXTO
-                let cab = ui
-                    .horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 6.0;
-                        let a = ui.add(egui::Button::new(egui::RichText::new(if abierta { "▾" } else { "▸" }).color(tema::p().texto_2)).frame(false));
-                        let (r, _) = ui.allocate_exact_size(Vec2::new(7.0, 16.0), Sense::hover());
-                        tema::cuadrado(ui.painter(), r.center(), color);
-                        let b = ui.add(egui::Button::new(egui::RichText::new(&cat).color(tema::p().texto).family(tema::semi())).frame(false));
-                        a.union(b)
-                    })
-                    .inner;
-                if cab.clicked() {
+                let abierta = !filtro.is_empty() || self.cat_abiertas.contains(&grupo);
+                let r = Self::fila_libreria(ui, &grupo, 16.0, None, if abierta { pal.texto } else { pal.texto_2 });
+                let flecha = Pos2::new(r.rect.left() + 12.0, r.rect.center().y);
+                let puntos = if abierta {
+                    vec![flecha + Vec2::new(-3.5, -2.0), flecha + Vec2::new(0.0, 2.0), flecha + Vec2::new(3.5, -2.0)]
+                } else {
+                    vec![flecha + Vec2::new(-1.5, -3.5), flecha + Vec2::new(2.0, 0.0), flecha + Vec2::new(-1.5, 3.5)]
+                };
+                ui.painter().add(Shape::line(puntos, Stroke::new(1.4_f32, pal.texto_3)));
+                ui.painter().text(r.rect.right_center() - Vec2::new(8.0, 0.0), Align2::RIGHT_CENTER, items.len().to_string(), tema::fuente_mono(11.0), pal.texto_3);
+                if r.clicked() {
                     if abierta {
-                        self.cat_abiertas.remove(&cat);
+                        self.cat_abiertas.remove(&grupo);
                     } else {
-                        self.cat_abiertas.insert(cat.clone());
+                        self.cat_abiertas.insert(grupo.clone());
                     }
                 }
                 if abierta {
-                    for f in items {
-                        let r = ui.add(egui::Button::new(&f.nombre).sense(Sense::click_and_drag()).min_size(Vec2::new(ui.available_width(), 22.0)).fill(tema::p().campo));
-                        if r.hovered() {
-                            r.clone().on_hover_text(primera_linea(&f.doc));
+                    let subtitulos = cats.len() > 1;
+                    let mut actual = String::new();
+                    for (cat, f) in items {
+                        if subtitulos && cat != actual {
+                            let sub = cat.split(" · ").last().unwrap_or(&cat).to_string();
+                            ui.add_space(3.0);
+                            ui.horizontal(|ui| {
+                                ui.add_space(26.0);
+                                ui.label(egui::RichText::new(sub).size(11.0).color(pal.texto_3));
+                            });
+                            actual = cat;
                         }
-                        if r.drag_started() {
-                            self.nuevo = Some(f.tipo.clone());
-                        }
-                        if r.double_clicked() {
-                            let n = self.sistema().bloques.len() as f32;
-                            let pos = Vec2::new(120.0 + n * 16.0, 100.0 + n * 16.0);
-                            self.agregar(&f.tipo, pos);
-                        }
+                        let r = Self::fila_libreria(ui, &f.nombre, 18.0, None, pal.texto_2);
+                        self.atender_ficha(&r, &f);
                     }
                 }
             }
         });
+    }
+
+    /// Categorías de la librería agrupadas como en el diseño, en el orden del catálogo.
+    fn grupos(&self) -> Vec<(String, Vec<String>)> {
+        let mut v: Vec<(String, Vec<String>)> = vec![];
+        for cat in &self.orden_cat {
+            let g = grupo_de(cat);
+            match v.iter_mut().find(|(n, _)| *n == g) {
+                Some((_, l)) => l.push(cat.clone()),
+                None => v.push((g, vec![cat.clone()])),
+            }
+        }
+        v
     }
 
     fn inspector(&mut self, ui: &mut egui::Ui, c: &mut Compartido) {
         let unico = if self.sel.len() == 1 { self.sel.iter().next().cloned() } else { None };
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            if let Some(id) = unico {
-                self.inspector_bloque(ui, &id, c);
-            } else {
-                self.panel_solver(ui);
-                if self.sel.len() > 1 {
-                    ui.add_space(8.0);
-                    tema::tarjeta(ui, |ui| {
-                        ui.label(format!("{} bloques seleccionados", self.sel.len()));
-                        ui.horizontal(|ui| {
-                            if ui.button("Crear subsistema").clicked() {
-                                self.agrupar();
-                            }
-                            if ui.button("Duplicar").clicked() {
-                                self.duplicar();
-                            }
-                            if ui.button("Borrar").clicked() {
-                                self.borrar_seleccion();
-                            }
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            let m = egui::Margin { left: 16, right: 16, top: 14, bottom: 14 };
+            egui::Frame::new().inner_margin(m).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                if let Some(id) = unico {
+                    self.inspector_bloque(ui, &id, c);
+                } else {
+                    tema::titulo(ui, "Solver");
+                    ui.add_space(4.0);
+                    self.panel_solver(ui);
+                    if self.sel.len() > 1 {
+                        ui.add_space(8.0);
+                        tema::tarjeta(ui, |ui| {
+                            ui.label(format!("{} bloques seleccionados", self.sel.len()));
+                            ui.horizontal(|ui| {
+                                if ui.button("Crear subsistema").clicked() {
+                                    self.agrupar();
+                                }
+                                if ui.button("Duplicar").clicked() {
+                                    self.duplicar();
+                                }
+                                if ui.button("Borrar").clicked() {
+                                    self.borrar_seleccion();
+                                }
+                            });
                         });
-                    });
+                    }
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new(
+                        "Arrastra bloques desde la librería al lienzo. Une puertos tirando de uno a otro: triángulos para señales, cuadrados para conexiones eléctricas. Doble clic en un subsistema para entrar. Mueve el lienzo con el botón derecho o dos dedos.",
+                    ).small().color(tema::p().texto_3));
                 }
-                ui.add_space(8.0);
-                ui.label(egui::RichText::new(
-                    "Arrastra bloques desde la librería al lienzo. Une puertos tirando de uno a otro: triángulos para señales, cuadrados para conexiones eléctricas. Doble clic en un subsistema para entrar. Mueve el lienzo con el botón derecho o dos dedos.",
-                ).small().color(tema::p().texto_2));
-            }
+            });
+            tema::separador(ui);
+            egui::Frame::new().inner_margin(m).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                self.panel_ultima(ui);
+            });
         });
     }
 
-    fn panel_solver(&mut self, ui: &mut egui::Ui) {
-        tema::titulo(ui, "Solver");
+    /// Método, intervalo, paso y tolerancias del solver.
+    pub fn panel_solver(&mut self, ui: &mut egui::Ui) {
         let metodo = self.diagrama.solver.get("metodo").and_then(|v| v.as_str()).unwrap_or("dopri").to_string();
         let fijo = metodo == "euler" || metodo == "rk4";
         let d = &mut self.diagrama.solver;
-        egui::Grid::new("g_solver").num_columns(3).spacing([6.0, 6.0]).show(ui, |ui| {
+        egui::Grid::new("g_solver").num_columns(3).spacing([8.0, 8.0]).min_col_width(24.0).show(ui, |ui| {
+            ui.label(egui::RichText::new("Método").color(tema::p().texto_2));
+            egui::ComboBox::from_id_salt("solver").selected_text(etiqueta_metodo(&metodo)).width(130.0).show_ui(ui, |ui| {
+                for m in ["euler", "rk4", "dopri", "bdf"] {
+                    if ui.selectable_label(metodo == m, etiqueta_metodo(m)).clicked() {
+                        d.insert("metodo".into(), json!(m));
+                    }
+                }
+            });
+            ui.end_row();
             let mut campo = |ui: &mut egui::Ui, etiq: &str, k: &str, unidad: &str, ayuda: &str, def: &str, habilitado: bool| {
-                ui.label(etiq);
+                ui.label(egui::RichText::new(etiq).color(tema::p().texto_2));
                 let mut t = valor_txt(d.get(k));
                 if t.is_empty() {
                     t = def.to_string();
                 }
-                let r = ui.add_enabled(habilitado, egui::TextEdit::singleline(&mut t).desired_width(90.0)).on_hover_text(ayuda);
+                let r = ui.add_enabled(habilitado, egui::TextEdit::singleline(&mut t).font(tema::fuente_mono(12.0)).desired_width(120.0)).on_hover_text(ayuda);
                 if r.changed() {
                     d.insert(k.into(), texto_a_valor(&t));
                 }
-                ui.label(egui::RichText::new(unidad).color(tema::p().texto_2));
+                ui.label(egui::RichText::new(unidad).color(tema::p().texto_3));
                 ui.end_row();
             };
             campo(ui, "Inicio", "t_ini", "s", "Tiempo inicial de la simulación", "0", true);
@@ -1069,34 +1323,48 @@ impl Editor {
             "bdf" => "BDF de orden variable (1 a 5). Para sistemas rígidos, como cargas con constantes de tiempo muy distintas.",
             _ => "Dormand-Prince 5(4) con paso variable. Recomendado para modelos suaves.",
         };
-        ui.label(egui::RichText::new(txt).small().color(tema::p().texto_2));
-        ui.add_space(10.0);
-        self.panel_diagnostico(ui);
+        ui.label(egui::RichText::new(txt).small().color(tema::p().texto_3));
     }
 
-    /// Fallas, alertas y OK de la última simulación, cada uno con su cuadrado y su texto.
-    fn panel_diagnostico(&self, ui: &mut egui::Ui) {
-        tema::titulo(ui, "Diagnóstico");
-        tema::separador(ui);
-        let mut hay = false;
+    /// Estado, solver, paso y huella de la última simulación.
+    fn panel_ultima(&self, ui: &mut egui::Ui) {
+        let pal = tema::p();
+        tema::titulo(ui, "Última simulación");
+        ui.add_space(2.0);
+        let Some(u) = &self.ultima else {
+            ui.label(egui::RichText::new("Simula el modelo (F5) para ver su resultado.").color(pal.texto_3));
+            return;
+        };
         if let Some(e) = &self.error {
-            tema::estado(ui, tema::Nivel::Falla, e);
-            hay = true;
+            tema::estado(ui, tema::Nivel::Falla, "Terminó con error").on_hover_text(e);
+        } else if !self.avisos.is_empty() {
+            tema::estado(ui, tema::Nivel::Alerta, &format!("Completada con {} avisos", self.avisos.len()));
+        } else {
+            tema::estado(ui, tema::Nivel::Ok, "Completada sin avisos");
         }
-        for a in &self.avisos {
-            tema::estado(ui, tema::Nivel::Alerta, a);
-            hay = true;
-        }
-        if self.error.is_none() && !self.stats.is_empty() {
-            tema::estado(ui, tema::Nivel::Ok, "Simulación completada");
-            hay = true;
-        }
-        if !hay {
-            ui.label(egui::RichText::new("Simula el modelo para ver su diagnóstico.").small().color(tema::p().texto_2));
-        }
+        ui.add_space(2.0);
+        egui::Grid::new("g_ultima").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+            let fila = |ui: &mut egui::Ui, k: &str, v: &str, c: Color32| {
+                ui.label(egui::RichText::new(k).size(12.0).color(pal.texto_2));
+                ui.label(egui::RichText::new(v).font(tema::fuente_mono(12.0)).color(c))
+            };
+            fila(ui, "Solver", &u.solver, pal.texto);
+            ui.end_row();
+            fila(ui, "Paso", &u.paso, pal.texto);
+            ui.end_row();
+            if !u.huella.is_empty() {
+                let corta = format!("sha256 {}…", &u.huella[..u.huella.len().min(10)]);
+                let r = fila(ui, "Huella", &corta, pal.texto_2).interact(Sense::click()).on_hover_text(format!("{}\nClic para copiar", u.huella));
+                if r.clicked() {
+                    ui.ctx().copy_text(u.huella.clone());
+                }
+                ui.end_row();
+            }
+        });
     }
 
     fn inspector_bloque(&mut self, ui: &mut egui::Ui, id: &str, c: &mut Compartido) {
+        let pal = tema::p();
         let fichas = self.fichas.clone();
         let r = self.ruta.clone();
         let mut hacer: Option<&str> = None;
@@ -1106,66 +1374,86 @@ impl Editor {
             let s = nivel(&mut self.diagrama.sistema, &r);
             let Some(b) = s.bloques.iter_mut().find(|b| b.id == id) else { return };
             let ficha = fichas.get(&b.tipo).cloned().unwrap_or_default();
+            tema::titulo(ui, "Bloque seleccionado");
             ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(Vec2::new(8.0, 16.0), Sense::hover());
-                tema::cuadrado(ui.painter(), r.center(), color_categoria(&ficha.categoria));
-                ui.label(egui::RichText::new(if ficha.nombre.is_empty() { &b.tipo } else { &ficha.nombre }).size(15.0).family(tema::semi()).color(tema::p().texto));
+                ui.label(egui::RichText::new(if ficha.nombre.is_empty() { &b.tipo } else { &ficha.nombre }).size(18.0).family(tema::semi()).color(pal.texto));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(egui::Label::new(egui::RichText::new(&ficha.categoria).size(12.0).color(pal.texto_3)).truncate());
+                });
             });
-            ui.add(egui::TextEdit::singleline(&mut b.nombre).desired_width(f32::INFINITY).hint_text("Nombre en el lienzo"));
-            ui.add_space(4.0);
-            if !ficha.params.is_empty() {
-                tema::tarjeta(ui, |ui| {
-                    egui::Grid::new("g_param").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                        for p in &ficha.params {
-                            ui.label(&p.etiqueta);
-                            ui.horizontal(|ui| {
-                                let mut t = valor_txt(b.params.get(&p.nombre).or(Some(&p.defecto)));
-                                match p.tipo.as_str() {
-                                    "opcion" => {
-                                        egui::ComboBox::from_id_salt(&p.nombre).selected_text(&t).width(130.0).show_ui(ui, |ui| {
-                                            for o in &p.opciones {
-                                                if ui.selectable_label(&t == o, o).clicked() {
-                                                    b.params.insert(p.nombre.clone(), json!(o));
-                                                    cambio = true;
-                                                }
-                                            }
-                                        });
-                                    }
-                                    "codigo" => {
-                                        if ui.add(egui::TextEdit::multiline(&mut t).code_editor().desired_rows(4).desired_width(150.0)).changed() {
-                                            b.params.insert(p.nombre.clone(), json!(t));
-                                            cambio = true;
-                                        }
-                                    }
-                                    "ruta" => {
-                                        if ui.add(egui::TextEdit::singleline(&mut t).desired_width(100.0)).changed() {
-                                            b.params.insert(p.nombre.clone(), json!(t));
-                                        }
-                                        if ui.small_button("…").clicked() {
-                                            if let Some(a) = rfd::FileDialog::new().add_filter("Datos", &["csv", "parquet"]).pick_file() {
-                                                b.params.insert(p.nombre.clone(), json!(a.display().to_string()));
-                                            }
-                                        }
-                                    }
-                                    _ => {
-                                        if ui.add(egui::TextEdit::singleline(&mut t).desired_width(105.0)).changed() {
-                                            let v = if p.tipo == "num" { texto_a_valor(&t) } else { json!(t) };
-                                            b.params.insert(p.nombre.clone(), v);
-                                            cambio = true;
-                                        }
-                                        if !p.unidad.is_empty() {
-                                            ui.label(egui::RichText::new(&p.unidad).color(tema::p().texto_2));
-                                        }
+            ui.add_space(6.0);
+            egui::Grid::new("g_param").num_columns(3).spacing([8.0, 8.0]).min_col_width(24.0).show(ui, |ui| {
+                ui.label(egui::RichText::new("Nombre").size(12.0).color(pal.texto_2));
+                ui.add(egui::TextEdit::singleline(&mut b.nombre).desired_width(130.0).hint_text("Nombre en el lienzo"));
+                ui.end_row();
+                for p in &ficha.params {
+                    ui.add(egui::Label::new(egui::RichText::new(&p.etiqueta).size(12.0).color(pal.texto_2)).truncate()).on_hover_text(&p.etiqueta);
+                    let mut t = valor_txt(b.params.get(&p.nombre).or(Some(&p.defecto)));
+                    match p.tipo.as_str() {
+                        "opcion" => {
+                            egui::ComboBox::from_id_salt(&p.nombre).selected_text(egui::RichText::new(&t).font(tema::fuente_mono(12.0))).width(130.0).show_ui(ui, |ui| {
+                                for o in &p.opciones {
+                                    if ui.selectable_label(&t == o, o).clicked() {
+                                        b.params.insert(p.nombre.clone(), json!(o));
+                                        cambio = true;
                                     }
                                 }
                             });
-                            ui.end_row();
+                            ui.label("");
                         }
-                    });
-                });
-                ui.label(egui::RichText::new("Admite expresiones y variables del espacio de trabajo, como 2*pi*50 o Vdc/2.").small().color(tema::p().texto_2));
+                        "codigo" => {
+                            if ui.add(egui::TextEdit::multiline(&mut t).code_editor().desired_rows(4).desired_width(130.0)).changed() {
+                                b.params.insert(p.nombre.clone(), json!(t));
+                                cambio = true;
+                            }
+                            ui.label("");
+                        }
+                        "ruta" => {
+                            ui.horizontal(|ui| {
+                                if ui.add(egui::TextEdit::singleline(&mut t).font(tema::fuente_mono(12.0)).desired_width(100.0)).changed() {
+                                    b.params.insert(p.nombre.clone(), json!(t));
+                                }
+                                if ui.small_button("…").clicked() {
+                                    if let Some(a) = rfd::FileDialog::new().add_filter("Datos", &["csv", "parquet"]).pick_file() {
+                                        b.params.insert(p.nombre.clone(), json!(a.display().to_string()));
+                                    }
+                                }
+                            });
+                            ui.label("");
+                        }
+                        _ => {
+                            if ui.add(egui::TextEdit::singleline(&mut t).font(tema::fuente_mono(12.0)).desired_width(130.0)).changed() {
+                                let v = if p.tipo == "num" { texto_a_valor(&t) } else { json!(t) };
+                                b.params.insert(p.nombre.clone(), v);
+                                cambio = true;
+                            }
+                            ui.label(egui::RichText::new(&p.unidad).size(12.0).color(pal.texto_3));
+                        }
+                    }
+                    ui.end_row();
+                }
+            });
+            if !ficha.params.is_empty() {
+                ui.label(egui::RichText::new("Admite expresiones y variables del espacio de trabajo, como 2*pi*50 o Vdc/2.").small().color(pal.texto_3));
             }
-            ui.add_space(4.0);
+            let (puertos, _) = puertos_de(b, &fichas);
+            if !puertos.is_empty() {
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new("Puertos").size(12.0).color(pal.texto_2));
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+                    for q in &puertos {
+                        let (marca, color) = match q.clase {
+                            Clase::E | Clase::E3 => ("■", pal.electrica),
+                            _ => ("▸", pal.senal),
+                        };
+                        egui::Frame::new().stroke(Stroke::new(1.0_f32, pal.linea_fuerte)).corner_radius(4).inner_margin(egui::Margin::symmetric(6, 2)).show(ui, |ui| {
+                            ui.label(egui::RichText::new(format!("{marca} {}", q.nombre)).font(tema::fuente_mono(11.0)).color(color));
+                        });
+                    }
+                });
+            }
+            ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
                 if b.tipo == "subsistema" && ui.button("Entrar").clicked() {
                     entrar = true;
@@ -1180,10 +1468,11 @@ impl Editor {
                     hacer = Some("borrar");
                 }
             });
-            ui.add_space(6.0);
             if !ficha.doc.is_empty() {
-                tema::titulo(ui, "Ecuaciones");
-                ui.label(egui::RichText::new(&ficha.doc).family(egui::FontFamily::Monospace).size(12.5));
+                ui.add_space(4.0);
+                egui::CollapsingHeader::new(egui::RichText::new("Ecuaciones").size(12.0).color(pal.texto_2)).id_salt("ecuaciones").show(ui, |ui| {
+                    ui.label(egui::RichText::new(&ficha.doc).family(egui::FontFamily::Monospace).size(12.0));
+                });
             }
         }
         if cambio {
@@ -1205,51 +1494,142 @@ impl Editor {
         }
     }
 
+    /// Dock de resultados: una pestaña por osciloscopio y la de diagnóstico; leyenda y
+    /// exportación a la derecha de la gráfica.
     fn osciloscopios(&mut self, ui: &mut egui::Ui, c: &mut Compartido) {
-        // Pestañas a la izquierda (la activa con subrayado de 2 px) y el resumen a la derecha,
-        // recortado para que nunca se monte sobre ellas
         let pal = tema::p();
-        ui.horizontal(|ui| {
-            tema::titulo(ui, "Resultados");
-            ui.add_space(6.0);
-            for (i, (n, _)) in self.resultado.iter().enumerate() {
-                let activa = self.pestana == i;
-                let r = ui.add(egui::Button::new(egui::RichText::new(n).color(if activa { pal.texto } else { pal.texto_2 })).frame(false));
-                if activa {
-                    ui.painter().rect_filled(Rect::from_min_max(Pos2::new(r.rect.left(), r.rect.bottom() - 1.0), Pos2::new(r.rect.right(), r.rect.bottom() + 1.0)), 0.0, pal.acento);
+        let n_diag = self.avisos.len() + usize::from(self.error.is_some()) + self.lazos.len();
+        let i_diag = self.resultado.len();
+        if self.error.is_some() && self.resultado.is_empty() {
+            self.pestana = i_diag;
+        }
+        egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 0)).show(ui, |ui| {
+            ui.set_height(36.0);
+            ui.horizontal_centered(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.spacing_mut().button_padding.x = 12.0;
+                let pestana = |ui: &mut egui::Ui, texto: egui::WidgetText, activa: bool| -> bool {
+                    let r = ui.add(egui::Button::new(texto).frame(false).min_size(Vec2::new(0.0, 34.0)));
+                    if activa {
+                        ui.painter().rect_filled(Rect::from_min_max(Pos2::new(r.rect.left(), r.rect.bottom() - 2.0), r.rect.right_bottom()), 0.0, pal.acento);
+                    }
+                    r.clicked()
+                };
+                for (i, (n, _)) in self.resultado.iter().enumerate() {
+                    let activa = self.pestana == i;
+                    if pestana(ui, egui::RichText::new(n).color(if activa { pal.texto } else { pal.texto_2 }).into(), activa) {
+                        self.pestana = i;
+                    }
                 }
-                if r.clicked() {
-                    self.pestana = i;
+                let activa = self.pestana == i_diag;
+                let color_n = if self.error.is_some() || !self.lazos.is_empty() {
+                    pal.falla
+                } else if !self.avisos.is_empty() {
+                    pal.alerta
+                } else {
+                    pal.ok
+                };
+                let mut job = egui::text::LayoutJob::simple_format("Diagnóstico ".into(), egui::TextFormat::simple(FontId::proportional(13.0), if activa { pal.texto } else { pal.texto_2 }));
+                job.append(&n_diag.to_string(), 0.0, egui::TextFormat::simple(tema::fuente_mono(11.0), color_n));
+                if pestana(ui, job.into(), activa) {
+                    self.pestana = i_diag;
                 }
-            }
-            if !self.stats.is_empty() {
-                let ancho = ui.available_width();
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.set_max_width(ancho);
-                    ui.add(egui::Label::new(egui::RichText::new(&self.stats).font(tema::fuente_mono(11.0)).color(pal.texto_3)).truncate()).on_hover_text(&self.stats);
-                });
-            }
+                if !self.stats.is_empty() {
+                    ui.add_space(12.0);
+                    ui.add(egui::Label::new(egui::RichText::new(self.stats.replace("evaluaciones", "eval")).font(tema::fuente_mono(11.0)).color(pal.texto_3)).truncate()).on_hover_text(&self.stats);
+                }
+            });
         });
         tema::separador(ui);
-        if let Some(e) = &self.error {
-            tema::estado(ui, tema::Nivel::Falla, e);
-        }
-        for a in &self.avisos {
-            tema::estado(ui, tema::Nivel::Alerta, a);
-        }
-        let alto = (ui.available_height() - 34.0).max(90.0);
-        let i = self.pestana;
-        if let Some((_, f)) = self.resultado.get_mut(i) {
-            if let Some(acc) = grafica::mostrar(ui, f, egui::Id::new(("osc", i)), alto) {
-                c.exportar(ui.ctx(), acc, f);
+        egui::Frame::new().inner_margin(egui::Margin { left: 16, right: 16, top: 12, bottom: 12 }).show(ui, |ui| {
+            if self.pestana >= i_diag {
+                self.panel_diagnostico(ui);
+                return;
             }
-        } else if self.resultado.is_empty() && self.error.is_none() {
-            ui.label(egui::RichText::new("Añade un osciloscopio para ver señales.").color(tema::p().texto_2));
-        }
+            let alto = ui.available_height().max(90.0);
+            let i = self.pestana;
+            let Some((_, Figura::D2(f))) = self.resultado.get_mut(i) else { return };
+            let mut accion = None;
+            let mut rect_graf = Rect::NOTHING;
+            let mut rect_leyenda = Rect::NOTHING;
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 16.0;
+                let ancho = (ui.available_width() - 216.0).max(120.0);
+                rect_graf = ui
+                    .allocate_ui(Vec2::new(ancho, alto), |ui| {
+                        accion = f.mostrar_con(ui, alto, false, false);
+                    })
+                    .response
+                    .rect;
+                let leyenda = ui.vertical(|ui| {
+                    ui.set_width(200.0);
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    egui::ScrollArea::vertical().id_salt("leyenda_osc").max_height((alto - 40.0).max(30.0)).auto_shrink([false, true]).show(ui, |ui| {
+                        for (k, s) in f.series.iter_mut().enumerate() {
+                            let color = s.color.unwrap_or(pal.series[k % pal.series.len()]);
+                            ui.horizontal(|ui| {
+                                ui.checkbox(&mut s.visible, "");
+                                let (r, _) = ui.allocate_exact_size(Vec2::new(12.0, 14.0), Sense::hover());
+                                ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(2.0_f32, color));
+                                let n = if s.nombre.is_empty() { format!("serie {}", k + 1) } else { s.nombre.replace(": ", " · ") };
+                                ui.add(egui::Label::new(egui::RichText::new(n).size(12.0).color(pal.texto)).truncate());
+                            });
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("PNG").on_hover_text("Guardar como PNG").clicked() {
+                            accion = Some(grafica::Accion::Png(Rect::NOTHING));
+                        }
+                        if ui.button("SVG").on_hover_text("Guardar como SVG").clicked() {
+                            accion = Some(grafica::Accion::Svg);
+                        }
+                        if ui.button("CSV").on_hover_text("Guardar los datos como CSV").clicked() {
+                            accion = Some(grafica::Accion::Csv);
+                        }
+                    });
+                });
+                rect_leyenda = leyenda.response.rect;
+            });
+            if let Some(a) = accion {
+                let a = match a {
+                    grafica::Accion::Png(r) if r == Rect::NOTHING => grafica::Accion::Png(rect_graf.union(rect_leyenda)),
+                    a => a,
+                };
+                let fig = Figura::D2(f.clone());
+                c.exportar(ui.ctx(), a, &fig);
+            }
+        });
+    }
+
+    /// Fallas, alertas y lazos de la última simulación, cada uno con su punto y su texto.
+    fn panel_diagnostico(&self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            let mut hay = false;
+            if let Some(e) = &self.error {
+                tema::estado(ui, tema::Nivel::Falla, e);
+                hay = true;
+            }
+            for l in &self.lazos {
+                tema::estado(ui, tema::Nivel::Falla, &format!("Lazo algebraico: {}", l.join(" ↔ ")));
+                hay = true;
+            }
+            for a in &self.avisos {
+                tema::estado(ui, tema::Nivel::Alerta, a);
+                hay = true;
+            }
+            if !hay && !self.stats.is_empty() {
+                tema::estado(ui, tema::Nivel::Ok, "Simulación completada sin avisos");
+                ui.label(egui::RichText::new(&self.stats).font(tema::fuente_mono(11.0)).color(tema::p().texto_3));
+            } else if !hay {
+                ui.label(egui::RichText::new("Simula el modelo para ver su diagnóstico.").small().color(tema::p().texto_2));
+            }
+        });
     }
 
     fn lienzo(&mut self, ui: &mut egui::Ui) {
         let (area, resp) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+        self.area_lienzo = area;
         if self.centrar {
             self.ajustar_vista(area);
             self.centrar = false;
@@ -1258,22 +1638,8 @@ impl Editor {
         p.rect_filled(area, 0.0, tema::p().fondo);
         let origen = area.min.to_vec2() + self.pan;
         let z = self.zoom;
-        // Rejilla de puntos cada 20 px; en el modo claro, además líneas cada 100 px
-        let paso = 20.0 * z;
-        if tema::modo() == tema::Modo::Claro && paso * 5.0 > 12.0 {
-            let mayor = paso * 5.0;
-            let trazo = Stroke::new(1.0_f32, tema::p().linea);
-            let mut x = area.left() + (origen.x - area.left()).rem_euclid(mayor);
-            while x < area.right() {
-                p.line_segment([Pos2::new(x, area.top()), Pos2::new(x, area.bottom())], trazo);
-                x += mayor;
-            }
-            let mut y = area.top() + (origen.y - area.top()).rem_euclid(mayor);
-            while y < area.bottom() {
-                p.line_segment([Pos2::new(area.left(), y), Pos2::new(area.right(), y)], trazo);
-                y += mayor;
-            }
-        }
+        // Rejilla de puntos cada 16 px
+        let paso = 16.0 * z;
         if paso > 6.0 {
             let c = tema::p().rejilla;
             let inicio_x = area.left() + (origen.x - area.left()).rem_euclid(paso);
@@ -1282,7 +1648,7 @@ impl Editor {
             while x < area.right() {
                 let mut y = inicio_y;
                 while y < area.bottom() {
-                    p.circle_filled(Pos2::new(x, y), 1.0, c);
+                    p.rect_filled(Rect::from_center_size(Pos2::new(x, y), Vec2::splat(1.5)), 0.0, c);
                     y += paso;
                 }
                 x += paso;
@@ -1335,11 +1701,11 @@ impl Editor {
                 en_lazo.extend(aqui);
             }
         }
-        // Hilos: eléctricos 2 px en cobre, señales 1,25 px en cian; los de un lazo, discontinuos en FALLA
+        // Hilos: eléctricos 2 px en ámbar, señales 1,5 px en azul; los de un lazo, discontinuos en FALLA
         let mut hilo_cercano = None;
         for (ci, con) in s.conexiones.iter().enumerate() {
             let (Some(a), Some(b)) = (pos_puerto(&con.de.0, &con.de.1), pos_puerto(&con.a.0, &con.a.1)) else { continue };
-            let pts = curva(a.0, a.2, b.0, b.2, z);
+            let pts = if self.ordenar_cables { ortogonal(a.0, a.2, b.0, b.2, z) } else { curva(a.0, a.2, b.0, b.2, z) };
             let electrico = matches!(a.1, Clase::E | Clase::E3);
             let falla = en_lazo.contains(&con.de.0) && en_lazo.contains(&con.a.0);
             let mut trazo = tema::trazo_cable(electrico, falla);
@@ -1365,8 +1731,8 @@ impl Editor {
         }
         // Bloques
         let pal = tema::p();
-        let radio = tema::radio() as f32;
-        let fuente = tema::fuente_semi((10.5 * z).max(6.5));
+        let radio = tema::radio_ventana() as f32;
+        let fuente = tema::fuente_semi((11.0 * z).max(6.5));
         let fuente_p = FontId::proportional((10.0 * z).max(6.0));
         let fuente_param = tema::fuente_mono((10.0 * z).max(6.0));
         for (i, b) in s.bloques.iter().enumerate() {
@@ -1375,35 +1741,39 @@ impl Editor {
                 continue;
             }
             let fi = fichas.get(&b.tipo);
-            let cat = fi.map(|f| f.categoria.as_str()).unwrap_or("");
-            let color = color_categoria(cat);
+            let franja = if pu.iter().any(|(q, _)| matches!(q.clase, Clase::E | Clase::E3)) {
+                Some(pal.electrica)
+            } else {
+                fi.and_then(color_ficha)
+            };
             let sel = self.sel.contains(&b.id);
             let falla = en_lazo.contains(&b.id);
-            p.rect_filled(*rect, radio, pal.campo);
-            // Cabecera de 18 px en REALCE con la franja de 2 px de su familia
-            let cabeza = Rect::from_min_size(rect.min, Vec2::new(rect.width(), 18.0 * z));
-            p.rect_filled(cabeza, egui::CornerRadius { nw: radio as u8, ne: radio as u8, sw: 0, se: 0 }, pal.realce);
-            p.rect_filled(Rect::from_min_size(rect.min, Vec2::new(rect.width(), 2.0 * z.max(0.5))), egui::CornerRadius { nw: radio as u8, ne: radio as u8, sw: 0, se: 0 }, color);
-            p.line_segment([cabeza.left_bottom(), cabeza.right_bottom()], Stroke::new(1.0_f32, pal.linea));
-            p.rect_stroke(*rect, radio, Stroke::new(1.0_f32, if falla { pal.falla } else { pal.linea_fuerte }), egui::StrokeKind::Inside);
             if sel {
-                // Selección: contorno de 1,5 px a 4 px del nodo y cuatro tiradores de 6 px
-                let fuera = rect.expand(4.0);
-                p.rect_stroke(fuera, radio, Stroke::new(1.5_f32, pal.acento), egui::StrokeKind::Middle);
-                for esquina in [fuera.left_top(), fuera.right_top(), fuera.left_bottom(), fuera.right_bottom()] {
-                    p.rect_filled(Rect::from_center_size(esquina, Vec2::splat(6.0)), 0.0, pal.acento);
-                }
+                // Selección: halo de 3 px en ACENTO translúcido y borde en ACENTO
+                p.rect_filled(rect.expand(3.0), radio + 3.0, pal.acento.gamma_multiply(0.18));
             }
+            p.rect_filled(*rect, radio, pal.nodo);
+            if let Some(c) = franja {
+                p.rect_filled(Rect::from_min_size(rect.min, Vec2::new(rect.width(), 2.0 * z.max(0.75))), egui::CornerRadius { nw: radio as u8, ne: radio as u8, sw: 0, se: 0 }, c);
+            }
+            let borde = if falla {
+                pal.falla
+            } else if sel {
+                pal.acento
+            } else {
+                pal.linea_fuerte
+            };
+            p.rect_stroke(*rect, radio, Stroke::new(1.0_f32, borde), egui::StrokeKind::Inside);
             let nombre = if b.nombre.is_empty() { fi.map(|f| f.nombre.as_str()).unwrap_or(&b.tipo) } else { &b.nombre };
             let pin = p.with_clip_rect(rect.shrink(2.0));
-            pin.text(rect.left_top() + Vec2::new(8.0 * z, 10.0 * z), Align2::LEFT_CENTER, nombre, fuente.clone(), pal.texto);
+            pin.text(rect.left_top() + Vec2::new(8.0 * z, 11.0 * z), Align2::LEFT_CENTER, nombre, fuente.clone(), pal.texto);
             if b.tipo == "subsistema" {
                 pin.text(rect.right_top() + Vec2::new(-8.0 * z, 10.0 * z), Align2::RIGHT_CENTER, "⊞", fuente.clone(), pal.texto_2);
             }
             if z > 0.45 {
                 let par = parametro_principal(b, fi);
                 if !par.is_empty() {
-                    pin.text(Pos2::new(rect.center().x, rect.bottom() - 8.0 * z), Align2::CENTER_CENTER, par, fuente_param.clone(), pal.texto_3);
+                    pin.text(Pos2::new(rect.left() + 8.0 * z, rect.bottom() - 9.0 * z), Align2::LEFT_CENTER, par, fuente_param.clone(), pal.texto_3);
                 }
             }
             for (q, pp) in pu {
@@ -1415,7 +1785,7 @@ impl Editor {
                     }
                     Clase::E3 => {
                         p.rect_filled(Rect::from_center_size(*pp, Vec2::new(t * 1.6, t * 2.2)), 0.0, color_p);
-                        p.line_segment([*pp + Vec2::new(-t * 0.8, 0.0), *pp + Vec2::new(t * 0.8, 0.0)], Stroke::new(1.0_f32, pal.campo));
+                        p.line_segment([*pp + Vec2::new(-t * 0.8, 0.0), *pp + Vec2::new(t * 0.8, 0.0)], Stroke::new(1.0_f32, pal.nodo));
                     }
                     Clase::Entrada => {
                         p.add(Shape::convex_polygon(vec![*pp + Vec2::new(-t * 0.5, -t), *pp + Vec2::new(t, 0.0), *pp + Vec2::new(-t * 0.5, t)], color_p, Stroke::NONE));
@@ -1538,7 +1908,8 @@ impl Editor {
             Arrastre::Lienzo if resp.dragged() => pan_d = resp.drag_delta(),
             Arrastre::Hilo { clase, inicio, .. } if resp.dragged() => {
                 if let Some(pp) = resp.interact_pointer_pos() {
-                    let pts = curva(*inicio, *clase == Clase::Entrada, pp, *clase != Clase::Entrada, z);
+                    let (a_izq, b_izq) = (*clase == Clase::Entrada, *clase != Clase::Entrada);
+                    let pts = if self.ordenar_cables { ortogonal(*inicio, a_izq, pp, b_izq, z) } else { curva(*inicio, a_izq, pp, b_izq, z) };
                     p.add(Shape::line(pts, tema::trazo_cable(matches!(clase, Clase::E | Clase::E3), false)));
                 }
             }
@@ -1615,7 +1986,7 @@ impl Editor {
             if let Some(pp) = puntero {
                 let capa = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("fantasma")));
                 let r = Rect::from_center_size(pp, Vec2::new(ANCHO, 46.0) * self.zoom);
-                capa.rect(r, tema::radio() as f32, tema::p().campo, Stroke::new(1.5_f32, tema::p().acento), egui::StrokeKind::Middle);
+                capa.rect(r, tema::radio_ventana() as f32, tema::p().nodo, Stroke::new(1.5_f32, tema::p().acento), egui::StrokeKind::Middle);
                 capa.text(r.center(), Align2::CENTER_CENTER, fichas.get(&tipo).map(|f| f.nombre.as_str()).unwrap_or(&tipo), FontId::proportional(12.0), tema::p().texto);
             }
             if ui.input(|i| i.pointer.any_released()) {
@@ -1658,6 +2029,50 @@ impl Editor {
         // Texto de ayuda con el lienzo vacío
         if vacio {
             p.text(area.center(), Align2::CENTER_CENTER, "Arrastra bloques desde la librería o abre un ejemplo", FontId::proportional(16.0), tema::p().texto_2);
+        } else {
+            self.minimapa(ui, area);
+        }
+    }
+
+    /// Minimapa de 140 × 84 px abajo a la derecha: los bloques del nivel y la vista actual.
+    /// Un clic o un arrastre centra la vista en ese punto.
+    fn minimapa(&mut self, ui: &mut egui::Ui, area: Rect) {
+        let pal = tema::p();
+        let caja = Rect::from_min_size(area.right_bottom() - Vec2::new(152.0, 96.0), Vec2::new(140.0, 84.0));
+        if !area.contains_rect(caja.expand(4.0)) {
+            return;
+        }
+        let fichas = &self.fichas;
+        let s = nivel_ref(&self.diagrama.sistema, &self.ruta);
+        let bloques: Vec<(Rect, Option<Color32>)> = s
+            .bloques
+            .iter()
+            .map(|b| {
+                let (pu, alto) = puertos_de(b, fichas);
+                let franja = if pu.iter().any(|q| matches!(q.clase, Clase::E | Clase::E3)) { Some(pal.electrica) } else { fichas.get(&b.tipo).and_then(color_ficha) };
+                (Rect::from_min_size(Pos2::new(b.x, b.y), Vec2::new(ANCHO, alto)), franja)
+            })
+            .collect();
+        // La vista, en coordenadas del diagrama
+        let vista = Rect::from_min_max((-self.pan / self.zoom).to_pos2(), ((area.size() - self.pan) / self.zoom).to_pos2());
+        let mundo = bloques.iter().fold(vista, |m, (r, _)| m.union(*r));
+        let dentro = caja.shrink(8.0);
+        let k = (dentro.width() / mundo.width()).min(dentro.height() / mundo.height());
+        let base = dentro.center() - mundo.center().to_vec2() * k;
+        let a_mini = |q: Pos2| base + q.to_vec2() * k;
+        let resp = ui.interact(caja, ui.id().with("minimapa"), Sense::click_and_drag());
+        let p = ui.painter_at(caja.expand(1.0));
+        p.rect(caja, 6.0, pal.panel.gamma_multiply(0.92), Stroke::new(1.0_f32, pal.borde), egui::StrokeKind::Inside);
+        for (r, franja) in &bloques {
+            let m = Rect::from_min_max(a_mini(r.min), a_mini(r.max));
+            p.rect_filled(m, 1.0, franja.unwrap_or(pal.linea_fuerte).gamma_multiply(0.6));
+        }
+        p.rect_stroke(Rect::from_min_max(a_mini(vista.min), a_mini(vista.max)), 3.0, Stroke::new(1.0_f32, pal.acento.gamma_multiply(0.8)), egui::StrokeKind::Middle);
+        if resp.is_pointer_button_down_on() {
+            if let Some(pp) = resp.interact_pointer_pos() {
+                let w = ((pp - base) / k).to_pos2();
+                self.pan = area.size() / 2.0 - w.to_vec2() * self.zoom;
+            }
         }
     }
 }
@@ -1702,6 +2117,41 @@ mod pruebas {
     use super::*;
     use crate::motor::Mensaje;
 
+    #[test]
+    fn un_cable_ortogonal_hacia_atras_no_recorre_la_fila_de_sus_extremos() {
+        // Salida a la derecha de un bloque e entrada a la izquierda de otro situado detrás, a la misma altura
+        let (a, b) = (Pos2::new(300.0, 100.0), Pos2::new(100.0, 100.0));
+        let pts = ortogonal(a, false, b, true, 1.0);
+        assert_eq!((pts[0], *pts.last().unwrap()), (a, b));
+        for w in pts.windows(2) {
+            let horizontal = w[0].y == w[1].y;
+            let largo = (w[0].x - w[1].x).abs();
+            assert!(!(horizontal && w[0].y == 100.0 && largo > 20.0), "tramo largo sobre la fila: {w:?}");
+        }
+        // Cada tramo es horizontal o vertical
+        assert!(pts.windows(2).all(|w| w[0].x == w[1].x || w[0].y == w[1].y));
+    }
+
+    #[test]
+    fn abrir_un_json_que_no_es_diagrama_no_cambia_ni_el_archivo_ni_el_estado_guardado() {
+        let dir = std::env::temp_dir().join(format!("heliora_abrir_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut e = Editor::nuevo();
+        e.diagrama.nombre = "original".into();
+        let bueno = dir.join("bueno.json");
+        e.guardar_en(&bueno).unwrap();
+        assert!(!e.sucio());
+        let malo = dir.join("proyecto.json");
+        std::fs::write(&malo, br#"{"formato": "heliora-proyecto/1", "sistema": 3}"#).unwrap();
+        assert!(e.abrir_de(&malo).is_err());
+        assert_eq!(e.archivo.as_deref(), Some(bueno.as_path()));
+        assert_eq!(e.diagrama.nombre, "original");
+        assert!(!e.sucio());
+        e.diagrama.nombre = "editado".into();
+        assert!(e.sucio());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Espera la respuesta a una petición del motor real.
     fn esperar(m: &mut Motor, id: u64) -> Value {
         for _ in 0..6000 {
@@ -1735,7 +2185,7 @@ mod pruebas {
     fn ejemplo(m: &mut Motor, e: &mut Editor, clave: &str) {
         let id = m.llamar("ejemplo", json!({"clave": clave}));
         let v = esperar(m, id);
-        e.cargar_valor(&v);
+        e.cargar_valor(&v).unwrap();
     }
 
     fn simular(m: &mut Motor, e: &Editor) -> Value {
@@ -1757,7 +2207,7 @@ mod pruebas {
         // Sigue funcionando tras guardar y volver a leer el diagrama
         let t = serde_json::to_string(&e.diagrama).unwrap();
         let v: Value = serde_json::from_str(&t).unwrap();
-        e.cargar_valor(&v);
+        e.cargar_valor(&v).unwrap();
         assert!((valor_final(&simular(&mut m, &e), 0) - antes).abs() < 1e-6);
     }
 

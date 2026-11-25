@@ -1,8 +1,8 @@
-//! Identidad visual «Instrumento» (oscuro) con su modo día «Laboratorio» (claro).
+//! Identidad visual «Sala de control»: modo oscuro «Instrumento» y modo claro «Laboratorio».
 //! Mismos nombres de color en los dos modos; todo widget lee su color de `p()` (la paleta del
-//! modo activo). Un color, un papel: el acento solo para la acción principal y la selección,
-//! señal y eléctrica para cables y puertos, OK / ALERTA / FALLA solo para estados (con forma y texto).
-use egui::{Color32, CornerRadius, FontFamily, FontId, Margin, Pos2, Rect, Shadow, Shape, Stroke, TextStyle, Vec2};
+//! modo activo). Un color, un papel: el ámbar para la acción principal, la selección y los cables
+//! eléctricos; el azul para las señales; OK / ALERTA / FALLA solo para estados (con forma y texto).
+use egui::{Color32, CornerRadius, FontFamily, FontId, Margin, Pos2, Rect, Shadow, Stroke, TextStyle, Vec2};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -25,20 +25,40 @@ impl Modo {
             Modo::Oscuro
         }
     }
+    /// Nombre del modo en la interfaz.
+    pub fn nombre(self) -> &'static str {
+        match self {
+            Modo::Oscuro => "Instrumento",
+            Modo::Claro => "Claro",
+        }
+    }
 }
 
 pub struct Paleta {
+    /// Lienzo y superficies de trabajo.
     pub fondo: Color32,
+    /// Barras, paneles laterales y dock.
     pub panel: Color32,
+    /// Campos destacados (la píldora del solver, filas activas).
     pub campo: Color32,
+    /// Cuerpo de los nodos del lienzo y de las tarjetas.
+    pub nodo: Color32,
+    /// Fondo al pasar el puntero.
     pub realce: Color32,
+    /// Separadores entre zonas.
     pub linea: Color32,
+    /// Borde de botones y campos.
+    pub borde: Color32,
+    /// Borde de nodos y bordes al pasar el puntero.
     pub linea_fuerte: Color32,
     pub texto: Color32,
     pub texto_2: Color32,
     pub texto_3: Color32,
     pub acento: Color32,
     pub sobre_acento: Color32,
+    /// Fondo del módulo activo en el riel.
+    pub acento_fondo: Color32,
+    /// Enlaces.
     pub acento_2: Color32,
     pub senal: Color32,
     pub electrica: Color32,
@@ -48,11 +68,6 @@ pub struct Paleta {
     pub falla_fondo: Color32,
     pub rejilla: Color32,
     pub series: [Color32; 5],
-    // Marca y familias de bloques (solo para la franja de cabecera y los cuadrados de categoría)
-    pub sol: Color32,
-    pub horizonte: Color32,
-    pub estructura: Color32,
-    pub familias: [Color32; 6],
 }
 
 const fn c(r: u8, g: u8, b: u8) -> Color32 {
@@ -60,57 +75,55 @@ const fn c(r: u8, g: u8, b: u8) -> Color32 {
 }
 
 pub const OSCURO: Paleta = Paleta {
-    fondo: c(13, 16, 21),           // #0D1015
-    panel: c(20, 25, 32),           // #141920
-    campo: c(27, 33, 42),           // #1B212A
-    realce: c(36, 43, 54),          // #242B36
-    linea: c(44, 52, 64),           // #2C3440
-    linea_fuerte: c(69, 80, 95),    // #45505F
-    texto: c(231, 235, 240),        // #E7EBF0
-    texto_2: c(163, 173, 186),      // #A3ADBA
-    texto_3: c(123, 134, 150),      // #7B8696
+    fondo: c(11, 13, 16),           // #0B0D10
+    panel: c(14, 17, 20),           // #0E1114
+    campo: c(17, 21, 26),           // #11151A
+    nodo: c(20, 24, 29),            // #14181D
+    realce: c(23, 27, 33),          // #171B21
+    linea: c(30, 35, 42),           // #1E232A
+    borde: c(38, 43, 51),           // #262B33
+    linea_fuerte: c(42, 48, 57),    // #2A3039
+    texto: c(228, 231, 236),        // #E4E7EC
+    texto_2: c(152, 160, 172),      // #98A0AC
+    texto_3: c(125, 133, 146),      // #7D8592
     acento: c(242, 169, 59),        // #F2A93B
-    sobre_acento: c(26, 18, 4),     // #1A1204
-    acento_2: c(76, 195, 217),      // #4CC3D9
-    senal: c(76, 195, 217),         // #4CC3D9
-    electrica: c(217, 134, 78),     // #D9864E
-    ok: c(69, 196, 130),            // #45C482
+    sobre_acento: c(26, 18, 5),     // #1A1205
+    acento_fondo: c(26, 23, 18),    // #1A1712
+    acento_2: c(255, 196, 107),     // #FFC46B
+    senal: c(77, 181, 217),         // #4DB5D9
+    electrica: c(242, 169, 59),     // #F2A93B
+    ok: c(63, 178, 127),            // #3FB27F
     alerta: c(240, 210, 78),        // #F0D24E
     falla: c(242, 90, 95),          // #F25A5F
     falla_fondo: c(58, 23, 25),     // #3A1719
-    rejilla: c(42, 50, 61),         // #2A323D
-    series: [c(242, 169, 59), c(76, 195, 217), c(179, 157, 240), c(229, 143, 181), c(159, 180, 200)],
-    sol: c(242, 169, 59),
-    horizonte: c(255, 214, 120),    // #FFD678
-    estructura: c(76, 195, 217),
-    familias: [c(76, 195, 217), c(217, 134, 78), c(179, 157, 240), c(229, 143, 181), c(159, 180, 200), c(242, 169, 59)],
+    rejilla: c(28, 33, 40),         // #1C2128
+    series: [c(242, 169, 59), c(77, 181, 217), c(167, 139, 250), c(229, 143, 181), c(159, 180, 200)],
 };
 
 pub const CLARO: Paleta = Paleta {
-    fondo: c(247, 248, 250),        // #F7F8FA
+    fondo: c(243, 244, 246),        // #F3F4F6
     panel: c(255, 255, 255),        // #FFFFFF
-    campo: c(242, 244, 247),        // #F2F4F7
-    realce: c(231, 234, 239),       // #E7EAEF
-    linea: c(211, 216, 223),        // #D3D8DF
-    linea_fuerte: c(140, 149, 161), // #8C95A1
-    texto: c(17, 21, 27),           // #11151B
-    texto_2: c(70, 80, 96),         // #465060
-    texto_3: c(95, 104, 118),       // #5F6876
-    acento: c(31, 95, 209),         // #1F5FD1
-    sobre_acento: c(255, 255, 255),
-    acento_2: c(217, 133, 0),       // #D98500 (solo marca)
-    senal: c(31, 95, 209),          // #1F5FD1
-    electrica: c(181, 82, 15),      // #B5520F
-    ok: c(24, 121, 74),             // #18794A
+    campo: c(246, 247, 249),        // #F6F7F9
+    nodo: c(255, 255, 255),         // #FFFFFF
+    realce: c(238, 240, 243),       // #EEF0F3
+    linea: c(227, 230, 234),        // #E3E6EA
+    borde: c(213, 217, 223),        // #D5D9DF
+    linea_fuerte: c(205, 210, 217), // #CDD2D9
+    texto: c(27, 32, 40),           // #1B2028
+    texto_2: c(90, 99, 112),        // #5A6370
+    texto_3: c(95, 104, 117),       // #5F6875
+    acento: c(201, 122, 6),         // #C97A06
+    sobre_acento: c(26, 18, 5),     // #1A1205
+    acento_fondo: c(253, 241, 220), // #FDF1DC
+    acento_2: c(154, 93, 0),        // #9A5D00
+    senal: c(28, 127, 176),         // #1C7FB0
+    electrica: c(201, 122, 6),      // #C97A06
+    ok: c(30, 158, 99),             // #1E9E63
     alerta: c(154, 98, 0),          // #9A6200
     falla: c(196, 43, 43),          // #C42B2B
     falla_fondo: c(251, 228, 228),  // #FBE4E4
-    rejilla: c(201, 207, 215),      // #C9CFD7
-    series: [c(31, 95, 209), c(217, 119, 6), c(15, 138, 125), c(142, 68, 173), c(91, 100, 114)],
-    sol: c(227, 154, 18),           // #E39A12
-    horizonte: c(217, 133, 0),
-    estructura: c(17, 21, 27),
-    familias: [c(31, 95, 209), c(181, 82, 15), c(142, 68, 173), c(15, 138, 125), c(91, 100, 114), c(217, 119, 6)],
+    rejilla: c(211, 216, 222),      // #D3D8DE
+    series: [c(201, 122, 6), c(28, 127, 176), c(124, 92, 214), c(15, 138, 125), c(91, 100, 114)],
 };
 
 static CLARO_ACTIVO: AtomicBool = AtomicBool::new(false);
@@ -136,47 +149,35 @@ pub fn p() -> &'static Paleta {
     paleta(modo())
 }
 
-/// Radio de los widgets (2 px; 3 en claro) y de ventanas y tarjetas (4 px; 6 en claro).
+/// Radio de los widgets (5 px) y de ventanas, nodos y tarjetas (6 px).
 pub fn radio() -> u8 {
-    if modo() == Modo::Claro {
-        3
-    } else {
-        2
-    }
+    5
 }
 pub fn radio_ventana() -> u8 {
-    if modo() == Modo::Claro {
-        6
-    } else {
-        4
-    }
+    6
 }
 
 pub fn aplicar(ctx: &egui::Context, m: Modo) {
     CLARO_ACTIVO.store(m == Modo::Claro, Ordering::Relaxed);
     configurar_fuentes(ctx);
     let p = paleta(m);
-    let (radio, radio_ventana) = match m {
-        Modo::Oscuro => (2, 4),
-        Modo::Claro => (3, 6),
-    };
-    let esq = CornerRadius::same(radio);
+    let esq = CornerRadius::same(radio());
     let mut v = if m == Modo::Oscuro { egui::Visuals::dark() } else { egui::Visuals::light() };
     v.override_text_color = Some(p.texto);
     v.panel_fill = p.panel;
     v.window_fill = p.panel;
-    v.extreme_bg_color = p.campo;
-    v.faint_bg_color = p.fondo;
+    v.extreme_bg_color = p.panel;
+    v.faint_bg_color = p.campo;
     v.code_bg_color = p.fondo;
     v.hyperlink_color = p.acento_2;
-    v.selection.bg_fill = p.acento.linear_multiply(0.35);
+    v.selection.bg_fill = p.acento.linear_multiply(0.30);
     v.selection.stroke = Stroke::new(1.0_f32, p.acento);
-    v.window_stroke = Stroke::new(1.0_f32, p.linea);
-    v.window_corner_radius = CornerRadius::same(radio_ventana);
-    v.menu_corner_radius = CornerRadius::same(radio_ventana);
+    v.window_stroke = Stroke::new(1.0_f32, p.borde);
+    v.window_corner_radius = CornerRadius::same(8);
+    v.menu_corner_radius = CornerRadius::same(radio_ventana());
     v.window_shadow = match m {
-        Modo::Oscuro => Shadow { offset: [0, 2], blur: 8, spread: 0, color: Color32::from_black_alpha(102) },
-        Modo::Claro => Shadow { offset: [0, 4], blur: 12, spread: 0, color: Color32::from_rgba_unmultiplied(16, 24, 40, 31) },
+        Modo::Oscuro => Shadow { offset: [0, 4], blur: 16, spread: 0, color: Color32::from_black_alpha(120) },
+        Modo::Claro => Shadow { offset: [0, 4], blur: 14, spread: 0, color: Color32::from_rgba_unmultiplied(16, 24, 40, 28) },
     };
     v.popup_shadow = v.window_shadow;
     let w = &mut v.widgets;
@@ -184,9 +185,10 @@ pub fn aplicar(ctx: &egui::Context, m: Modo) {
     w.noninteractive.weak_bg_fill = p.panel;
     w.noninteractive.bg_stroke = Stroke::new(1.0_f32, p.linea);
     w.noninteractive.fg_stroke = Stroke::new(1.0_f32, p.texto_2);
-    w.inactive.bg_fill = p.campo;
-    w.inactive.weak_bg_fill = p.campo;
-    w.inactive.bg_stroke = Stroke::new(1.0_f32, p.linea);
+    // Botones transparentes con borde, como en el diseño; al pasar el puntero, fondo REALCE
+    w.inactive.bg_fill = p.panel;
+    w.inactive.weak_bg_fill = Color32::TRANSPARENT;
+    w.inactive.bg_stroke = Stroke::new(1.0_f32, p.borde);
     w.inactive.fg_stroke = Stroke::new(1.0_f32, p.texto);
     w.hovered.bg_fill = p.realce;
     w.hovered.weak_bg_fill = p.realce;
@@ -202,19 +204,15 @@ pub fn aplicar(ctx: &egui::Context, m: Modo) {
     }
     ctx.set_visuals(v);
     ctx.style_mut(|s| {
-        let (is, bp, iy, mg, base) = match m {
-            Modo::Oscuro => (Vec2::new(6.0, 4.0), Vec2::new(8.0, 3.0), 22.0, 8, 13.0),
-            Modo::Claro => (Vec2::new(8.0, 6.0), Vec2::new(10.0, 4.0), 26.0, 12, 14.0),
-        };
-        s.spacing.item_spacing = is;
-        s.spacing.button_padding = bp;
-        s.spacing.interact_size.y = iy;
-        s.spacing.window_margin = Margin::same(mg);
-        s.text_styles.insert(TextStyle::Heading, FontId::new(base + 7.0, FontFamily::Proportional));
-        s.text_styles.insert(TextStyle::Body, FontId::new(base, FontFamily::Proportional));
-        s.text_styles.insert(TextStyle::Button, FontId::new(base, FontFamily::Proportional));
-        s.text_styles.insert(TextStyle::Small, FontId::new(base - 1.5, FontFamily::Proportional));
-        s.text_styles.insert(TextStyle::Monospace, FontId::new(base - 0.5, FontFamily::Monospace));
+        s.spacing.item_spacing = Vec2::new(6.0, 6.0);
+        s.spacing.button_padding = Vec2::new(10.0, 4.0);
+        s.spacing.interact_size.y = 26.0;
+        s.spacing.window_margin = Margin::same(12);
+        s.text_styles.insert(TextStyle::Heading, FontId::new(18.0, FontFamily::Name("titulo".into())));
+        s.text_styles.insert(TextStyle::Body, FontId::new(13.0, FontFamily::Proportional));
+        s.text_styles.insert(TextStyle::Button, FontId::new(13.0, FontFamily::Proportional));
+        s.text_styles.insert(TextStyle::Small, FontId::new(11.5, FontFamily::Proportional));
+        s.text_styles.insert(TextStyle::Monospace, FontId::new(12.0, FontFamily::Monospace));
     });
 }
 
@@ -277,13 +275,10 @@ pub fn fuente_mono(tam: f32) -> FontId {
     FontId::new(tam, FontFamily::Monospace)
 }
 
-/// Título de panel: 11 px, semibold, mayúsculas, TEXTO_2 (en claro, 13 px y TEXTO).
+/// Título de sección: 11 px, semibold, mayúsculas con espaciado fino, en TEXTO_3.
 pub fn titulo(ui: &mut egui::Ui, t: &str) {
-    let m = modo();
-    let p = paleta(m);
-    let txt = if m == Modo::Oscuro { t.to_uppercase() } else { t.to_string() };
-    let size = if m == Modo::Oscuro { 11.0 } else { 13.0 };
-    ui.label(egui::RichText::new(txt).family(semi()).size(size).color(if m == Modo::Oscuro { p.texto_2 } else { p.texto }));
+    let txt: String = t.to_uppercase().chars().flat_map(|c| [c, '\u{200A}']).collect();
+    ui.label(egui::RichText::new(txt.trim_end()).family(semi()).size(11.0).color(p().texto_3));
 }
 
 /// Única acción primaria por pantalla (p. ej. «Simular»).
@@ -292,7 +287,7 @@ pub fn boton_principal(ui: &mut egui::Ui, t: &str) -> egui::Response {
     ui.add(egui::Button::new(egui::RichText::new(t).color(p.sobre_acento).family(semi())).fill(p.acento).stroke(Stroke::new(1.0_f32, p.acento)))
 }
 
-/// Grosor de cable del lienzo: eléctrico 2 px, señal 1,25 px; en falla, 1,75 px discontinuo.
+/// Grosor de cable del lienzo: eléctrico 2 px, señal 1,5 px; en falla, 1,75 px discontinuo.
 pub fn trazo_cable(electrico: bool, en_falla: bool) -> Stroke {
     let p = p();
     if en_falla {
@@ -301,7 +296,7 @@ pub fn trazo_cable(electrico: bool, en_falla: bool) -> Stroke {
     if electrico {
         Stroke::new(2.0_f32, p.electrica)
     } else {
-        Stroke::new(1.25_f32, p.senal)
+        Stroke::new(1.5_f32, p.senal)
     }
 }
 
@@ -329,46 +324,45 @@ impl Nivel {
     }
 }
 
-/// Estado con forma y texto: un cuadrado de 7 px del color del estado y su etiqueta.
+/// Estado con forma y texto: un punto de 7 px del color del estado y su etiqueta.
 pub fn estado(ui: &mut egui::Ui, n: Nivel, texto: &str) -> egui::Response {
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.spacing_mut().item_spacing.x = 8.0;
         let (r, _) = ui.allocate_exact_size(Vec2::new(7.0, 14.0), egui::Sense::hover());
-        ui.painter().rect_filled(Rect::from_center_size(r.center(), Vec2::splat(7.0)), 0.0, n.color());
+        punto(ui.painter(), r.center(), n.color());
         ui.label(egui::RichText::new(texto).color(p().texto));
     })
     .response
 }
 
-/// Cuadrado de 7 px (estado o color de familia) pintado en un punto.
-pub fn cuadrado(pt: &egui::Painter, centro: Pos2, color: Color32) {
-    pt.rect_filled(Rect::from_center_size(centro, Vec2::splat(7.0)), 0.0, color);
+/// Punto de estado de 7 px.
+pub fn punto(pt: &egui::Painter, centro: Pos2, color: Color32) {
+    pt.circle_filled(centro, 3.5, color);
 }
 
-/// El logotipo: un sol que sale sobre la estructura de un panel.
+/// Cuadrado de 8 px con esquinas de 2 px (familia de un bloque: eléctrica o señal).
+pub fn cuadrado(pt: &egui::Painter, centro: Pos2, color: Color32) {
+    pt.rect_filled(Rect::from_center_size(centro, Vec2::splat(8.0)), 2.0, color);
+}
+
+/// El logotipo: un sol que sale sobre el horizonte, en trazo de ACENTO (rejilla de 26 unidades).
 pub fn logo(pt: &egui::Painter, r: Rect) {
-    let p = p();
-    let c = r.center();
-    let s = r.width().min(r.height()) / 2.0;
-    let centro = Pos2::new(c.x, c.y + s * 0.18);
-    for i in 0..7 {
-        let a = std::f32::consts::PI * (1.0 + i as f32 / 6.0);
-        let d = Vec2::new(a.cos(), a.sin());
-        pt.line_segment([centro + d * s * 0.62, centro + d * s * 0.95], Stroke::new(s * 0.13, p.sol));
+    let s = r.width().min(r.height()) / 26.0;
+    let o = r.center() - Vec2::splat(13.0 * s);
+    let q = |x: f32, y: f32| Pos2::new(o.x + x * s, o.y + y * s);
+    let t = Stroke::new(1.6 * s, p().acento);
+    let arco: Vec<Pos2> = (0..=24)
+        .map(|i| {
+            let a = std::f32::consts::PI * (1.0 + i as f32 / 24.0);
+            q(13.0 + 9.0 * a.cos(), 18.0 + 9.0 * a.sin())
+        })
+        .collect();
+    pt.add(egui::Shape::line(arco, t));
+    for (a, b) in [((13.0, 4.0), (13.0, 7.0)), ((5.5, 7.5), (7.5, 9.5)), ((20.5, 7.5), (18.5, 9.5)), ((2.0, 18.0), (24.0, 18.0)), ((6.0, 22.0), (20.0, 22.0))] {
+        pt.line_segment([q(a.0, a.1), q(b.0, b.1)], t);
+        pt.circle_filled(q(a.0, a.1), 0.8 * s, t.color);
+        pt.circle_filled(q(b.0, b.1), 0.8 * s, t.color);
     }
-    let mut pts = vec![];
-    for i in 0..=20 {
-        let a = std::f32::consts::PI * (1.0 + i as f32 / 20.0);
-        pts.push(centro + Vec2::new(a.cos(), a.sin()) * s * 0.48);
-    }
-    pt.add(Shape::convex_polygon(pts, p.sol, Stroke::NONE));
-    let base = centro.y + s * 0.08;
-    pt.line_segment([Pos2::new(c.x - s * 0.95, base), Pos2::new(c.x + s * 0.95, base)], Stroke::new(s * 0.1, p.horizonte));
-    for i in 0..3 {
-        let x = c.x + (i as f32 - 1.0) * s * 0.55;
-        pt.line_segment([Pos2::new(x, base), Pos2::new(x + (i as f32 - 1.0) * s * 0.3, base + s * 0.5)], Stroke::new(s * 0.07, p.estructura));
-    }
-    pt.line_segment([Pos2::new(c.x - s * 0.85, base + s * 0.5), Pos2::new(c.x + s * 0.85, base + s * 0.5)], Stroke::new(s * 0.07, p.estructura));
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -385,18 +379,19 @@ pub enum Modulo {
     Referencia,
 }
 
-pub const MODULOS: [(Modulo, &str); 10] = [
-    (Modulo::Inicio, "Inicio"),
-    (Modulo::Calculo, "Cálculo"),
-    (Modulo::Bloques, "Bloques"),
-    (Modulo::Potencia, "Potencia"),
-    (Modulo::Fotovoltaica, "Solar"),
-    (Modulo::Estadistica, "Estadística"),
-    (Modulo::Aprendizaje, "Aprendizaje"),
-    (Modulo::Mantenimiento, "Mantenim."),
-    (Modulo::Validacion, "Validación"),
-    (Modulo::Referencia, "Referencia"),
+/// Módulos del riel, por grupos: inicio; modelado; análisis; operación; consulta.
+pub const MODULOS: [&[(Modulo, &str)]; 5] = [
+    &[(Modulo::Inicio, "Inicio")],
+    &[(Modulo::Bloques, "Bloques"), (Modulo::Potencia, "Potencia"), (Modulo::Fotovoltaica, "Solar")],
+    &[(Modulo::Calculo, "Cálculo"), (Modulo::Estadistica, "Estadística"), (Modulo::Aprendizaje, "Aprendizaje")],
+    &[(Modulo::Mantenimiento, "Mantenimiento"), (Modulo::Validacion, "Validación")],
+    &[(Modulo::Referencia, "Referencia")],
 ];
+
+/// Nombre de un módulo en la interfaz.
+pub fn nombre_modulo(m: Modulo) -> &'static str {
+    MODULOS.iter().flat_map(|g| g.iter()).find(|(x, _)| *x == m).map(|(_, n)| *n).unwrap_or("")
+}
 
 /// Iconos de la barra lateral: trazo uniforme de 1,5 px con extremos redondeados.
 pub fn icono(pt: &egui::Painter, r: Rect, m: Modulo, color: Color32) {
@@ -480,12 +475,25 @@ pub fn icono(pt: &egui::Painter, r: Rect, m: Modulo, color: Color32) {
     }
 }
 
+/// Icono de ajustes: un engranaje esquemático.
+pub fn icono_ajustes(pt: &egui::Painter, r: Rect, color: Color32) {
+    let c = r.center();
+    let s = r.width().min(r.height()) / 2.0;
+    let t = Stroke::new(1.5_f32, color);
+    pt.circle_stroke(c, s * 0.28, t);
+    for i in 0..8 {
+        let a = i as f32 * std::f32::consts::FRAC_PI_4;
+        let d = Vec2::new(a.cos(), a.sin());
+        pt.line_segment([c + d * s * 0.55, c + d * s * 0.9], t);
+    }
+}
+
 /// Un grupo con superficie PANEL, borde LINEA de 1 px y radio de ventana.
 pub fn tarjeta<R>(ui: &mut egui::Ui, f: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let p = p();
     egui::Frame::new()
-        .fill(p.panel)
-        .stroke(Stroke::new(1.0_f32, p.linea))
+        .fill(p.nodo)
+        .stroke(Stroke::new(1.0_f32, p.linea_fuerte))
         .corner_radius(CornerRadius::same(radio_ventana()))
         .inner_margin(Margin::same(12))
         .show(ui, f)
@@ -530,23 +538,4 @@ pub fn mapa_color(t: f32) -> Color32 {
         }
     }
     c(242, 169, 59)
-}
-
-/// Color de familia de una categoría de bloques (para su cuadrado de 7 px y la franja del nodo).
-pub fn color_familia(categoria: &str) -> Color32 {
-    let f = &p().familias;
-    let c = categoria.to_lowercase();
-    if c.starts_with("eléctrica") || c.contains("convertidores") || c.contains("filtros") {
-        f[1]
-    } else if c.contains("fotovolta") || c.contains("solar") {
-        f[5]
-    } else if c.contains("potencia") {
-        f[2]
-    } else if c.contains("fuentes") || c.contains("sumideros") {
-        f[3]
-    } else if c.contains("continuo") || c.contains("discreto") {
-        f[0]
-    } else {
-        f[4]
-    }
 }

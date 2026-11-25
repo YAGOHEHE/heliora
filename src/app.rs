@@ -1,6 +1,7 @@
 //! La ventana principal: barra de módulos, proyecto y reparto de mensajes del motor.
 use crate::bloques::{self, Editor};
 use crate::calculo::Calculo;
+use crate::comandos;
 use crate::grafica::{self, Figura};
 use crate::herramientas::{self, Herramienta, Pagina};
 use crate::motor::{self, Mensaje, Motor};
@@ -127,6 +128,7 @@ pub struct App {
     op: Opciones,
     cuadro_sim: bool,
     modo: tema::Modo,
+    paleta: comandos::Paleta,
 }
 
 impl App {
@@ -147,6 +149,10 @@ impl App {
             Some("referencia") => Modulo::Referencia,
             _ => Modulo::Inicio,
         };
+        let mut editor = Editor::nuevo();
+        if let Some(r) = cc.storage.and_then(|s| s.get_string("recientes")) {
+            editor.recientes = r.split(',').filter(|t| !t.is_empty()).map(String::from).collect();
+        }
         let mut mantenimiento = Mantenimiento::nuevo();
         if let Some(p) = &op.pestana {
             mantenimiento.fijar_pestana(p);
@@ -155,7 +161,7 @@ impl App {
             motor: Motor::iniciar(),
             modulo,
             compartido: Compartido::default(),
-            editor: Editor::nuevo(),
+            editor,
             calculo: Calculo::nuevo(),
             potencia: Pagina::nueva("potencia", "Electrónica de potencia", "Cálculos de apoyo para el diseño. Los modelos dinámicos están en la librería del editor de Bloques."),
             fotovoltaica: Pagina::nueva("fv", "Fotovoltaica", "Modelo de un diodo, sombreado y recurso solar con pvlib."),
@@ -182,6 +188,7 @@ impl App {
             op,
             cuadro_sim: false,
             modo,
+            paleta: comandos::Paleta::default(),
         }
     }
 
@@ -300,54 +307,264 @@ impl App {
     fn barra_superior(&mut self, ctx: &egui::Context) {
         let pal = tema::p();
         egui::TopBottomPanel::top("superior")
-            .frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(12, 6)).stroke(egui::Stroke::new(1.0_f32, pal.linea)))
+            .exact_height(48.0)
+            .frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin { left: 0, right: 12, top: 0, bottom: 0 }).stroke(egui::Stroke::new(1.0_f32, pal.linea)))
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::hover());
-                    tema::logo(ui.painter(), r);
-                    ui.label(egui::RichText::new("Heliora").size(17.0).family(tema::semi()).color(pal.texto));
-                    ui.label(egui::RichText::new("cálculo técnico y plantas solares").small().color(pal.texto_2));
-                    ui.separator();
-                    let n = self.carpeta.as_ref().and_then(|c| c.file_name()).map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Proyecto sin guardar".into());
-                    ui.label(egui::RichText::new(n).color(pal.texto));
-                    if ui.small_button("Abrir proyecto").clicked() {
-                        self.abrir_proyecto();
-                    }
-                    if ui.small_button("Guardar proyecto").clicked() {
-                        self.guardar_proyecto();
+                ui.horizontal_centered(|ui| {
+                    // El logo ocupa el ancho del riel para alinearse con sus iconos
+                    let (r, _) = ui.allocate_exact_size(Vec2::new(56.0, 26.0), Sense::hover());
+                    tema::logo(ui.painter(), Rect::from_center_size(r.center(), Vec2::splat(26.0)));
+                    ui.add_space(8.0);
+                    self.ruta(ui);
+                    let ancho_busqueda = 330.0;
+                    let derecha = 420.0;
+                    let hueco = ((ui.available_width() - ancho_busqueda - derecha) / 2.0).max(8.0);
+                    ui.add_space(hueco);
+                    if self.boton_buscar(ui, ancho_busqueda).clicked() {
+                        self.paleta.abrir();
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Conmutador de modo: Instrumento (oscuro) y Laboratorio (claro)
-                        for (m, t) in [(tema::Modo::Claro, "Laboratorio"), (tema::Modo::Oscuro, "Instrumento")] {
-                            if ui.selectable_label(self.modo == m, t).on_hover_text(if m == tema::Modo::Claro { "Modo día, claro" } else { "Modo oscuro" }).clicked() && self.modo != m {
-                                self.modo = m;
-                                tema::aplicar(ui.ctx(), m);
-                            }
+                        self.estado_motor(ui);
+                        ui.add_space(6.0);
+                        self.pildora_simulacion(ui);
+                    });
+                });
+            });
+    }
+
+    /// Ruta «proyecto / módulo / diagrama ●»: el proyecto y el diagrama abren su menú.
+    fn ruta(&mut self, ui: &mut egui::Ui) {
+        let pal = tema::p();
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let proyecto = self.carpeta.as_ref().and_then(|c| c.file_name()).map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Proyecto sin guardar".into());
+        let r = ui.add(egui::Button::new(egui::RichText::new(proyecto).color(pal.texto_3)).frame(false));
+        egui::Popup::menu(&r).show(|ui| {
+            if ui.button("Abrir proyecto…").clicked() {
+                self.abrir_proyecto();
+            }
+            if ui.button("Guardar proyecto").clicked() {
+                self.guardar_proyecto();
+            }
+        });
+        ui.label(egui::RichText::new("/").color(pal.texto_3));
+        ui.label(egui::RichText::new(tema::nombre_modulo(self.modulo)).color(pal.texto_3));
+        if self.modulo != Modulo::Bloques {
+            return;
+        }
+        ui.label(egui::RichText::new("/").color(pal.texto_3));
+        let nombre = if self.editor.diagrama.nombre.is_empty() { "Diagrama sin nombre".to_string() } else { self.editor.diagrama.nombre.clone() };
+        let r = ui.add(egui::Button::new(egui::RichText::new(nombre).color(pal.texto).family(tema::semi())).frame(false));
+        egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+            ui.set_min_width(220.0);
+            ui.add(egui::TextEdit::singleline(&mut self.editor.diagrama.nombre).hint_text("Nombre del diagrama"));
+            if ui.button("Nuevo diagrama").clicked() {
+                self.editor.nuevo_diagrama();
+                ui.close();
+            }
+            if ui.button("Abrir diagrama…").clicked() {
+                self.editor.abrir_diagrama();
+                ui.close();
+            }
+            if ui.button("Guardar diagrama").clicked() {
+                self.editor.guardar_diagrama();
+                ui.close();
+            }
+            ui.menu_button("Ejemplos", |ui| {
+                for (k, n) in self.editor.ejemplos.clone() {
+                    if ui.button(n).clicked() {
+                        self.editor.pedir_ejemplo(&mut self.motor, &k);
+                        ui.close();
+                    }
+                }
+            });
+        });
+        if self.editor.sucio() {
+            let (r, _) = ui.allocate_exact_size(Vec2::new(6.0, 6.0), Sense::hover());
+            ui.painter().circle_filled(r.center(), 3.0, pal.acento);
+            ui.interact(r, ui.id().with("sucio"), Sense::hover()).on_hover_text("Cambios sin guardar");
+        }
+    }
+
+    /// Botón que abre la paleta de comandos, con la pista del atajo.
+    fn boton_buscar(&self, ui: &mut egui::Ui, ancho: f32) -> egui::Response {
+        let pal = tema::p();
+        let (r, resp) = ui.allocate_exact_size(Vec2::new(ancho, 30.0), Sense::click());
+        let p = ui.painter();
+        p.rect(r, 6.0, if resp.hovered() { pal.realce } else { pal.panel }, egui::Stroke::new(1.0_f32, pal.borde), egui::StrokeKind::Inside);
+        let c = Pos2::new(r.left() + 16.0, r.center().y);
+        p.circle_stroke(c - Vec2::new(1.0, 1.0), 4.5, egui::Stroke::new(1.5_f32, pal.texto_3));
+        p.line_segment([c + Vec2::new(2.5, 2.5), c + Vec2::new(5.5, 5.5)], egui::Stroke::new(1.5_f32, pal.texto_3));
+        p.text(Pos2::new(r.left() + 30.0, r.center().y), egui::Align2::LEFT_CENTER, "Buscar bloque, comando o variable", egui::FontId::proportional(13.0), pal.texto_3);
+        let g = p.layout_no_wrap("Ctrl K".into(), tema::fuente_mono(11.0), pal.texto_3);
+        let caja = Rect::from_min_size(Pos2::new(r.right() - g.size().x - 18.0, r.center().y - 9.0), Vec2::new(g.size().x + 10.0, 18.0));
+        p.rect_stroke(caja, 4.0, egui::Stroke::new(1.0_f32, pal.linea_fuerte), egui::StrokeKind::Inside);
+        p.galley(caja.center() - g.size() / 2.0, g, pal.texto_3);
+        resp.on_hover_text("Paleta de comandos (Ctrl K)")
+    }
+
+    /// Píldora con el resumen del solver (clic para cambiarlo) y el botón Simular.
+    fn pildora_simulacion(&mut self, ui: &mut egui::Ui) {
+        let pal = tema::p();
+        // La barra se llena de derecha a izquierda: primero el botón, después el resumen. El fondo
+        // se pinta al final, ajustado a lo que ocupan, para que la píldora no se estire.
+        let fondo = ui.painter().add(egui::Shape::Noop);
+        ui.add_space(4.0);
+        let mut ocupado = Rect::NOTHING;
+        if self.editor.id_sim.is_some() {
+            let d = ui.small_button("■ Detener");
+            if d.clicked() {
+                self.motor.llamar("cancelar", json!({}));
+            }
+            ocupado = ocupado.union(d.rect);
+            ocupado = ocupado.union(ui.add(egui::ProgressBar::new(self.editor.avance).desired_width(90.0).desired_height(14.0)).rect);
+        } else {
+            let p = tema::p();
+            let texto = egui::text::LayoutJob::simple_format("▶ Simular".into(), egui::TextFormat::simple(tema::fuente_semi(13.0), p.sobre_acento));
+            let mut job = texto;
+            job.append("  F5", 0.0, egui::TextFormat::simple(tema::fuente_mono(11.0), p.sobre_acento.gamma_multiply(0.7)));
+            let b = ui.add(egui::Button::new(job).fill(p.acento).stroke(egui::Stroke::NONE).corner_radius(5).min_size(Vec2::new(0.0, 24.0)));
+            if b.clicked() {
+                self.simular();
+            }
+            ocupado = ocupado.union(b.rect);
+        }
+        let r = ui.add(egui::Button::new(egui::RichText::new(self.editor.resumen_solver()).font(tema::fuente_mono(12.0)).color(pal.texto_2)).frame(false)).on_hover_text("Solver e intervalo de simulación");
+        egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+            ui.set_min_width(260.0);
+            self.editor.panel_solver_rapido(ui);
+        });
+        ocupado = ocupado.union(r.rect);
+        ui.add_space(6.0);
+        let c = ui.max_rect().center().y;
+        let caja = Rect::from_min_max(Pos2::new(ocupado.left() - 6.0, c - 16.0), Pos2::new(ocupado.right() + 4.0, c + 16.0));
+        ui.painter().set(fondo, egui::epaint::RectShape::new(caja, 7, pal.campo, egui::Stroke::new(1.0_f32, pal.borde), egui::StrokeKind::Inside));
+    }
+
+    /// Lanza la simulación del diagrama de Bloques desde cualquier módulo.
+    fn simular(&mut self) {
+        if self.editor.id_sim.is_none() && self.motor.listo {
+            self.editor.ejecutar(&mut self.motor);
+            self.modulo = Modulo::Bloques;
+        }
+    }
+
+    /// Punto y texto del estado del motor; su menú permite reiniciarlo.
+    fn estado_motor(&mut self, ui: &mut egui::Ui) {
+        let pal = tema::p();
+        let (nivel, texto) = if self.motor.listo && self.motor.ocupado() {
+            (tema::Nivel::Ok, "Motor trabajando")
+        } else if self.motor.listo {
+            (tema::Nivel::Ok, "Motor listo")
+        } else if self.motor.caido.is_some() {
+            (tema::Nivel::Falla, "Motor sin conexión")
+        } else {
+            (tema::Nivel::Alerta, "Iniciando el motor…")
+        };
+        let r = ui.add(egui::Button::new(egui::RichText::new(texto).size(12.0).color(pal.texto_2)).frame(false));
+        let (p, _) = ui.allocate_exact_size(Vec2::new(7.0, 14.0), Sense::hover());
+        tema::punto(ui.painter(), p.center(), nivel.color());
+        egui::Popup::menu(&r).show(|ui| {
+            if ui.add_enabled(self.motor.listo, egui::Button::new("Reiniciar el motor")).on_hover_text("Borra las variables y vuelve a cargar el motor").clicked() {
+                self.reiniciar_motor();
+            }
+        });
+    }
+
+    fn reiniciar_motor(&mut self) {
+        self.motor.reiniciar();
+        self.iniciado = false;
+        self.compartido.variables.clear();
+    }
+
+    fn cambiar_modo(&mut self, ctx: &egui::Context, m: tema::Modo) {
+        if self.modo != m {
+            self.modo = m;
+            tema::aplicar(ctx, m);
+        }
+    }
+
+    /// Barra de estado: versiones del motor, avisos, bloques visibles y tema.
+    fn pie(&mut self, ctx: &egui::Context) {
+        let pal = tema::p();
+        egui::TopBottomPanel::bottom("pie")
+            .exact_height(24.0)
+            .frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(12, 0)).stroke(egui::Stroke::new(1.0_f32, pal.linea)))
+            .show(ctx, |ui| {
+                ui.horizontal_centered(|ui| {
+                    let f = tema::fuente_mono(11.0);
+                    ui.spacing_mut().item_spacing.x = 16.0;
+                    ui.label(egui::RichText::new(self.editor.versiones()).font(f.clone()).color(pal.texto_3));
+                    let ancho = ui.available_width();
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(egui::RichText::new(format!("Tema: {}", self.modo.nombre())).font(f.clone()).color(pal.texto_3));
+                        if self.modulo == Modulo::Bloques {
+                            ui.label(egui::RichText::new(format!("{} bloques visibles", self.editor.bloques_visibles())).font(f.clone()).color(pal.texto_3));
                         }
-                        ui.separator();
-                        let (nivel, texto) = if self.motor.listo && self.motor.ocupado() {
-                            (tema::Nivel::Ok, "Motor trabajando")
-                        } else if self.motor.listo {
-                            (tema::Nivel::Ok, "Motor Python listo")
-                        } else if self.motor.caido.is_some() {
-                            (tema::Nivel::Falla, "Motor sin conexión")
-                        } else {
-                            (tema::Nivel::Alerta, "Iniciando el motor...")
-                        };
-                        if self.motor.listo && ui.small_button("Reiniciar motor").on_hover_text("Borra las variables y vuelve a cargar el motor").clicked() {
-                            self.motor.reiniciar();
-                            self.iniciado = false;
-                            self.compartido.variables.clear();
-                        }
-                        ui.label(egui::RichText::new(texto).small().color(pal.texto_2));
-                        let (r, _) = ui.allocate_exact_size(Vec2::new(7.0, 14.0), Sense::hover());
-                        tema::cuadrado(ui.painter(), r.center(), nivel.color());
                         if !self.aviso.is_empty() {
-                            ui.add(egui::Label::new(egui::RichText::new(&self.aviso).small().color(pal.texto)).truncate());
+                            ui.set_max_width(ancho - 40.0);
+                            ui.add(egui::Label::new(egui::RichText::new(&self.aviso).font(f).color(pal.texto_2)).truncate()).on_hover_text(&self.aviso);
                         }
                     });
                 });
             });
+    }
+
+    /// Entradas de la paleta: comandos, bloques del catálogo, ejemplos y variables.
+    fn entradas_paleta(&self) -> Vec<comandos::Entrada> {
+        let mut v = comandos::comandos_fijos();
+        v.extend(self.editor.entradas_paleta());
+        for x in &self.compartido.variables {
+            v.push(comandos::Entrada::nueva("Variable", x.nombre.clone(), format!("{} {}", x.tipo, x.forma), comandos::Accion::Variable(x.nombre.clone())));
+        }
+        v
+    }
+
+    fn ejecutar_comando(&mut self, ctx: &egui::Context, a: comandos::Accion) {
+        use comandos::Accion as A;
+        match a {
+            A::Modulo(m) => self.modulo = m,
+            A::Bloque(t) => {
+                self.modulo = Modulo::Bloques;
+                self.editor.agregar_al_centro(&t);
+            }
+            A::Ejemplo(k) => {
+                self.modulo = Modulo::Bloques;
+                self.editor.pedir_ejemplo(&mut self.motor, &k);
+            }
+            A::Simular => self.simular(),
+            A::Encuadrar => {
+                self.modulo = Modulo::Bloques;
+                self.editor.encuadrar();
+            }
+            A::OrdenarCables => {
+                self.modulo = Modulo::Bloques;
+                self.editor.ordenar_cables = !self.editor.ordenar_cables;
+            }
+            A::Linealizar => {
+                self.modulo = Modulo::Bloques;
+                if self.editor.id_lin.is_none() && self.editor.id_sim.is_none() {
+                    self.editor.linealizar(&mut self.motor);
+                }
+            }
+            A::NuevoDiagrama => {
+                self.modulo = Modulo::Bloques;
+                self.editor.nuevo_diagrama();
+            }
+            A::AbrirDiagrama => {
+                self.modulo = Modulo::Bloques;
+                self.editor.abrir_diagrama();
+            }
+            A::GuardarDiagrama => self.editor.guardar_diagrama(),
+            A::AbrirProyecto => self.abrir_proyecto(),
+            A::GuardarProyecto => self.guardar_proyecto(),
+            A::Tema(m) => self.cambiar_modo(ctx, m),
+            A::ReiniciarMotor => self.reiniciar_motor(),
+            A::Variable(n) => {
+                ctx.copy_text(n.clone());
+                self.aviso = format!("«{n}» copiado al portapapeles");
+                self.modulo = Modulo::Calculo;
+            }
+        }
     }
 
     fn abrir_proyecto(&mut self) {
@@ -413,29 +630,56 @@ impl App {
     fn barra_modulos(&mut self, ctx: &egui::Context) {
         let pal = tema::p();
         egui::SidePanel::left("rail")
-            .exact_width(78.0)
+            .exact_width(56.0)
             .resizable(false)
-            .frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(4, 8)).stroke(egui::Stroke::new(1.0_f32, pal.linea)))
+            .frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(8, 10)).stroke(egui::Stroke::new(1.0_f32, pal.linea)))
             .show(ctx, |ui| {
-                for (m, nombre) in tema::MODULOS {
-                    let activo = self.modulo == m;
-                    let (r, resp) = ui.allocate_exact_size(Vec2::new(70.0, 56.0), Sense::click());
-                    if activo {
-                        // Activo: fondo CAMPO, barra de 2 px en ACENTO e icono en ACENTO
-                        ui.painter().rect_filled(r, tema::radio() as f32, pal.campo);
-                        ui.painter().rect_filled(Rect::from_min_size(Pos2::new(r.left() - 4.0, r.top() + 10.0), Vec2::new(2.0, r.height() - 20.0)), 0.0, pal.acento);
-                    } else if resp.hovered() {
-                        ui.painter().rect_filled(r, tema::radio() as f32, pal.realce);
+                ui.spacing_mut().item_spacing.y = 4.0;
+                let grupos = tema::MODULOS.len();
+                for (g, grupo) in tema::MODULOS.iter().enumerate() {
+                    // El último grupo (consulta) va abajo, junto a los ajustes
+                    if g == grupos - 1 {
+                        ui.add_space((ui.available_height() - 44.0 * grupo.len() as f32 - 44.0).max(0.0));
+                    } else if g > 0 {
+                        let (r, _) = ui.allocate_exact_size(Vec2::new(40.0, 9.0), Sense::hover());
+                        ui.painter().line_segment([Pos2::new(r.center().x - 12.0, r.center().y), Pos2::new(r.center().x + 12.0, r.center().y)], egui::Stroke::new(1.0_f32, pal.linea));
                     }
-                    let color = if activo { pal.acento } else { pal.texto_2 };
-                    let ic = Rect::from_center_size(r.center() - Vec2::new(0.0, 8.0), Vec2::splat(22.0));
-                    tema::icono(ui.painter(), ic, m, color);
-                    ui.painter().text(r.center() + Vec2::new(0.0, 15.0), egui::Align2::CENTER_CENTER, nombre, egui::FontId::proportional(10.5), if activo { pal.texto } else { pal.texto_2 });
-                    if resp.clicked() {
-                        self.modulo = m;
+                    for (m, nombre) in grupo.iter() {
+                        if self.boton_riel(ui, nombre, self.modulo == *m, |pt, r, c| tema::icono(pt, r, *m, c)).clicked() {
+                            self.modulo = *m;
+                        }
                     }
                 }
+                let r = self.boton_riel(ui, "Ajustes y tema", false, tema::icono_ajustes);
+                egui::Popup::menu(&r).show(|ui| {
+                    tema::titulo(ui, "Tema");
+                    for m in [tema::Modo::Claro, tema::Modo::Oscuro] {
+                        if ui.radio(self.modo == m, m.nombre()).clicked() {
+                            self.cambiar_modo(ui.ctx(), m);
+                        }
+                    }
+                    ui.separator();
+                    if ui.add_enabled(self.motor.listo, egui::Button::new("Reiniciar el motor")).clicked() {
+                        self.reiniciar_motor();
+                    }
+                });
             });
+    }
+
+    /// Botón cuadrado de 40 px del riel; el activo lleva fondo de acento y barra de 2 px.
+    fn boton_riel(&self, ui: &mut egui::Ui, nombre: &str, activo: bool, dibujar: impl FnOnce(&egui::Painter, Rect, egui::Color32)) -> egui::Response {
+        let pal = tema::p();
+        let (r, resp) = ui.allocate_exact_size(Vec2::splat(40.0), Sense::click());
+        let p = ui.painter();
+        if activo {
+            p.rect_filled(r, 8.0, pal.acento_fondo);
+            p.rect_filled(Rect::from_min_size(Pos2::new(r.left(), r.top() + 6.0), Vec2::new(2.0, r.height() - 12.0)), 1.0, pal.acento);
+        } else if resp.hovered() {
+            p.rect_filled(r, 8.0, pal.realce);
+        }
+        let color = if activo { pal.acento } else if resp.hovered() { pal.texto } else { pal.texto_3 };
+        dibujar(p, Rect::from_center_size(r.center(), Vec2::splat(19.0)), color);
+        resp.on_hover_text(nombre)
     }
 
     fn pagina_inicio(&mut self, ui: &mut egui::Ui) {
@@ -732,7 +976,17 @@ impl eframe::App for App {
             self.calculo.abrir_codigo(&mut self.motor, ruta, linea);
             self.modulo = Modulo::Calculo;
         }
+        // Atajos globales: F5 simula y Ctrl K abre la paleta de comandos
+        let (f5, ctrl_k) = ctx.input_mut(|i| (i.consume_key(egui::Modifiers::NONE, egui::Key::F5), i.consume_key(egui::Modifiers::COMMAND, egui::Key::K)));
+        // Con un campo de texto activo, F5 no saca a la persona de lo que está escribiendo
+        if f5 && !ctx.wants_keyboard_input() && !self.paleta.abierta {
+            self.simular();
+        }
+        if ctrl_k {
+            self.paleta.abrir();
+        }
         self.barra_superior(ctx);
+        self.pie(ctx);
         self.panel_sin_motor(ctx);
         self.barra_modulos(ctx);
         egui::CentralPanel::default().frame(egui::Frame::new().fill(tema::p().fondo)).show(ctx, |ui| {
@@ -752,10 +1006,22 @@ impl eframe::App for App {
                 Modulo::Referencia => self.pagina_referencia(ui),
             }
         });
+        if self.paleta.abierta {
+            let entradas = self.entradas_paleta();
+            if let Some(a) = self.paleta.mostrar(ctx, &entradas) {
+                self.ejecutar_comando(ctx, a);
+            }
+        }
+    }
+
+    /// Fondo de la ventana del color de los paneles: así ninguna junta entre paneles queda oscura.
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        visuals.panel_fill.to_normalized_gamma_f32()
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string("modo", self.modo.clave().to_string());
+        storage.set_string("recientes", self.editor.recientes.join(","));
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

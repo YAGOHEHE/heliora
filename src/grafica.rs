@@ -57,6 +57,7 @@ pub enum Figura {
 pub enum Accion {
     Png(Rect),
     Svg,
+    Csv,
 }
 
 fn vec_f64(v: &Value) -> Vec<f64> {
@@ -328,30 +329,22 @@ impl Fig2D {
     }
 
     pub fn mostrar(&mut self, ui: &mut egui::Ui, id: egui::Id, alto: f32) -> Option<Accion> {
+        let _ = id;
+        self.mostrar_con(ui, alto, true, true)
+    }
+
+    /// Dibuja la gráfica. Sin `cabecera` no hay título ni botones; sin `leyenda`, la leyenda queda
+    /// fuera (la dibuja quien llama).
+    pub fn mostrar_con(&mut self, ui: &mut egui::Ui, alto: f32, cabecera: bool, leyenda: bool) -> Option<Accion> {
         let mut accion = None;
-        ui.horizontal(|ui| {
-            if !self.titulo.is_empty() {
-                ui.label(egui::RichText::new(&self.titulo).strong());
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button("SVG").on_hover_text("Guardar como SVG").clicked() {
-                    accion = Some(Accion::Svg);
-                }
-                if ui.small_button("PNG").on_hover_text("Guardar como PNG").clicked() {
-                    accion = Some(Accion::Png(Rect::NOTHING));
-                }
-                if ui.small_button("Encuadrar").on_hover_text("Volver a ver todos los datos (o doble clic)").clicked() {
-                    self.vista = None;
-                }
-            });
-        });
+        if cabecera {
+            self.cabecera(ui, &mut accion);
+        }
         let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width().max(100.0), alto), Sense::click_and_drag());
         let resp = resp.on_hover_cursor(egui::CursorIcon::Crosshair);
-        let _ = id;
         let pal = tema::p();
         let p = ui.painter_at(rect);
-        p.rect_filled(rect, tema::radio() as f32, pal.fondo);
-        let hay_leyenda = self.series.len() > 1 || self.series.iter().any(|s| !s.nombre.is_empty());
+        let hay_leyenda = leyenda && (self.series.len() > 1 || self.series.iter().any(|s| !s.nombre.is_empty()));
         let area = Rect::from_min_max(
             Pos2::new(rect.left() + 58.0, rect.top() + 12.0),
             Pos2::new(rect.right() - 14.0, rect.bottom() - if self.xlabel.is_empty() { 26.0 } else { 40.0 }),
@@ -361,7 +354,7 @@ impl Fig2D {
         let [x0, x1, y0, y1] = vista;
         let px = |x: f64| area.left() + ((x - x0) / (x1 - x0)) as f32 * area.width();
         let py = |y: f64| area.bottom() - ((y - y0) / (y1 - y0)) as f32 * area.height();
-        let rejilla = Stroke::new(1.0_f32, pal.linea.gamma_multiply(0.55));
+        let rejilla = Stroke::new(1.0_f32, pal.linea);
         let fuente = tema::fuente_mono(10.5);
         // El número de marcas depende del espacio disponible
         let marcas_x = ((area.width() / 90.0) as usize).clamp(3, 10);
@@ -373,7 +366,7 @@ impl Fig2D {
         let (fy, pry) = if self.log_y { (1.0, "") } else { prefijo_si(ty.iter().fold(0.0f64, |m, v| m.max(v.abs()))) };
         for t in tx {
             let x = px(t);
-            p.line_segment([Pos2::new(x, area.top()), Pos2::new(x, area.bottom())], rejilla);
+            p.line_segment([Pos2::new(x, area.top()), Pos2::new(x, area.bottom())], Stroke::new(1.0_f32, pal.linea.gamma_multiply(0.5)));
             let e = if self.log_x { 10f64.powf(t) } else { t / fx };
             p.text(Pos2::new(x, area.bottom() + 4.0), Align2::CENTER_TOP, numero(e), fuente.clone(), pal.texto_3);
         }
@@ -383,7 +376,7 @@ impl Fig2D {
             let e = if self.log_y { 10f64.powf(t) } else { t / fy };
             p.text(Pos2::new(area.left() - 5.0, y), Align2::RIGHT_CENTER, numero(e), fuente.clone(), pal.texto_3);
         }
-        p.rect_stroke(area, 0.0, Stroke::new(1.0_f32, pal.linea_fuerte), egui::StrokeKind::Middle);
+        p.line_segment([area.left_bottom(), area.right_bottom()], Stroke::new(1.0_f32, pal.linea_fuerte));
         let xlabel = etiqueta_con_prefijo(&self.xlabel, fx, prx);
         let ylabel = etiqueta_con_prefijo(&self.ylabel, fy, pry);
         if !xlabel.is_empty() {
@@ -523,6 +516,60 @@ impl Fig2D {
             accion = Some(Accion::Png(rect));
         }
         accion
+    }
+
+    /// Título y botones de exportación encima de la gráfica.
+    fn cabecera(&mut self, ui: &mut egui::Ui, accion: &mut Option<Accion>) {
+        ui.horizontal(|ui| {
+            if !self.titulo.is_empty() {
+                ui.label(egui::RichText::new(&self.titulo).strong());
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("SVG").on_hover_text("Guardar como SVG").clicked() {
+                    *accion = Some(Accion::Svg);
+                }
+                if ui.small_button("PNG").on_hover_text("Guardar como PNG").clicked() {
+                    *accion = Some(Accion::Png(Rect::NOTHING));
+                }
+                if ui.small_button("Encuadrar").on_hover_text("Volver a ver todos los datos (o doble clic)").clicked() {
+                    self.vista = None;
+                }
+            });
+        });
+    }
+
+    /// Datos de las series en CSV: una columna x y una por serie si todas comparten x; si no,
+    /// formato largo (serie, x, y).
+    pub fn a_csv(&self) -> String {
+        let nombre = |i: usize, s: &Serie| if s.nombre.is_empty() { format!("serie {}", i + 1) } else { s.nombre.clone() };
+        let comillas = |t: &str| format!("\"{}\"", t.replace('"', "\"\""));
+        let mut o = String::new();
+        let comun = self.series.first().map(|s| &s.x).filter(|x| self.series.iter().all(|s| &s.x == *x));
+        if let Some(x) = comun {
+            o.push_str(&comillas(if self.xlabel.is_empty() { "x" } else { &self.xlabel }));
+            for (i, s) in self.series.iter().enumerate() {
+                o.push(',');
+                o.push_str(&comillas(&nombre(i, s)));
+            }
+            o.push('\n');
+            for (k, xv) in x.iter().enumerate() {
+                o.push_str(&xv.to_string());
+                for s in &self.series {
+                    o.push(',');
+                    o.push_str(&s.y.get(k).map(|v| v.to_string()).unwrap_or_default());
+                }
+                o.push('\n');
+            }
+        } else {
+            o.push_str("\"serie\",\"x\",\"y\"\n");
+            for (i, s) in self.series.iter().enumerate() {
+                let n = comillas(&nombre(i, s));
+                for (a, b) in s.x.iter().zip(s.y.iter()) {
+                    o.push_str(&format!("{n},{a},{b}\n"));
+                }
+            }
+        }
+        o
     }
 
     pub fn a_svg(&self) -> String {
@@ -795,11 +842,49 @@ pub fn exportar(ctx: &egui::Context, accion: Accion, fig: &Figura, cola_png: &mu
                 let _ = std::fs::write(r, fig.a_svg());
             }
         }
+        Accion::Csv => {
+            if let Figura::D2(g) = fig {
+                if let Some(r) = rfd::FileDialog::new().add_filter("CSV", &["csv"]).set_file_name(format!("{limpio}.csv")).save_file() {
+                    let _ = crate::app::escribir_atomico(&r, g.a_csv().as_bytes());
+                }
+            }
+        }
         Accion::Png(rect) => {
             if let Some(r) = rfd::FileDialog::new().add_filter("PNG", &["png"]).set_file_name(format!("{limpio}.png")).save_file() {
                 *cola_png = Some((rect, r));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new("figura".to_string())));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod pruebas {
+    use super::*;
+
+    fn serie(nombre: &str, x: &[f64], y: &[f64]) -> Serie {
+        Serie { x: x.to_vec(), y: y.to_vec(), nombre: nombre.into(), tipo: TipoSerie::Linea, color: None, visible: true }
+    }
+
+    fn figura(series: Vec<Serie>) -> Fig2D {
+        Fig2D { titulo: String::new(), xlabel: "Tiempo [s]".into(), ylabel: String::new(), series, lineas_h: vec![], log_x: false, log_y: false, vista: None }
+    }
+
+    #[test]
+    fn el_csv_comparte_columna_x_cuando_todas_las_series_la_comparten() {
+        let f = figura(vec![serie("P", &[0.0, 0.5], &[1.0, 2.0]), serie("Q \"reactiva\"", &[0.0, 0.5], &[3.0, 4.0])]);
+        assert_eq!(f.a_csv(), "\"Tiempo [s]\",\"P\",\"Q \"\"reactiva\"\"\"
+0,1,3
+0.5,2,4
+");
+    }
+
+    #[test]
+    fn el_csv_pasa_a_formato_largo_si_las_x_difieren() {
+        let f = figura(vec![serie("a", &[0.0], &[1.0]), serie("", &[1.0], &[2.0])]);
+        assert_eq!(f.a_csv(), "\"serie\",\"x\",\"y\"
+\"a\",0,1
+\"serie 2\",1,2
+");
     }
 }

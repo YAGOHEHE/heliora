@@ -5,6 +5,7 @@
 mod app;
 mod bloques;
 mod calculo;
+mod comandos;
 mod grafica;
 mod herramientas;
 mod motor;
@@ -35,7 +36,13 @@ fn main() -> eframe::Result<()> {
         }
     }
     let opciones = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1440.0, 900.0]).with_min_inner_size([900.0, 600.0]).with_title("Heliora"),
+        viewport: {
+            let v = egui::ViewportBuilder::default().with_inner_size([1440.0, 900.0]).with_min_inner_size([900.0, 600.0]).with_title("Heliora");
+            match eframe::icon_data::from_png_bytes(include_bytes!("../icon/icon.png")) {
+                Ok(i) => v.with_icon(i),
+                Err(_) => v,
+            }
+        },
         ..Default::default()
     };
     eframe::run_native("Heliora", opciones, Box::new(move |cc| Ok(Box::new(app::App::nueva(cc, op)))))
