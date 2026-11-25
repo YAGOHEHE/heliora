@@ -462,6 +462,26 @@ class Motor:
         from . import herramientas
         return herramientas.ejecutar(ident, valores, self.espacio)
 
+    # ---------------------------------------------------------------- herramientas: importar tablas y buscar módulos CEC
+    def importar_tabla(self, ruta, nombre):
+        """Atiende la orden `importar_tabla`: lee un CSV, TSV, TXT o Parquet como variable `nombre` y devuelve las variables."""
+        from .entradas import comprobar_nombre_salida
+        ruta = os.path.expanduser(str(ruta))
+        if not os.path.isfile(ruta):
+            raise ValueError(f"No existe el archivo «{ruta}».")
+        comprobar_nombre_salida(nombre, "Importar", "Nombre de la tabla", self.espacio.ns, self.espacio.base, set(), set(self.espacio.ns))
+        if ruta.lower().endswith((".tsv", ".txt")):
+            import pandas as pd
+            self.espacio.ns[nombre] = pd.read_csv(ruta, sep=None, engine="python")
+        else:
+            self.espacio.cargar(ruta, nombre)
+        return self.espacio.variables()
+
+    def buscar_modulos_cec(self, texto):
+        """Atiende la orden `buscar_modulos_cec`: devuelve hasta 50 nombres de la base CEC que contienen todas las palabras del texto."""
+        from .lib import fotovoltaica
+        return fotovoltaica.buscar_cec(str(texto), 50)
+
     # ---------------------------------------------------------------- validación
     def pruebas(self):
         """Catálogo del banco: cada fase con sus pruebas (el mismo conjunto que ejecuta validar)."""

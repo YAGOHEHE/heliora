@@ -56,11 +56,12 @@ class ModuloFV:
 
     @property
     def Pmp(self):
+        """Potencia en el punto de máxima potencia [W]."""
         return self.Vmp * self.Imp
 
 
-def extraer_parametros(m: ModuloFV):
-    """Extrae (a, I_L, I_0, R_s, R_sh) resolviendo cinco condiciones a STC:
+    """Extrae (a, I_L, I_0, R_s, R_sh) resolviendo cinco condiciones a STC (ver la lista).
+
 
     1. Cortocircuito:   I(0) = I_sc
     2. Circuito abierto: I(V_oc) = 0
@@ -79,6 +80,7 @@ def extraer_parametros(m: ModuloFV):
     VocT = Voc + m.beta_oc * dT
 
     def f(p):
+        """Residuos relativos de las cinco condiciones para los parámetros en logaritmo."""
         a, IL, I0, Rs, Rsh = np.exp(p)
         e_sc = np.exp(np.minimum(Isc * Rs / a, 500.0))
         e_oc = np.exp(np.minimum(Voc / a, 500.0))
@@ -213,29 +215,60 @@ CATALOGO = {
                                          alfa_sc=0.004326, beta_oc=-0.15372),
 }
 _cache_mod = {}
+_cec = []
 
 
 def modulo_de_catalogo(nombre):
+    """Módulo del catálogo propio, con sus parámetros ya extraídos.
+
+    Raises:
+        ValueError: si el nombre no está en el catálogo (se listan las opciones).
+    """
     if nombre not in CATALOGO:
-        nombre = next(iter(CATALOGO))
+        raise ValueError(f"Módulo desconocido «{nombre}». Opciones del catálogo: {', '.join(CATALOGO)}. Para otros módulos usa la búsqueda en la base CEC.")
     if nombre not in _cache_mod:
         _cache_mod[nombre] = ModuloFV(nombre=nombre, **CATALOGO[nombre]).extraer()
     return _cache_mod[nombre]
 
 
-def buscar_cec(texto, limite=30):
-    """Busca módulos en la base CEC incluida en pvlib."""
-    import pvlib
-    d = pvlib.pvsystem.retrieve_sam("CECMod")
-    return [c for c in d.columns if texto.lower() in c.lower()][:limite]
+def _base_cec():
+    if not _cec:
+        import pvlib
+        _cec.append(pvlib.pvsystem.retrieve_sam("CECMod"))
+    return _cec[0]
+
+
+def buscar_cec(texto, limite=50):
+    """Busca módulos en la base CEC de pvlib: cada palabra del texto debe aparecer en el nombre (sin distinguir mayúsculas)."""
+    palabras = texto.lower().split()
+    if not palabras:
+        return []
+    return [c for c in _base_cec().columns if all(p in c.lower() for p in palabras)][:int(limite)]
 
 
 def modulo_cec(nombre):
-    """Crea un ModuloFV con los datos de hoja de la base CEC de pvlib."""
-    import pvlib
-    d = pvlib.pvsystem.retrieve_sam("CECMod")[nombre]
+    """Crea un ModuloFV con los datos de hoja de la base CEC de pvlib (sin extraer los parámetros)."""
+    base = _base_cec()
+    if nombre not in base.columns:
+        raise ValueError(f"El módulo «{nombre}» no está en la base CEC; búscalo con el selector.")
+    d = base[nombre]
     return ModuloFV(nombre=nombre, Voc=float(d["V_oc_ref"]), Isc=float(d["I_sc_ref"]), Vmp=float(d["V_mp_ref"]),
                     Imp=float(d["I_mp_ref"]), Ns=int(d["N_s"]), alfa_sc=float(d["alpha_sc"]), beta_oc=float(d["beta_oc"]))
+
+
+def resolver_modulo(nombre):
+    """Módulo (con parámetros extraídos) del catálogo propio o de la base CEC.
+
+    Raises:
+        ValueError: si el nombre no existe en ninguna de las dos fuentes.
+    """
+    if nombre in CATALOGO:
+        return modulo_de_catalogo(nombre)
+    if nombre not in _cache_mod:
+        if nombre not in _base_cec().columns:
+            raise ValueError(f"Módulo desconocido «{nombre}». Opciones del catálogo: {', '.join(CATALOGO)}; o búscalo en la base CEC.")
+        _cache_mod[nombre] = modulo_cec(nombre).extraer()
+    return _cache_mod[nombre]
 
 
 # ================================================================= Recurso solar (pvlib)
@@ -314,6 +347,7 @@ class ArregloFV(_ArregloBase):
                   P("Ns", "Módulos en serie", 12), P("Np", "Strings en paralelo", 20)]
 
     def preparar(self):
+        """Prepara el estado interno a partir de los parámetros del elemento."""
         self.m = modulo_de_catalogo(self.p["modulo"])
         self.ns, self.np = float(self.p["Ns"]), float(self.p["Np"])
         self._clave = None
@@ -321,6 +355,7 @@ class ArregloFV(_ArregloBase):
         self.par = None
 
     def corriente(self, V, G, T):
+        """Corriente del elemento para la tensión, la irradiancia y la temperatura dadas."""
         if self._clave != (G, T):
             IL, I0, Rs, Rsh, a = parametros_operacion(self.m, G, T)
             self.par = (float(IL), float(I0), float(Rs), float(Rsh), float(a))
@@ -360,6 +395,7 @@ class ArregloFVSombreado(_ArregloBase):
                   P("n_sombra", "Strings con sombra", 5), P("bypass", "Bypass por módulo", 3), P("Vd", "Tensión de bypass", 0.7, "V")]
 
     def preparar(self):
+        """Prepara el estado interno a partir de los parámetros del elemento."""
         self.m = modulo_de_catalogo(self.p["modulo"])
         self._clave = None
         self.tabla = None
@@ -379,6 +415,7 @@ class ArregloFVSombreado(_ArregloBase):
         self._clave = (G, T)
 
     def corriente(self, V, G, T):
+        """Corriente del elemento para la tensión, la irradiancia y la temperatura dadas."""
         if self._clave is None or abs(G - self._clave[0]) > 0.5 or abs(T - self._clave[1]) > 0.2:
             self._tabular(G, T)
         vv, ii = self.tabla
@@ -409,20 +446,25 @@ class MPPT(Bloque):
     entradas = ["v", "i"]; salidas = ["d"]; directo = False
 
     def preparar(self):
+        """Prepara el estado interno a partir de los parámetros del elemento."""
         self.d = float(self.p["d0"])
         self.t_prox = float(self.p["Ts"])
         self.v_a = self.i_a = self.p_a = None
 
     def reiniciar(self):
+        """Restablece el estado interno del bloque."""
         self.preparar()
 
     def salida(self, t, x, u):
+        """Calcula la salida del bloque en el instante dado."""
         return [self.d]
 
     def proximo_evento(self, t):
+        """Instante del próximo evento del bloque."""
         return self.t_prox
 
     def paso_mayor(self, t, x, u, y):
+        """Paso máximo admisible desde el instante actual."""
         if t < self.t_prox - 1e-12:
             return False
         self.t_prox += float(self.p["Ts"])
@@ -450,7 +492,7 @@ class MPPT(Bloque):
 
 @registrar
 class TermicoModulo(Bloque):
-    """Modelo térmico del módulo (SAPM, pvlib).   T_c = G·exp(a + b·v) + T_a + (G/1000)·ΔT"""
+    """Modelo térmico del módulo (SAPM, pvlib): T_c = G·exp(a + b·v) + T_a + (G/1000)·ΔT."""
     tipo = "termico_modulo"; nombre = "Temperatura de celda"; categoria = "Fotovoltaica"; color = "fv"
     parametros = [P("viento", "Viento", 1.0, "m/s"),
                   P("montaje", "Montaje", "open_rack_glass_polymer", tipo="opcion",
@@ -459,11 +501,13 @@ class TermicoModulo(Bloque):
     entradas = ["G", "T_amb"]; salidas = ["T_c"]
 
     def preparar(self):
+        """Prepara el estado interno a partir de los parámetros del elemento."""
         import pvlib
         par = pvlib.temperature.TEMPERATURE_MODEL_PARAMETERS["sapm"][self.p["montaje"]]
         self.a, self.b, self.dT = par["a"], par["b"], par["deltaT"]
 
     def salida(self, t, x, u):
+        """Calcula la salida del bloque en el instante dado."""
         G, Ta = float(u[0]), float(u[1])
         return [G * math.exp(self.a + self.b * float(self.p["viento"])) + Ta + G / 1000.0 * self.dT]
 
@@ -482,6 +526,7 @@ class SolPOA(Bloque):
     salidas = ["G"]; directo = False
 
     def preparar(self):
+        """Prepara el estado interno a partir de los parámetros del elemento."""
         import pandas as pd
         t = pd.date_range(self.p["fecha"], periods=24 * 12 + 1, freq="5min", tz="UTC")
         poa, _, _ = irradiancia_poa(float(self.p["lat"]), float(self.p["lon"]), t, float(self.p["incl"]), float(self.p["acim"]))
@@ -489,5 +534,6 @@ class SolPOA(Bloque):
         self.g = poa["poa_global"].fillna(0.0).clip(lower=0.0).tolist()
 
     def salida(self, t, x, u):
+        """Calcula la salida del bloque en el instante dado."""
         h = float(self.p["hora0"]) + t * float(self.p["escala"]) / 3600.0
         return [float(np.interp(h, self.h, self.g))]
