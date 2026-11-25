@@ -8,6 +8,31 @@ pub enum TipoSerie {
     Linea,
     Puntos,
     Barras,
+    /// Línea discontinua (curvas de comparación).
+    Discontinua,
+}
+
+/// Marca vertical en una gráfica 2D: línea discontinua en `x` (coordenadas de datos) con su etiqueta.
+#[derive(Clone)]
+pub struct MarcaV {
+    pub x: f64,
+    pub etiqueta: String,
+    /// `None` usa el gris de las líneas de referencia.
+    pub color: Option<Color32>,
+}
+
+/// Franja sombreada entre dos valores de x.
+#[derive(Clone)]
+pub struct Franja {
+    pub x0: f64,
+    pub x1: f64,
+}
+
+/// Elementos que se dibujan sobre una gráfica 2D sin formar parte de sus series.
+#[derive(Clone, Default)]
+pub struct Decoracion {
+    pub marcas: Vec<MarcaV>,
+    pub franjas: Vec<Franja>,
 }
 
 #[derive(Clone)]
@@ -174,6 +199,27 @@ fn ticks(a: f64, b: f64, n: usize) -> Vec<f64> {
     v
 }
 
+/// Marcas de un eje logarítmico (en log10): una por década entera, o las habituales si no hay dos.
+fn ticks_log(a: f64, b: f64) -> Vec<f64> {
+    let (i0, i1) = (a.ceil() as i64, b.floor() as i64);
+    if i1 - i0 < 1 {
+        return ticks(a, b, 5);
+    }
+    let paso = ((i1 - i0) / 7 + 1) as usize;
+    (i0..=i1).step_by(paso).map(|i| i as f64).collect()
+}
+
+/// Etiqueta de una década: 10, 100, 1k, 10k, 1M.
+fn etiqueta_log(v: f64) -> String {
+    if v >= 1e6 {
+        format!("{}M", numero(v / 1e6))
+    } else if v >= 1e3 {
+        format!("{}k", numero(v / 1e3))
+    } else {
+        numero(v)
+    }
+}
+
 /// Número legible con coma decimal: 0,025 · 3,14 · 230 · 1,20e6.
 pub fn numero(x: f64) -> String {
     let a = x.abs();
@@ -336,6 +382,11 @@ impl Fig2D {
     /// Dibuja la gráfica. Sin `cabecera` no hay título ni botones; sin `leyenda`, la leyenda queda
     /// fuera (la dibuja quien llama).
     pub fn mostrar_con(&mut self, ui: &mut egui::Ui, alto: f32, cabecera: bool, leyenda: bool) -> Option<Accion> {
+        self.mostrar_decorada(ui, alto, cabecera, leyenda, &Decoracion::default())
+    }
+
+    /// Como `mostrar_con`, con franjas sombreadas bajo las series y marcas verticales sobre ellas.
+    pub fn mostrar_decorada(&mut self, ui: &mut egui::Ui, alto: f32, cabecera: bool, leyenda: bool, deco: &Decoracion) -> Option<Accion> {
         let mut accion = None;
         if cabecera {
             self.cabecera(ui, &mut accion);
@@ -359,8 +410,8 @@ impl Fig2D {
         // El número de marcas depende del espacio disponible
         let marcas_x = ((area.width() / 90.0) as usize).clamp(3, 10);
         let marcas_y = ((area.height() / 36.0) as usize).clamp(2, 7);
-        let tx = ticks(x0, x1, marcas_x);
-        let ty = ticks(y0, y1, marcas_y);
+        let tx = if self.log_x { ticks_log(x0, x1) } else { ticks(x0, x1, marcas_x) };
+        let ty = if self.log_y { ticks_log(y0, y1) } else { ticks(y0, y1, marcas_y) };
         // Prefijo SI en los ejes lineales: 70 kW en lugar de 70000
         let (fx, prx) = if self.log_x { (1.0, "") } else { prefijo_si(tx.iter().fold(0.0f64, |m, v| m.max(v.abs()))) };
         let (fy, pry) = if self.log_y { (1.0, "") } else { prefijo_si(ty.iter().fold(0.0f64, |m, v| m.max(v.abs()))) };
@@ -368,13 +419,13 @@ impl Fig2D {
             let x = px(t);
             p.line_segment([Pos2::new(x, area.top()), Pos2::new(x, area.bottom())], Stroke::new(1.0_f32, pal.linea.gamma_multiply(0.5)));
             let e = if self.log_x { 10f64.powf(t) } else { t / fx };
-            p.text(Pos2::new(x, area.bottom() + 4.0), Align2::CENTER_TOP, numero(e), fuente.clone(), pal.texto_3);
+            p.text(Pos2::new(x, area.bottom() + 4.0), Align2::CENTER_TOP, if self.log_x { etiqueta_log(e) } else { numero(e) }, fuente.clone(), pal.texto_3);
         }
         for t in ty {
             let y = py(t);
             p.line_segment([Pos2::new(area.left(), y), Pos2::new(area.right(), y)], rejilla);
             let e = if self.log_y { 10f64.powf(t) } else { t / fy };
-            p.text(Pos2::new(area.left() - 5.0, y), Align2::RIGHT_CENTER, numero(e), fuente.clone(), pal.texto_3);
+            p.text(Pos2::new(area.left() - 5.0, y), Align2::RIGHT_CENTER, if self.log_y { etiqueta_log(e) } else { numero(e) }, fuente.clone(), pal.texto_3);
         }
         p.line_segment([area.left_bottom(), area.right_bottom()], Stroke::new(1.0_f32, pal.linea_fuerte));
         let xlabel = etiqueta_con_prefijo(&self.xlabel, fx, prx);
@@ -388,6 +439,10 @@ impl Fig2D {
             p.add(egui::epaint::TextShape::new(pos, g, pal.texto_3).with_angle(-std::f32::consts::FRAC_PI_2));
         }
         let pa = p.with_clip_rect(area);
+        for f in &deco.franjas {
+            let (a, b) = (px(self.tx(f.x0)).clamp(area.left(), area.right()), px(self.tx(f.x1)).clamp(area.left(), area.right()));
+            pa.rect_filled(Rect::from_min_max(Pos2::new(a.min(b), area.top()), Pos2::new(a.max(b), area.bottom())), 0.0, pal.ok.gamma_multiply(0.14));
+        }
         // Líneas de referencia: discontinuas en TEXTO_3 (los colores de estado no se usan aquí)
         for &h in &self.lineas_h {
             let y = py(self.ty(h));
@@ -399,17 +454,25 @@ impl Fig2D {
             }
             let c = s.color.unwrap_or(tema::p().series[i % tema::p().series.len()]);
             match s.tipo {
-                TipoSerie::Linea => {
+                TipoSerie::Linea | TipoSerie::Discontinua => {
+                    let discontinua = s.tipo == TipoSerie::Discontinua;
+                    let trazo = |pts: Vec<Pos2>| -> Vec<Shape> {
+                        if discontinua {
+                            Shape::dashed_line(&pts, Stroke::new(1.5_f32, c), 5.0, 3.0)
+                        } else {
+                            vec![Shape::line(pts, Stroke::new(1.5_f32, c))]
+                        }
+                    };
                     let mut tramo: Vec<Pos2> = Vec::with_capacity(s.x.len());
                     for (&a, &b) in s.x.iter().zip(s.y.iter()) {
                         if a.is_finite() && b.is_finite() {
                             tramo.push(Pos2::new(px(self.tx(a)), py(self.ty(b))));
                         } else if !tramo.is_empty() {
-                            pa.add(Shape::line(std::mem::take(&mut tramo), Stroke::new(1.5_f32, c)));
+                            pa.extend(trazo(std::mem::take(&mut tramo)));
                         }
                     }
                     if tramo.len() > 1 {
-                        pa.add(Shape::line(tramo, Stroke::new(1.5_f32, c)));
+                        pa.extend(trazo(tramo));
                     }
                 }
                 TipoSerie::Puntos => {
@@ -435,6 +498,15 @@ impl Fig2D {
                     }
                 }
             }
+        }
+        for m in &deco.marcas {
+            let x = px(self.tx(m.x));
+            if x < area.left() || x > area.right() {
+                continue;
+            }
+            let color = m.color.unwrap_or(pal.texto_3);
+            pa.extend(Shape::dashed_line(&[Pos2::new(x, area.top()), Pos2::new(x, area.bottom())], Stroke::new(1.25_f32, color), 5.0, 4.0));
+            pa.text(Pos2::new(x + 5.0, area.top() + 4.0), Align2::LEFT_TOP, &m.etiqueta, tema::fuente_mono(10.5), color);
         }
         // Leyenda que además oculta y muestra series
         let mut clic_leyenda = None;
@@ -474,7 +546,7 @@ impl Fig2D {
                 // Lectura en un recuadro CAMPO: el tiempo (x) y el valor de cada serie visible en ese x
                 let mut lineas = vec![(format!("{} = {}", if self.xlabel.to_lowercase().starts_with("tiempo") { "t" } else { "x" }, numero(dx)), pal.texto)];
                 let mut con_serie = false;
-                for (i, s) in self.series.iter().enumerate().filter(|(_, s)| s.visible && s.tipo == TipoSerie::Linea).take(4) {
+                for (i, s) in self.series.iter().enumerate().filter(|(_, s)| s.visible && matches!(s.tipo, TipoSerie::Linea | TipoSerie::Discontinua)).take(4) {
                     if let Some(v) = valor_en(s, dx) {
                         let c = s.color.unwrap_or(pal.series[i % pal.series.len()]);
                         let n = if s.nombre.is_empty() { format!("serie {}", i + 1) } else { s.nombre.clone() };
@@ -600,7 +672,7 @@ impl Fig2D {
             let c = se.color.unwrap_or(tema::p().series[i % tema::p().series.len()]);
             let col = format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b());
             match se.tipo {
-                TipoSerie::Linea => {
+                TipoSerie::Linea | TipoSerie::Discontinua => {
                     let mut d = String::new();
                     let mut nuevo = true;
                     for (&a, &bb) in se.x.iter().zip(se.y.iter()) {
@@ -611,7 +683,8 @@ impl Fig2D {
                             nuevo = true;
                         }
                     }
-                    s += &format!("<path d=\"{d}\" fill=\"none\" stroke=\"{col}\" stroke-width=\"1.5\"/>\n");
+                    let guiones = if se.tipo == TipoSerie::Discontinua { " stroke-dasharray=\"6 3\"" } else { "" };
+                    s += &format!("<path d=\"{d}\" fill=\"none\" stroke=\"{col}\" stroke-width=\"1.5\"{guiones}/>\n");
                 }
                 TipoSerie::Puntos => {
                     for (&a, &bb) in se.x.iter().zip(se.y.iter()) {
@@ -833,6 +906,173 @@ impl Fig3D {
     }
 }
 
+impl Fig2D {
+    /// Leyenda en línea, para una fila horizontal: muestra de color y nombre de cada serie; pulsar
+    /// un nombre oculta o muestra la serie.
+    pub fn leyenda_en_linea(&mut self, ui: &mut egui::Ui, maximo: usize) {
+        let pal = tema::p();
+        let mut conmutar = None;
+        for (i, s) in self.series.iter().enumerate().filter(|(_, s)| !s.nombre.is_empty()).take(maximo) {
+            let color = s.color.unwrap_or(pal.series[i % pal.series.len()]);
+            let color = if s.visible { color } else { pal.linea_fuerte };
+            let g = ui.painter().layout_no_wrap(s.nombre.clone(), FontId::proportional(12.0), if s.visible { pal.texto } else { pal.texto_3 });
+            let (r, resp) = ui.allocate_exact_size(Vec2::new(14.0 + 6.0 + g.size().x, 18.0), Sense::click());
+            let (a, b) = (Pos2::new(r.left(), r.center().y), Pos2::new(r.left() + 14.0, r.center().y));
+            if s.tipo == TipoSerie::Discontinua {
+                ui.painter().extend(Shape::dashed_line(&[a, b], Stroke::new(2.0_f32, color), 3.0, 2.0));
+            } else {
+                ui.painter().line_segment([a, b], Stroke::new(2.0_f32, color));
+            }
+            ui.painter().galley(Pos2::new(r.left() + 20.0, r.center().y - g.size().y / 2.0), g, pal.texto);
+            if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                conmutar = Some(i);
+            }
+        }
+        if let Some(i) = conmutar {
+            self.series[i].visible = !self.series[i].visible;
+        }
+    }
+}
+
+// ---------------------------------------------------------------- mapas de calor
+
+/// Cómo se colorean las celdas de un mapa de calor.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum EstiloMapa {
+    /// Una sola tinta (ámbar) cuya intensidad sigue el valor.
+    Continuo,
+    /// Matriz de confusión: diagonal en azul, resto en ámbar, con el valor escrito en cada celda.
+    Confusion,
+}
+
+/// Rejilla de valores con etiquetas, dibujada como celdas coloreadas.
+#[derive(Clone)]
+pub struct MapaCalor {
+    pub filas: Vec<String>,
+    pub columnas: Vec<String>,
+    pub titulo_filas: String,
+    pub titulo_columnas: String,
+    pub z: Vec<Vec<f64>>,
+    pub estilo: EstiloMapa,
+}
+
+impl MapaCalor {
+    /// Mínimo y máximo de los valores finitos.
+    pub fn rango(&self) -> Option<(f64, f64)> {
+        let v = self.z.iter().flatten().copied().filter(|x| x.is_finite());
+        v.fold(None, |a, x| Some(a.map_or((x, x), |(lo, hi): (f64, f64)| (lo.min(x), hi.max(x)))))
+    }
+
+    /// Mapa continuo a partir de una malla 3D: las filas son los valores de `x` (arriba el mayor)
+    /// y las columnas los de `y`. `None` si la malla no es rectangular.
+    pub fn desde_malla(f: &Fig3D) -> Option<MapaCalor> {
+        let ni = f.z.len();
+        let nj = f.z.first()?.len();
+        if ni == 0 || nj == 0 || f.z.iter().any(|r| r.len() != nj) {
+            return None;
+        }
+        let x: Vec<f64> = (0..nj).map(|j| celda(&f.x, 0, j)).collect::<Option<_>>()?;
+        let y: Vec<f64> = (0..ni).map(|i| celda(&f.y, i, 0)).collect::<Option<_>>()?;
+        let z = (0..nj).rev().map(|j| (0..ni).map(|i| f.z[i][j]).collect()).collect();
+        Some(MapaCalor {
+            filas: x.iter().rev().map(|v| decimal(*v, 0)).collect(),
+            columnas: y.iter().map(|v| decimal(*v, 0)).collect(),
+            titulo_filas: f.xlabel.clone(),
+            titulo_columnas: f.ylabel.clone(),
+            z,
+            estilo: EstiloMapa::Continuo,
+        })
+    }
+
+    /// Dibuja el mapa en un rectángulo del ancho disponible y el alto indicado.
+    pub fn mostrar(&self, ui: &mut egui::Ui, alto: f32) {
+        let pal = tema::p();
+        let nf = self.z.len();
+        let nc = self.z.first().map_or(0, |f| f.len());
+        let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), alto), Sense::hover());
+        if nf == 0 || nc == 0 {
+            return;
+        }
+        let p = ui.painter_at(rect);
+        let conf = self.estilo == EstiloMapa::Confusion;
+        let fuente_etq = if conf { FontId::proportional(13.0) } else { tema::fuente_mono(10.5) };
+        let medir = |ui: &egui::Ui, t: &str| ui.fonts_mut(|f| f.layout_no_wrap(t.to_string(), fuente_etq.clone(), pal.texto).size().x);
+        let ancho_etq = self.filas.iter().map(|t| medir(ui, t)).fold(0.0f32, f32::max) + 12.0;
+        let arriba = if conf {
+            26.0
+        } else if self.titulo_filas.is_empty() {
+            4.0
+        } else {
+            18.0
+        };
+        let abajo = if conf {
+            0.0
+        } else if self.titulo_columnas.is_empty() {
+            18.0
+        } else {
+            34.0
+        };
+        let area = Rect::from_min_max(Pos2::new(rect.left() + ancho_etq, rect.top() + arriba), Pos2::new(rect.right(), rect.bottom() - abajo));
+        if area.width() < 10.0 || area.height() < 10.0 {
+            return;
+        }
+        let (w, h) = (area.width() / nc as f32, area.height() / nf as f32);
+        let hueco = if w > 24.0 && h > 24.0 { 3.0 } else { 0.0 };
+        let (lo, hi) = self.rango().unwrap_or((0.0, 1.0));
+        let max_abs = self.z.iter().flatten().copied().filter(|x| x.is_finite()).fold(0.0f64, f64::max).max(f64::EPSILON);
+        let con_numeros = conf || nf * nc <= 40;
+        let fuente_num = if conf { tema::fuente_mono(22.0) } else { tema::fuente_mono(11.0) };
+        for (i, fila) in self.z.iter().enumerate() {
+            for (j, &v) in fila.iter().enumerate() {
+                let r = Rect::from_min_size(Pos2::new(area.left() + j as f32 * w, area.top() + i as f32 * h), Vec2::new(w, h)).shrink(hueco / 2.0);
+                let (color, texto) = if conf {
+                    let t = (v / max_abs).clamp(0.0, 1.0) as f32;
+                    if i == j {
+                        (pal.senal.gamma_multiply(0.30 + 0.70 * t), if t > 0.55 { Color32::WHITE } else { pal.texto })
+                    } else {
+                        (pal.acento.gamma_multiply(0.18 + 0.50 * t), pal.texto)
+                    }
+                } else {
+                    let t = if hi > lo { ((v - lo) / (hi - lo)).clamp(0.0, 1.0) as f32 } else { 1.0 };
+                    (pal.acento.gamma_multiply(0.16 + 0.84 * t), if t > 0.6 { pal.sobre_acento } else { pal.texto })
+                };
+                p.rect_filled(r, if hueco > 0.0 { 3.0 } else { 0.0 }, color);
+                if con_numeros && w > 28.0 && h > 16.0 {
+                    p.text(r.center(), Align2::CENTER_CENTER, if conf { miles(v) } else { numero(v) }, fuente_num.clone(), texto);
+                }
+            }
+        }
+        // Las etiquetas que no caben juntas se omiten a saltos regulares
+        let paso_f = ((14.0 / h).ceil() as usize).max(1);
+        let paso_c = (((self.columnas.iter().map(|t| medir(ui, t)).fold(0.0f32, f32::max) + 8.0) / w).ceil() as usize).max(1);
+        for (i, t) in self.filas.iter().enumerate().filter(|(i, _)| i % paso_f == 0) {
+            p.text(Pos2::new(area.left() - 6.0, area.top() + (i as f32 + 0.5) * h), Align2::RIGHT_CENTER, t, fuente_etq.clone(), pal.texto_3);
+        }
+        for (j, t) in self.columnas.iter().enumerate().filter(|(j, _)| j % paso_c == 0) {
+            let x = area.left() + (j as f32 + 0.5) * w;
+            if conf {
+                p.text(Pos2::new(x, rect.top() + 12.0), Align2::CENTER_CENTER, t, fuente_etq.clone(), pal.texto_2);
+            } else {
+                p.text(Pos2::new(x, area.bottom() + 4.0), Align2::CENTER_TOP, t, fuente_etq.clone(), pal.texto_3);
+            }
+        }
+        if !conf {
+            if !self.titulo_filas.is_empty() {
+                p.text(Pos2::new(rect.left(), rect.top()), Align2::LEFT_TOP, &self.titulo_filas, tema::fuente_mono(10.5), pal.texto_3);
+            }
+            if !self.titulo_columnas.is_empty() {
+                p.text(Pos2::new(area.center().x, rect.bottom() - 2.0), Align2::CENTER_BOTTOM, &self.titulo_columnas, tema::fuente_mono(10.5), pal.texto_3);
+            }
+        }
+        if let Some(pp) = resp.hover_pos().filter(|pp| area.contains(*pp)) {
+            let j = (((pp.x - area.left()) / w) as usize).min(nc - 1);
+            let i = (((pp.y - area.top()) / h) as usize).min(nf - 1);
+            let (f, c) = (self.filas.get(i).map_or("", |t| t.as_str()), self.columnas.get(j).map_or("", |t| t.as_str()));
+            resp.on_hover_text(format!("{f} · {c}: {}", numero(self.z[i][j])));
+        }
+    }
+}
+
 /// Muestra una figura de cualquier clase.
 pub fn mostrar(ui: &mut egui::Ui, f: &mut Figura, id: egui::Id, alto: f32) -> Option<Accion> {
     match f {
@@ -913,5 +1153,37 @@ mod pruebas {
         let vacia = superficie(vec![], vec![], z);
         let (rx, ry, rz) = vacia.rangos();
         assert!(vacia.caras(rx, ry, rz).is_empty());
+    }
+
+    #[test]
+    fn el_mapa_de_una_malla_pone_las_x_en_filas_con_la_mayor_arriba() {
+        let malla = Fig3D {
+            titulo: String::new(),
+            xlabel: "G".into(),
+            ylabel: "T".into(),
+            zlabel: "P [W]".into(),
+            linea: false,
+            x: vec![vec![100.0, 200.0, 300.0], vec![100.0, 200.0, 300.0]],
+            y: vec![vec![0.0, 0.0, 0.0], vec![50.0, 50.0, 50.0]],
+            z: vec![vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]],
+            az: 0.0,
+            el: 0.0,
+            escala: 1.0,
+        };
+        let m = MapaCalor::desde_malla(&malla).unwrap();
+        assert_eq!(m.filas, ["300", "200", "100"]);
+        assert_eq!(m.columnas, ["0", "50"]);
+        assert_eq!(m.z, vec![vec![3.0, 6.0], vec![2.0, 5.0], vec![1.0, 4.0]]);
+        assert_eq!(m.rango(), Some((1.0, 6.0)));
+        let irregular = Fig3D { z: vec![vec![1.0, 2.0, 3.0], vec![4.0]], ..malla };
+        assert!(MapaCalor::desde_malla(&irregular).is_none());
+    }
+
+    #[test]
+    fn un_eje_logaritmico_marca_decadas_enteras() {
+        assert_eq!(ticks_log(1.0, 5.0), vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+        assert_eq!(etiqueta_log(100.0), "100");
+        assert_eq!(etiqueta_log(10_000.0), "10k");
+        assert_eq!(etiqueta_log(2_000_000.0), "2M");
     }
 }
