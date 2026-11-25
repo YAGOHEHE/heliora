@@ -11,6 +11,8 @@ mod herramientas;
 mod motor;
 mod plan;
 mod tema;
+#[allow(dead_code)]
+mod ui;
 mod validacion;
 
 fn main() -> eframe::Result<()> {

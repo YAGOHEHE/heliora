@@ -56,8 +56,12 @@ pub struct Paleta {
     pub texto_3: Color32,
     pub acento: Color32,
     pub sobre_acento: Color32,
-    /// Fondo del módulo activo en el riel.
+    /// Fondo del módulo activo en el riel y de los elementos seleccionados.
     pub acento_fondo: Color32,
+    /// Texto sobre `acento_fondo` (pestaña lateral o fila activa).
+    pub acento_texto: Color32,
+    /// Fondo secundario muy suave: filas alternas de las tablas.
+    pub campo_alt: Color32,
     /// Enlaces.
     pub acento_2: Color32,
     pub senal: Color32,
@@ -89,6 +93,8 @@ pub const OSCURO: Paleta = Paleta {
     acento: c(242, 169, 59),        // #F2A93B
     sobre_acento: c(26, 18, 5),     // #1A1205
     acento_fondo: c(26, 23, 18),    // #1A1712
+    acento_texto: c(255, 196, 107), // #FFC46B
+    campo_alt: c(16, 19, 23),       // #101317
     acento_2: c(255, 196, 107),     // #FFC46B
     senal: c(77, 181, 217),         // #4DB5D9
     electrica: c(242, 169, 59),     // #F2A93B
@@ -97,7 +103,7 @@ pub const OSCURO: Paleta = Paleta {
     falla: c(242, 90, 95),          // #F25A5F
     falla_fondo: c(58, 23, 25),     // #3A1719
     rejilla: c(28, 33, 40),         // #1C2128
-    series: [c(242, 169, 59), c(77, 181, 217), c(167, 139, 250), c(229, 143, 181), c(159, 180, 200)],
+    series: [c(242, 169, 59), c(77, 181, 217), c(167, 139, 250), c(63, 191, 174), c(159, 180, 200)],
 };
 
 pub const CLARO: Paleta = Paleta {
@@ -110,11 +116,13 @@ pub const CLARO: Paleta = Paleta {
     borde: c(213, 217, 223),        // #D5D9DF
     linea_fuerte: c(205, 210, 217), // #CDD2D9
     texto: c(27, 32, 40),           // #1B2028
-    texto_2: c(90, 99, 112),        // #5A6370
+    texto_2: c(95, 104, 117),       // #5F6875
     texto_3: c(95, 104, 117),       // #5F6875
     acento: c(201, 122, 6),         // #C97A06
     sobre_acento: c(26, 18, 5),     // #1A1205
     acento_fondo: c(253, 241, 220), // #FDF1DC
+    acento_texto: c(122, 74, 0),    // #7A4A00
+    campo_alt: c(251, 251, 252),    // #FBFBFC
     acento_2: c(154, 93, 0),        // #9A5D00
     senal: c(28, 127, 176),         // #1C7FB0
     electrica: c(201, 122, 6),      // #C97A06
@@ -123,7 +131,7 @@ pub const CLARO: Paleta = Paleta {
     falla: c(196, 43, 43),          // #C42B2B
     falla_fondo: c(251, 228, 228),  // #FBE4E4
     rejilla: c(211, 216, 222),      // #D3D8DE
-    series: [c(201, 122, 6), c(28, 127, 176), c(124, 92, 214), c(15, 138, 125), c(91, 100, 114)],
+    series: [c(201, 122, 6), c(28, 127, 176), c(124, 92, 214), c(15, 140, 126), c(91, 100, 114)],
 };
 
 static CLARO_ACTIVO: AtomicBool = AtomicBool::new(false);
@@ -149,12 +157,33 @@ pub fn p() -> &'static Paleta {
     paleta(modo())
 }
 
-/// Radio de los widgets (5 px) y de ventanas, nodos y tarjetas (6 px).
+/// Radio de botones y campos (6 px) y de ventanas, nodos y tarjetas (8 px).
 pub fn radio() -> u8 {
-    5
+    6
 }
 pub fn radio_ventana() -> u8 {
-    6
+    8
+}
+
+/// Radio de las fichas y etiquetas pequeñas (4 px).
+pub const RADIO_FICHA: u8 = 4;
+
+/// Color de un tipo de orden de mantenimiento: limpieza, inspección, ensayo y mantenimiento anual
+/// usan las series 1 a 4; cualquier otro tipo, la quinta.
+pub fn color_tipo_orden(tipo: &str) -> Color32 {
+    let s = &p().series;
+    let t = tipo.to_lowercase();
+    if t.contains("limpieza") {
+        s[0]
+    } else if t.contains("inspecc") || t.contains("termograf") {
+        s[1]
+    } else if t.contains("ensayo") || t.contains("curva") {
+        s[2]
+    } else if t.contains("anual") {
+        s[3]
+    } else {
+        s[4]
+    }
 }
 
 pub fn aplicar(ctx: &egui::Context, m: Modo) {
