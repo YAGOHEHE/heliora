@@ -3,9 +3,12 @@
 ## Dónde estamos
 
 - Ventana Rust/egui + motor Python; Windows y macOS.
+- Instaladores con Python incluido (Windows `.exe`, macOS `.dmg`) generados por la CI; sin firma digital.
+- Auditoría de todos los módulos resuelta en lo grave: importar tablas desde archivo, evaluador seguro,
+  guardado sin pérdidas, mantenimiento editable, aplicar modelo, CEC. Detalle en `historial/2026-11-25.md`.
 - Interfaz adaptada al diseño «Sala de control» (`diseno/opcion_a_*.html`), con paleta de comandos
   (Ctrl K), «Ordenar cables», minimapa, «Recientes» y huella sha256 en el inspector. Detalle en
-  `historial/2026-11-25.md`. Sin commit.
+  `historial/2026-11-25.md`.
 - Encargo de modelos físicos: Fases 1-4 construidas; Fase 5 solo como diseño (`docs/diseno_motor_dae.md`),
   **pendiente de revisión humana**.
 - Ronda de correcciones de rigor (2026-11-19) cerrada: G1-G3, I1-I7 y menores. Detalle en
@@ -20,8 +23,9 @@
 
 ## Verificado (2026-11-25, Windows)
 
-- Rediseño: `cargo test` 18/18, clippy limpio, capturas de Bloques en claro y oscuro.
-- Paleta de comandos, minimapa y exportación CSV sin prueba manual en la ventana.
+- Tras auditoría, arreglos en paralelo y revisión independiente: `cargo test` 36/36, clippy limpio,
+  `validar_todo.py` 129/129. Motor autocontenido montado y probado en local.
+- Sin probar: flujo «Instaladores» en GitHub, `.dmg` en un Mac y los formularios nuevos a mano.
 
 ## Verificado (2026-11-19, Windows)
 
