@@ -6,7 +6,7 @@ use crate::tema;
 use egui::text::{LayoutJob, TextFormat};
 use egui::{FontId, Key};
 use serde_json::{json, Value};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 enum Linea {
     Orden(String),
@@ -39,6 +39,8 @@ pub struct Calculo {
     id_ver: Option<(u64, String)>,
     id_leer: Option<(u64, String, usize)>,
     id_guardar: Option<u64>,
+    id_escribir: Option<(u64, PathBuf)>,
+    escritura_fallida: bool,
     tabla: Option<Tabla>,
     enfocar: bool,
     bajar: bool,
@@ -93,11 +95,20 @@ impl Calculo {
             id_ver: None,
             id_leer: None,
             id_guardar: None,
+            id_escribir: None,
+            escritura_fallida: false,
             tabla: None,
             enfocar: false,
             bajar: false,
             aviso: String::new(),
         }
+    }
+
+    /// Sustituye los guiones abiertos por los de un proyecto; sin ninguno, vuelve al guion de ejemplo.
+    pub fn fijar_guiones(&mut self, guiones: Vec<Guion>) {
+        self.guiones = if guiones.is_empty() { Calculo::nuevo().guiones } else { guiones };
+        self.activo = 0;
+        self.aviso.clear();
     }
 
     pub fn abrir_codigo(&mut self, motor: &mut Motor, ruta: String, linea: usize) {
@@ -160,9 +171,29 @@ impl Calculo {
             }
             return true;
         }
+        if self.id_escribir.as_ref().is_some_and(|a| a.0 == id) {
+            let (_, ruta) = self.id_escribir.take().unwrap();
+            if ok {
+                if let Some(g) = self.guiones.iter_mut().find(|g| g.ruta.as_ref() == Some(&ruta)) {
+                    g.sucio = false;
+                }
+            } else {
+                self.escritura_fallida = true;
+                self.aviso = format!("No se guardó: {err}");
+            }
+            return true;
+        }
         if Some(id) == self.id_guardar {
             self.id_guardar = None;
-            self.aviso = if ok { "Guardado y recargado.".to_string() } else { format!("Error: {err}") };
+            if std::mem::take(&mut self.escritura_fallida) {
+                return true;
+            }
+            self.aviso = if ok {
+                c.catalogo_nuevo = Some(v.clone());
+                "Guardado y recargado.".to_string()
+            } else {
+                format!("Guardado, pero la recarga falló y siguen activos los bloques anteriores: {err}")
+            };
             return true;
         }
         false
@@ -184,7 +215,7 @@ impl Calculo {
     pub fn correr_guion(&mut self, motor: &mut Motor) {
         if let Some(g) = self.guiones.get(self.activo) {
             self.historia.push(Linea::Nota(format!("» ejecutando {}", g.nombre)));
-            self.id_eval = Some(motor.llamar("ejecutar_script", json!({"codigo": g.texto})));
+            self.id_eval = Some(motor.llamar("ejecutar_script", json!({"codigo": g.texto, "ruta": g.ruta.as_ref().map(|r| r.display().to_string())})));
             self.bajar = true;
         }
     }
@@ -219,7 +250,7 @@ impl Calculo {
                 self.activo = self.activo.min(self.guiones.len() - 1);
             }
             if ui.small_button("+").on_hover_text("Nuevo script").clicked() {
-                self.guiones.push(Guion { nombre: format!("script{}.py", self.guiones.len() + 1), ruta: None, texto: String::new(), sucio: false, motor: false });
+                self.guiones.push(Guion { nombre: nombre_libre(&self.guiones.iter().map(|g| g.nombre.as_str()).collect::<Vec<_>>()), ruta: None, texto: String::new(), sucio: false, motor: false });
                 self.activo = self.guiones.len() - 1;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -274,12 +305,17 @@ impl Calculo {
         }
         if let Some(r) = &g.ruta {
             if g.motor {
-                motor.llamar("escribir_archivo", json!({"ruta": r.display().to_string(), "texto": g.texto}));
+                // El guion no se da por guardado hasta que el motor confirme la escritura
+                self.id_escribir = Some((motor.llamar("escribir_archivo", json!({"ruta": r.display().to_string(), "texto": g.texto})), r.clone()));
                 self.id_guardar = Some(motor.llamar("recargar_librerias", json!({})));
-                g.sucio = false;
-            } else if std::fs::write(r, &g.texto).is_ok() {
-                g.sucio = false;
-                self.aviso = format!("Guardado en {}", r.display());
+            } else {
+                match std::fs::write(r, &g.texto) {
+                    Ok(()) => {
+                        g.sucio = false;
+                        self.aviso = format!("Guardado en {}", r.display());
+                    }
+                    Err(e) => self.aviso = format!("No se guardó {}: {e}", r.display()),
+                }
             }
         }
     }
@@ -373,8 +409,8 @@ impl Calculo {
                     motor.llamar("limpiar_espacio", json!({}));
                     c.variables.clear();
                 }
-                if ui.small_button("Importar datos").on_hover_text("CSV o Parquet").clicked() {
-                    if let Some(r) = rfd::FileDialog::new().add_filter("Datos", &["csv", "parquet"]).pick_file() {
+                if ui.small_button("Importar datos").on_hover_text("CSV, TSV, TXT o Parquet").clicked() {
+                    if let Some(r) = rfd::FileDialog::new().add_filter("Datos", &["csv", "tsv", "txt", "parquet"]).pick_file() {
                         let nombre: String = r.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "datos".into()).chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
                         c.id_vars = Some(motor.llamar("importar_datos", json!({"ruta": r.display().to_string(), "nombre": nombre})));
                     }
@@ -480,6 +516,46 @@ impl Calculo {
     }
 }
 
+/// Primer nombre `scriptN.py` (N desde 1) que no usa ningún guion abierto.
+fn nombre_libre(usados: &[&str]) -> String {
+    (1..).map(|n| format!("script{n}.py")).find(|c| !usados.iter().any(|u| u.eq_ignore_ascii_case(c))).unwrap_or_default()
+}
+
+/// Nombres de archivo sin repetidos (ni por mayúsculas, que en Windows son el mismo archivo): el segundo `a.py`
+/// pasa a `a_2.py`, y así.
+pub fn nombres_unicos(nombres: &[String]) -> Vec<String> {
+    let mut vistos: Vec<String> = vec![];
+    let mut salida = vec![];
+    for n in nombres {
+        let (raiz, ext) = n.rsplit_once('.').map_or((n.as_str(), String::new()), |(r, e)| (r, format!(".{e}")));
+        let mut candidato = n.clone();
+        let mut k = 2;
+        while vistos.contains(&candidato.to_lowercase()) {
+            candidato = format!("{raiz}_{k}{ext}");
+            k += 1;
+        }
+        vistos.push(candidato.to_lowercase());
+        salida.push(candidato);
+    }
+    salida
+}
+
+/// Lee los `.py` de la carpeta `scripts` de un proyecto como guiones, ordenados por nombre. Los que no se
+/// pueden leer se devuelven como errores; una carpeta ausente no da guiones ni errores.
+pub fn guiones_de(carpeta: &Path) -> (Vec<Guion>, Vec<String>) {
+    let (mut guiones, mut errores) = (vec![], vec![]);
+    let Ok(lista) = std::fs::read_dir(carpeta) else { return (guiones, errores) };
+    let mut rutas: Vec<PathBuf> = lista.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "py")).collect();
+    rutas.sort();
+    for r in rutas {
+        match std::fs::read_to_string(&r) {
+            Ok(texto) => guiones.push(Guion { nombre: r.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), ruta: Some(r), texto, sucio: false, motor: false }),
+            Err(e) => errores.push(format!("{}: {e}", r.display())),
+        }
+    }
+    (guiones, errores)
+}
+
 /// Resaltado sencillo de sintaxis de Python.
 pub fn resaltar(texto: &str) -> LayoutJob {
     const CLAVES: [&str; 30] = ["def", "class", "return", "if", "else", "elif", "for", "while", "in", "import", "from", "as", "with", "try", "except", "finally", "raise", "lambda", "not", "and", "or", "is", "None", "True", "False", "pass", "break", "continue", "yield", "self"];
@@ -558,4 +634,43 @@ pub fn resaltar(texto: &str) -> LayoutJob {
         }
     }
     j
+}
+
+#[cfg(test)]
+mod pruebas {
+    use super::*;
+
+    #[test]
+    fn un_script_nuevo_no_repite_el_nombre_de_uno_abierto() {
+        assert_eq!(nombre_libre(&["ejemplo.py"]), "script1.py");
+        // Con script1 cerrado y script2 abierto, el siguiente no puede volver a llamarse script2
+        assert_eq!(nombre_libre(&["ejemplo.py", "script2.py"]), "script1.py");
+        assert_eq!(nombre_libre(&["script1.py", "Script2.PY"]), "script3.py");
+    }
+
+    #[test]
+    fn al_guardar_dos_scripts_con_el_mismo_nombre_no_se_pisan() {
+        let n: Vec<String> = ["a.py", "b.py", "A.py", "a.py"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(nombres_unicos(&n), ["a.py", "b.py", "A_2.py", "a_3.py"]);
+    }
+
+    #[test]
+    fn los_scripts_de_un_proyecto_se_cargan_con_su_ruta_y_en_orden() {
+        let dir = std::env::temp_dir().join(format!("heliora_scripts_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("b.py"), "print(2)").unwrap();
+        std::fs::write(dir.join("a.py"), "print(1)").unwrap();
+        std::fs::write(dir.join("notas.txt"), "no").unwrap();
+        let (g, e) = guiones_de(&dir);
+        assert!(e.is_empty());
+        assert_eq!(g.iter().map(|x| x.nombre.as_str()).collect::<Vec<_>>(), ["a.py", "b.py"]);
+        assert_eq!(g[0].ruta.as_deref(), Some(dir.join("a.py").as_path()));
+        assert_eq!(g[1].texto, "print(2)");
+        let (g, e) = guiones_de(&dir.join("no_existe"));
+        assert!(g.is_empty() && e.is_empty());
+        let mut c = Calculo::nuevo();
+        c.fijar_guiones(vec![]);
+        assert_eq!(c.guiones.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
