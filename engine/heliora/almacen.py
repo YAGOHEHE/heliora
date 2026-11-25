@@ -15,7 +15,6 @@ import os
 import re
 import types
 
-import joblib
 import numpy as np
 import pandas as pd
 
@@ -86,6 +85,7 @@ def _escribir(v, ruta):
             json.dump(v, f, ensure_ascii=False)
         return ".json"
     try:
+        import joblib
         joblib.dump(v, ruta + ".pkl")
     except BaseException:
         _quitar(ruta + ".pkl")
@@ -158,6 +158,7 @@ def _cargar_archivo(ruta):
         with open(ruta, encoding="utf8") as f:
             return json.load(f)
     if ext == ".pkl":
+        import joblib
         return joblib.load(ruta)
     raise ValueError(f"extensión «{ext}» desconocida")
 
