@@ -9,7 +9,8 @@ use crate::plan::Mantenimiento;
 use crate::tema::{self, Modulo};
 use egui::{Pos2, Rect, Sense, Vec2};
 use serde_json::{json, Value};
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 
 #[derive(Clone, Default)]
@@ -28,6 +29,12 @@ pub struct Compartido {
     pub id_vars: Option<u64>,
     pub abrir_codigo: Option<(String, usize)>,
     pub png: Option<(Rect, PathBuf)>,
+    /// Columnas de los archivos de datos que consultan los bloques de tabla, por ruta
+    pub columnas: HashMap<String, Vec<String>>,
+    /// Archivo cuyas columnas necesita el inspector y aún no están en `columnas`
+    pub pedir_columnas: Option<String>,
+    /// Catálogo de bloques recién recargado, que el editor aún debe adoptar
+    pub catalogo_nuevo: Option<Value>,
 }
 
 impl Compartido {
@@ -47,6 +54,26 @@ impl Compartido {
 
     pub fn exportar(&mut self, ctx: &egui::Context, a: grafica::Accion, f: &Figura) {
         grafica::exportar(ctx, a, f, &mut self.png);
+    }
+
+    /// Columnas que ofrece el desplegable de un bloque de tabla: las del archivo de su parámetro `ruta`
+    /// (que se piden al motor la primera vez) o las de la variable de su parámetro `variable`.
+    /// Vacío mientras no se conozcan: el inspector cae entonces a un campo de texto.
+    pub fn columnas_de(&mut self, params: &serde_json::Map<String, Value>) -> Vec<String> {
+        if let Some(Value::String(r)) = params.get("ruta") {
+            if r.is_empty() {
+                return vec![];
+            }
+            return match self.columnas.get(r) {
+                Some(c) => c.clone(),
+                None => {
+                    self.pedir_columnas = Some(r.clone());
+                    vec![]
+                }
+            };
+        }
+        let Some(Value::String(v)) = params.get("variable") else { return vec![] };
+        self.variables.iter().find(|x| &x.nombre == v).map(|x| x.columnas.clone()).unwrap_or_default()
     }
 }
 
@@ -78,6 +105,50 @@ struct Guardado {
     id: u64,
     carpeta: PathBuf,
     problemas: Vec<String>,
+}
+
+/// Variables que el motor no pudo guardar, como problemas legibles («nombre (motivo)»), de su respuesta a `guardar_espacio`.
+fn omitidos_del_espacio(v: &Value) -> Vec<String> {
+    let lista: Vec<String> = v["omitidos"].as_array().into_iter().flatten().map(|o| format!("{} ({})", o["nombre"].as_str().unwrap_or("?"), o["motivo"].as_str().unwrap_or("sin motivo"))).collect();
+    if lista.is_empty() {
+        vec![]
+    } else {
+        vec![format!("variables sin guardar: {}", lista.join(", "))]
+    }
+}
+
+/// Apertura en curso: lo cargado en local espera a que el motor cargue los datos del espacio de trabajo.
+struct Abriendo {
+    id: u64,
+    carpeta: PathBuf,
+    problemas: Vec<String>,
+}
+
+/// Aviso final de la apertura: «abierto» a secas solo si todo se leyó.
+fn resumen_apertura(carpeta: &Path, problemas: &[String]) -> String {
+    if problemas.is_empty() {
+        format!("Proyecto abierto: {}", carpeta.display())
+    } else {
+        format!("Proyecto abierto con {} problemas ({}): {}", problemas.len(), carpeta.display(), problemas.join("; "))
+    }
+}
+
+/// Comprueba que la carpeta sea un proyecto de Heliora: un `proyecto.json` con el formato esperado o, en
+/// las carpetas anteriores a ese archivo, el diagrama principal.
+fn validar_proyecto(c: &Path) -> Result<(), String> {
+    let doc = c.join("proyecto.json");
+    if doc.exists() {
+        let t = std::fs::read_to_string(&doc).map_err(|e| format!("{}: {e}", doc.display()))?;
+        let v: Value = serde_json::from_str(&t).map_err(|e| format!("proyecto.json no es un JSON válido ({e})"))?;
+        return match v["formato"].as_str() {
+            Some("heliora-proyecto/1") => Ok(()),
+            otro => Err(format!("proyecto.json tiene el formato «{}» y se esperaba «heliora-proyecto/1»", otro.unwrap_or("(ninguno)"))),
+        };
+    }
+    if c.join("diagramas").join("principal.json").exists() {
+        return Ok(());
+    }
+    Err(format!("«{}» no es un proyecto de Heliora: no tiene proyecto.json ni diagramas/principal.json", c.display()))
 }
 
 /// Atributos de Git para la carpeta de un proyecto (los mismos que el `.gitattributes` de la app).
@@ -117,6 +188,8 @@ pub struct App {
     iniciado: bool,
     carpeta: Option<PathBuf>,
     guardado: Option<Guardado>,
+    abriendo: Option<Abriendo>,
+    pidiendo_columnas: HashMap<u64, String>,
     aviso: String,
     instalando: Option<Receiver<String>>,
     estado_inst: String,
@@ -178,6 +251,8 @@ impl App {
             iniciado: false,
             carpeta: None,
             guardado: None,
+            abriendo: None,
+            pidiendo_columnas: HashMap::new(),
             aviso: String::new(),
             instalando: None,
             estado_inst: String::new(),
@@ -232,10 +307,31 @@ impl App {
 
     fn despachar(&mut self, id: u64, ok: bool, v: &Value, err: &str) {
         if let Some(mut g) = self.guardado.take_if(|g| g.id == id) {
-            if !ok {
+            if ok {
+                g.problemas.extend(omitidos_del_espacio(v));
+            } else {
                 g.problemas.push(format!("datos del espacio de trabajo: {err}"));
             }
             self.aviso = resumen_guardado(&g.carpeta, &g.problemas);
+            return;
+        }
+        if let Some(mut a) = self.abriendo.take_if(|a| a.id == id) {
+            if ok {
+                self.compartido.fijar_variables(&v["variables"]);
+                a.problemas.extend(v["errores"].as_array().into_iter().flatten().filter_map(|e| e.as_str()).map(|e| format!("datos: {e}")));
+            } else {
+                a.problemas.push(format!("datos del espacio de trabajo: {err}"));
+            }
+            self.aviso = resumen_apertura(&a.carpeta, &a.problemas);
+            return;
+        }
+        if let Some(ruta) = self.pidiendo_columnas.remove(&id) {
+            // Un archivo ilegible se anota sin columnas: el inspector vuelve al campo de texto
+            let cols = if ok { v.as_array().into_iter().flatten().filter_map(|x| x.as_str().map(String::from)).collect() } else { vec![] };
+            if !ok {
+                self.aviso = format!("No se pudieron leer las columnas de {ruta}: {err}");
+            }
+            self.compartido.columnas.insert(ruta, cols);
             return;
         }
         if Some(id) == self.id_catalogo {
@@ -569,23 +665,44 @@ impl App {
 
     fn abrir_proyecto(&mut self) {
         let Some(c) = rfd::FileDialog::new().set_title("Carpeta del proyecto").pick_folder() else { return };
+        if let Err(e) = validar_proyecto(&c) {
+            self.aviso = format!("No se abrió el proyecto: {e}");
+            return;
+        }
+        let mut problemas = vec![];
+        // Lo de la sesión anterior no debe mezclarse con el proyecto que se abre
+        self.motor.llamar("limpiar_espacio", json!({}));
+        self.compartido.variables.clear();
+        self.editor.nuevo_diagrama();
         let d = c.join("diagramas").join("principal.json");
         if d.exists() {
             if let Err(e) = self.editor.abrir_de(&d) {
-                self.aviso = e;
+                problemas.push(format!("diagrama: {e}"));
             }
         }
         let m = c.join("mantenimiento.json");
+        self.mantenimiento.estado = Value::Null;
+        self.mantenimiento.tablero = Value::Null;
+        self.mantenimiento.ruta = None;
         if m.exists() {
             if let Err(e) = self.mantenimiento.cargar_de(&m, &mut self.motor) {
-                self.aviso = e;
+                problemas.push(format!("mantenimiento: {e}"));
             }
         }
+        if self.mantenimiento.estado.is_null() {
+            self.mantenimiento.iniciar(&mut self.motor);
+        }
+        let (guiones, errores) = crate::calculo::guiones_de(&c.join("scripts"));
+        self.calculo.fijar_guiones(guiones);
+        problemas.extend(errores.into_iter().map(|e| format!("script {e}")));
         let datos = c.join("datos");
         if datos.exists() {
-            self.compartido.id_vars = Some(self.motor.llamar("cargar_espacio", json!({"carpeta": datos.display().to_string()})));
+            let id = self.motor.llamar("cargar_espacio", json!({"carpeta": datos.display().to_string()}));
+            self.abriendo = Some(Abriendo { id, carpeta: c.clone(), problemas });
+            self.aviso = "Abriendo el proyecto: esperando a que el motor cargue los datos...".into();
+        } else {
+            self.aviso = resumen_apertura(&c, &problemas);
         }
-        self.aviso = format!("Proyecto abierto: {}", c.display());
         self.carpeta = Some(c);
     }
 
@@ -614,10 +731,10 @@ impl App {
         if !self.mantenimiento.estado.is_null() {
             anotar(self.mantenimiento.guardar_en(&c.join("mantenimiento.json")));
         }
-        for g in &self.calculo.guiones {
-            if !g.motor {
-                anotar(escribir_atomico(&c.join("scripts").join(&g.nombre), g.texto.as_bytes()));
-            }
+        let propios: Vec<&crate::calculo::Guion> = self.calculo.guiones.iter().filter(|g| !g.motor).collect();
+        let nombres = crate::calculo::nombres_unicos(&propios.iter().map(|g| g.nombre.clone()).collect::<Vec<_>>());
+        for (g, nombre) in propios.iter().zip(&nombres) {
+            anotar(escribir_atomico(&c.join("scripts").join(nombre), g.texto.as_bytes()));
         }
         let doc = json!({"formato": "heliora-proyecto/1", "diagrama": "diagramas/principal.json", "mantenimiento": "mantenimiento.json", "datos": "datos", "scripts": "scripts"});
         anotar(serde_json::to_string_pretty(&doc).map_err(|e| e.to_string()).and_then(|t| escribir_atomico(&c.join("proyecto.json"), t.as_bytes())));
@@ -822,14 +939,15 @@ impl App {
                     tema::tarjeta(ui, |ui| {
                         ui.set_width(ui.available_width());
                         tema::titulo(ui, "Parámetros");
-                        egui::Grid::new("g_ref").striped(true).num_columns(3).spacing([18.0, 4.0]).show(ui, |ui| {
+                        egui::Grid::new("g_ref").striped(true).num_columns(4).spacing([18.0, 4.0]).show(ui, |ui| {
                             for p in &x.params {
-                                ui.label(&p.etiqueta);
+                                ui.label(&p.etiqueta).on_hover_text(if p.ayuda.is_empty() { &p.etiqueta } else { &p.ayuda });
                                 ui.label(egui::RichText::new(match &p.defecto {
                                     Value::String(s) => s.clone(),
                                     o => o.to_string(),
                                 }).monospace());
                                 ui.label(egui::RichText::new(&p.unidad).color(tema::p().texto_2));
+                                ui.label(egui::RichText::new(&p.ayuda).small().color(tema::p().texto_2));
                                 ui.end_row();
                             }
                         });
@@ -972,6 +1090,15 @@ impl eframe::App for App {
         } else {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
+        if let Some(v) = self.compartido.catalogo_nuevo.take() {
+            self.editor.fijar_catalogo(&v);
+        }
+        if let Some(ruta) = self.compartido.pedir_columnas.take() {
+            if !self.pidiendo_columnas.values().any(|r| *r == ruta) {
+                let id = self.motor.llamar("columnas", json!({"ruta": ruta}));
+                self.pidiendo_columnas.insert(id, ruta);
+            }
+        }
         if let Some((ruta, linea)) = self.compartido.abrir_codigo.take() {
             self.calculo.abrir_codigo(&mut self.motor, ruta, linea);
             self.modulo = Modulo::Calculo;
@@ -1059,5 +1186,50 @@ mod pruebas {
         assert!(aviso.contains("NO se guardó") && aviso.contains("scripts.py"), "{aviso}");
         assert!(resumen_guardado(&dir, &[]).starts_with("Proyecto guardado"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn un_guardado_que_omite_variables_no_se_anuncia_como_completo() {
+        let v = json!({"guardados": ["a"], "omitidos": [{"nombre": "f", "motivo": "function: no serializable"}]});
+        let problemas = omitidos_del_espacio(&v);
+        let aviso = resumen_guardado(Path::new("/p"), &problemas);
+        assert!(aviso.contains("NO se guardó") && aviso.contains("f (function: no serializable)"), "{aviso}");
+        assert!(omitidos_del_espacio(&json!({"guardados": ["a"], "omitidos": []})).is_empty());
+    }
+
+    #[test]
+    fn solo_se_abre_una_carpeta_que_es_un_proyecto() {
+        let dir = std::env::temp_dir().join(format!("heliora_proyecto_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("diagramas")).unwrap();
+        let vacia = dir.join("vacia");
+        std::fs::create_dir_all(&vacia).unwrap();
+        assert!(validar_proyecto(&vacia).unwrap_err().contains("no es un proyecto de Heliora"));
+        // Carpeta anterior a proyecto.json: vale si tiene el diagrama principal
+        std::fs::write(dir.join("diagramas").join("principal.json"), "{}").unwrap();
+        assert!(validar_proyecto(&dir).is_ok());
+        std::fs::write(dir.join("proyecto.json"), r#"{"formato": "otro/9"}"#).unwrap();
+        assert!(validar_proyecto(&dir).unwrap_err().contains("heliora-proyecto/1"));
+        std::fs::write(dir.join("proyecto.json"), "no es json").unwrap();
+        assert!(validar_proyecto(&dir).unwrap_err().contains("JSON"));
+        std::fs::write(dir.join("proyecto.json"), r#"{"formato": "heliora-proyecto/1"}"#).unwrap();
+        assert!(validar_proyecto(&dir).is_ok());
+        assert!(resumen_apertura(&dir, &["script x".into()]).contains("1 problemas"));
+        assert!(resumen_apertura(&dir, &[]).starts_with("Proyecto abierto:"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn las_columnas_de_un_archivo_se_piden_una_vez_y_las_de_una_variable_salen_de_la_lista() {
+        let mut c = Compartido::default();
+        let con_ruta = json!({"ruta": "/datos/a.csv"}).as_object().unwrap().clone();
+        assert!(c.columnas_de(&con_ruta).is_empty());
+        assert_eq!(c.pedir_columnas.as_deref(), Some("/datos/a.csv"));
+        c.columnas.insert("/datos/a.csv".into(), vec!["t".into(), "p".into()]);
+        assert_eq!(c.columnas_de(&con_ruta), ["t", "p"]);
+        c.variables.push(Variable { nombre: "d".into(), columnas: vec!["x".into()], ..Default::default() });
+        let con_variable = json!({"variable": "d"}).as_object().unwrap().clone();
+        assert_eq!(c.columnas_de(&con_variable), ["x"]);
+        assert!(c.columnas_de(&json!({"variable": "otra"}).as_object().unwrap().clone()).is_empty());
     }
 }

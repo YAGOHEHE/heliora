@@ -552,9 +552,9 @@ def simular(diagrama, espacio=None, cancelar=None, config=None, informe=None):
         else:
             b.usar_zc = variable
     info = integrar_modelo(
-        m, metodo=metodo, t0=float(evaluar_numero(cfg.get("t_ini", 0.0))),
-        tf=float(evaluar_numero(cfg.get("t_fin", 1.0))), paso=_num(cfg.get("paso")),
-        rtol=float(evaluar_numero(cfg.get("rtol", 1e-3))), atol=float(evaluar_numero(cfg.get("atol", 1e-6))),
+        m, metodo=metodo, t0=float(evaluar_numero(cfg.get("t_ini", 0.0), vacio=0.0)),
+        tf=float(evaluar_numero(cfg.get("t_fin", 1.0), vacio=1.0)), paso=_num(cfg.get("paso")),
+        rtol=float(evaluar_numero(cfg.get("rtol", 1e-3), vacio=1e-3)), atol=float(evaluar_numero(cfg.get("atol", 1e-6), vacio=1e-6)),
         paso_max=_num(cfg.get("paso_max")), paso_ini=_num(cfg.get("paso_ini")),
         cancelar=cancelar, informe=informe)
     res = {"senales": [], "estadisticas": {
@@ -582,6 +582,7 @@ def simular(diagrama, espacio=None, cancelar=None, config=None, informe=None):
                                    "exportado": isinstance(b, AEspacio), "nombres": m.nombres_entradas(b)})
     res["avisos"] = list(m.red.avisos) if m.red else []
     res["avisos"] += m.avisos_muestreo(_num(cfg.get("paso")) if not variable else None)
+    res["avisos"] += [f"«{b.etiqueta}»: {a}" for b in m.instancias.values() for a in b.avisos_preparacion]
     # Bloques de cada lazo (sin la red, que reúne a todos los elementos eléctricos)
     res["lazos"] = [[m.lista[k].id for k in lazo.comp if m.lista[k] is not m.red] for lazo in m.lazos]
     for lazo in m.lazos:

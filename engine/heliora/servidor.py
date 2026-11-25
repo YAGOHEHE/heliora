@@ -206,9 +206,9 @@ class Motor:
         """Atiende la orden `evaluar`: ejecuta el código en la consola y devuelve su resultado."""
         return self.espacio.evaluar(codigo)
 
-    def ejecutar_script(self, codigo):
-        """Atiende la orden `ejecutar_script`: ejecuta el script en la consola y devuelve su resultado."""
-        return self.espacio.ejecutar_script(codigo)
+    def ejecutar_script(self, codigo, ruta=None):
+        """Atiende la orden `ejecutar_script`: ejecuta el script en la consola, con `__file__` igual a `ruta`."""
+        return self.espacio.ejecutar_script(codigo, ruta)
 
     def variables(self):
         """Atiende la orden `variables`: devuelve la descripción de las variables del espacio."""
@@ -239,32 +239,26 @@ class Motor:
         return self.espacio.variables()
 
     def guardar_espacio(self, carpeta):
-        """Guarda en una carpeta las tablas (Parquet) y matrices (CSV) del espacio de trabajo."""
-        import numpy as np
-        import pandas as pd
-        os.makedirs(carpeta, exist_ok=True)
-        hechos = []
-        for k, v in self.espacio.ns.items():
-            if k in self.espacio.base or k.startswith("_"):
-                continue
-            if isinstance(v, pd.DataFrame):
-                d = v.copy()
-                d.columns = [str(c) for c in d.columns]
-                d.to_parquet(os.path.join(carpeta, k + ".parquet"))
-                hechos.append(k + ".parquet")
-            elif isinstance(v, np.ndarray) and np.issubdtype(v.dtype, np.number) and v.ndim <= 2:
-                pd.DataFrame(v).to_csv(os.path.join(carpeta, k + ".csv"), index=False, lineterminator="\n")
-                hechos.append(k + ".csv")
-        return hechos
+        """Guarda las variables del espacio de trabajo en una carpeta (ver `almacen.guardar`).
+
+        Returns:
+            {"guardados": nombres guardados, "omitidos": [{"nombre", "motivo"}] de lo que no se pudo guardar}.
+        """
+        return self.espacio.guardar_en(carpeta)
 
     def cargar_espacio(self, carpeta):
-        """Carga todas las tablas de una carpeta de datos del proyecto."""
-        for a in sorted(os.listdir(carpeta)):
-            r = os.path.join(carpeta, a)
-            n, ext = os.path.splitext(a)
-            if ext.lower() in (".csv", ".parquet"):
-                self.espacio.cargar(r, n)
-        return self.espacio.variables()
+        """Carga las variables guardadas en una carpeta, con o sin índice (carpetas antiguas).
+
+        Returns:
+            {"variables": descripción de las variables del espacio, "errores": mensajes de lo que no se pudo leer}.
+        """
+        errores = self.espacio.cargar_de(carpeta)
+        return {"variables": self.espacio.variables(), "errores": errores}
+
+    def columnas(self, ruta):
+        """Devuelve los nombres de columna de una tabla (CSV, TSV, TXT o Parquet), para los desplegables."""
+        from .lectura import leer_tabla
+        return [str(c) for c in leer_tabla(ruta).columns]
 
     # ---------------------------------------------------------------- bloques
     def catalogo(self):
@@ -432,9 +426,16 @@ class Motor:
 
     def escribir_archivo(self, ruta, texto):
         """Atiende la orden `escribir_archivo`: escribe `texto` en `ruta` con saltos LF y devuelve True."""
+        if str(ruta).endswith(".py"):
+            try:
+                compile(texto, str(ruta), "exec")
+            except SyntaxError as e:
+                raise ValueError(f"No se guardó: error de sintaxis en la línea {e.lineno}: {e.msg}") from None
         # Se escribe el texto tal cual, con LF: en Windows el modo texto lo convertiría a CRLF
-        with open(ruta, "w", encoding="utf8", newline="\n") as f:
+        tmp = str(ruta) + ".tmp~"
+        with open(tmp, "w", encoding="utf8", newline="\n") as f:
             f.write(texto)
+        os.replace(tmp, ruta)
         return True
 
     def recargar_librerias(self):
@@ -444,11 +445,19 @@ class Motor:
         from .lib import almacenamiento, electrica, fotovoltaica, maquinas, mecanica, potencia, senal, termica
         from .sim import bloques_genericos, circuito, nucleo
         from .sim import diagrama as dg
-        nucleo.REGISTRO.clear()
         # Cada librería se recarga después de las que importa
-        for m in (nucleo, circuito, bloques_genericos, termica, electrica, potencia, fotovoltaica, senal,
-                  almacenamiento, mecanica, maquinas, dg):
-            importlib.reload(m)
+        modulos = (nucleo, circuito, bloques_genericos, termica, electrica, potencia, fotovoltaica, senal,
+                   almacenamiento, mecanica, maquinas, dg)
+        # Recargar un módulo reescribe su espacio de nombres: si alguno falla, se restaura el anterior entero
+        instantaneas = [(m, dict(m.__dict__)) for m in modulos]
+        try:
+            for m in modulos:
+                importlib.reload(m)
+        except BaseException:
+            for m, d in instantaneas:
+                m.__dict__.clear()
+                m.__dict__.update(d)
+            raise
         return self.catalogo()
 
     # ---------------------------------------------------------------- herramientas

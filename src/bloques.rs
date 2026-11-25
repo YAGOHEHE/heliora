@@ -90,6 +90,7 @@ pub struct ParamDef {
     pub unidad: String,
     pub tipo: String,
     pub opciones: Vec<String>,
+    pub ayuda: String,
 }
 
 #[derive(Clone, Default)]
@@ -132,6 +133,7 @@ pub fn fichas_desde(v: &Value) -> Vec<Ficha> {
                                     unidad: d["unidad"].as_str().unwrap_or("").into(),
                                     tipo: d["tipo"].as_str().unwrap_or("num").into(),
                                     opciones: lista_txt(&d["opciones"]),
+                                    ayuda: d["ayuda"].as_str().unwrap_or("").into(),
                                 })
                                 .collect()
                         })
@@ -170,6 +172,20 @@ pub struct PuertoD {
 }
 
 pub const ANCHO: f32 = 148.0;
+
+/// Texto del hover de un parámetro: su etiqueta y, si el bloque la da, su ayuda.
+fn texto_ayuda(p: &ParamDef) -> String {
+    if p.ayuda.is_empty() {
+        p.etiqueta.clone()
+    } else {
+        format!("{}\n{}", p.etiqueta, p.ayuda)
+    }
+}
+
+/// Número de bloques «Función Python» del sistema y de sus subsistemas: ejecutan código al simular.
+pub fn bloques_con_codigo(s: &Sistema) -> usize {
+    s.bloques.iter().map(|b| usize::from(b.tipo == "funcion_python") + b.sistema.as_ref().map_or(0, bloques_con_codigo)).sum()
+}
 
 fn valor_txt(v: Option<&Value>) -> String {
     match v {
@@ -429,6 +445,8 @@ pub struct Editor {
     procedencia: Value,
     /// Zona del lienzo en el último cuadro, para colocar bloques en su centro
     area_lienzo: Rect,
+    /// Aviso al abrir un diagrama de un archivo con bloques que ejecutan código; se cierra con «Entendido»
+    pub aviso_apertura: Option<String>,
 }
 
 impl Editor {
@@ -472,6 +490,7 @@ impl Editor {
             ultima: None,
             procedencia: Value::Null,
             area_lienzo: Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 500.0)),
+            aviso_apertura: None,
         }
     }
 
@@ -506,6 +525,7 @@ impl Editor {
         self.deshacer.clear();
         self.rehacer.clear();
         self.guardado_json.clear();
+        self.aviso_apertura = None;
         self.ultima = None;
         self.lazos.clear();
         Ok(())
@@ -903,6 +923,10 @@ impl Editor {
         self.cargar_valor(&v)?;
         self.archivo = Some(ruta.to_path_buf());
         self.guardado_json = json_canonico(&self.diagrama).unwrap_or_default();
+        let n = bloques_con_codigo(&self.diagrama.sistema);
+        if n > 0 {
+            self.aviso_apertura = Some(format!("Este diagrama contiene {n} bloque(s) «Función Python»: ejecutan código Python al simular. Ábrelo solo si confías en su origen."));
+        }
         Ok(())
     }
 
@@ -977,6 +1001,7 @@ impl Editor {
         self.sel.clear();
         self.archivo = None;
         self.guardado_json.clear();
+        self.aviso_apertura = None;
         self.resultado.clear();
         self.stats.clear();
         self.ultima = None;
@@ -1017,6 +1042,19 @@ impl Editor {
                 .height_range(140.0..=700.0)
                 .frame(marco(egui::Margin::ZERO))
                 .show_inside(ui, |ui| self.osciloscopios(ui, c));
+        }
+        if let Some(a) = self.aviso_apertura.clone() {
+            let mut cerrar = false;
+            egui::TopBottomPanel::top("aviso_codigo").frame(marco(egui::Margin::symmetric(12, 6))).show_inside(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("⚠").color(pal.alerta));
+                    ui.add(egui::Label::new(egui::RichText::new(&a).color(pal.texto)).wrap());
+                    cerrar = ui.button("Entendido").clicked();
+                });
+            });
+            if cerrar {
+                self.aviso_apertura = None;
+            }
         }
         egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.fondo)).show_inside(ui, |ui| self.lienzo(ui));
         if self.ver_lineal {
@@ -1387,9 +1425,33 @@ impl Editor {
                 ui.add(egui::TextEdit::singleline(&mut b.nombre).desired_width(130.0).hint_text("Nombre en el lienzo"));
                 ui.end_row();
                 for p in &ficha.params {
-                    ui.add(egui::Label::new(egui::RichText::new(&p.etiqueta).size(12.0).color(pal.texto_2)).truncate()).on_hover_text(&p.etiqueta);
+                    ui.add(egui::Label::new(egui::RichText::new(&p.etiqueta).size(12.0).color(pal.texto_2)).truncate()).on_hover_text(texto_ayuda(p));
                     let mut t = valor_txt(b.params.get(&p.nombre).or(Some(&p.defecto)));
                     match p.tipo.as_str() {
+                        "columna" | "variable" => {
+                            let opciones = if p.tipo == "variable" { c.variables.iter().filter(|v| v.tipo == "tabla" || v.tipo.starts_with("matriz")).map(|v| v.nombre.clone()).collect() } else { c.columnas_de(&b.params) };
+                            if opciones.is_empty() {
+                                if ui.add(egui::TextEdit::singleline(&mut t).font(tema::fuente_mono(12.0)).desired_width(130.0)).changed() {
+                                    b.params.insert(p.nombre.clone(), json!(t));
+                                    cambio = true;
+                                }
+                            } else {
+                                let mostrado = if t.is_empty() { "(por defecto)".to_string() } else { t.clone() };
+                                egui::ComboBox::from_id_salt(&p.nombre).selected_text(egui::RichText::new(mostrado).font(tema::fuente_mono(12.0))).width(130.0).show_ui(ui, |ui| {
+                                    if p.tipo == "columna" && ui.selectable_label(t.is_empty(), "(por defecto)").clicked() {
+                                        b.params.insert(p.nombre.clone(), json!(""));
+                                        cambio = true;
+                                    }
+                                    for o in &opciones {
+                                        if ui.selectable_label(&t == o, o).clicked() {
+                                            b.params.insert(p.nombre.clone(), json!(o));
+                                            cambio = true;
+                                        }
+                                    }
+                                });
+                            }
+                            ui.label("");
+                        }
                         "opcion" => {
                             egui::ComboBox::from_id_salt(&p.nombre).selected_text(egui::RichText::new(&t).font(tema::fuente_mono(12.0))).width(130.0).show_ui(ui, |ui| {
                                 for o in &p.opciones {
@@ -1410,13 +1472,24 @@ impl Editor {
                         }
                         "ruta" => {
                             ui.horizontal(|ui| {
+                                let mut nueva = None;
                                 if ui.add(egui::TextEdit::singleline(&mut t).font(tema::fuente_mono(12.0)).desired_width(100.0)).changed() {
-                                    b.params.insert(p.nombre.clone(), json!(t));
+                                    nueva = Some(t.clone());
                                 }
                                 if ui.small_button("…").clicked() {
-                                    if let Some(a) = rfd::FileDialog::new().add_filter("Datos", &["csv", "parquet"]).pick_file() {
-                                        b.params.insert(p.nombre.clone(), json!(a.display().to_string()));
+                                    if let Some(a) = rfd::FileDialog::new().add_filter("Datos", &["csv", "tsv", "txt", "parquet"]).pick_file() {
+                                        nueva = Some(a.display().to_string());
                                     }
+                                }
+                                if let Some(n) = nueva {
+                                    // Las columnas elegidas pertenecen al archivo anterior
+                                    for col in ["col_t", "col_y"] {
+                                        if b.params.contains_key(col) {
+                                            b.params.insert(col.into(), json!(""));
+                                        }
+                                    }
+                                    b.params.insert(p.nombre.clone(), json!(n));
+                                    cambio = true;
                                 }
                             });
                             ui.label("");
@@ -2130,6 +2203,32 @@ mod pruebas {
         }
         // Cada tramo es horizontal o vertical
         assert!(pts.windows(2).all(|w| w[0].x == w[1].x || w[0].y == w[1].y));
+    }
+
+    #[test]
+    fn abrir_un_diagrama_con_funcion_python_avisa_y_uno_sin_codigo_no() {
+        let dir = std::env::temp_dir().join(format!("heliora_codigo_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let con = dir.join("con.json");
+        let anidado = r#"{"id": "s", "tipo": "subsistema", "sistema": {"bloques": [{"id": "f", "tipo": "funcion_python"}], "conexiones": []}}"#;
+        std::fs::write(&con, format!(r#"{{"sistema": {{"bloques": [{{"id": "a", "tipo": "funcion_python"}}, {anidado}], "conexiones": []}}}}"#)).unwrap();
+        let sin = dir.join("sin.json");
+        std::fs::write(&sin, r#"{"sistema": {"bloques": [{"id": "g", "tipo": "ganancia"}], "conexiones": []}}"#).unwrap();
+        let mut e = Editor::nuevo();
+        e.abrir_de(&con).unwrap();
+        assert!(e.aviso_apertura.as_deref().is_some_and(|a| a.contains("2 bloque(s)") && a.contains("código Python")), "{:?}", e.aviso_apertura);
+        e.abrir_de(&sin).unwrap();
+        assert!(e.aviso_apertura.is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn la_ayuda_de_un_parametro_llega_al_hover() {
+        let fichas = fichas_desde(&json!([{"tipo": "t", "params": [{"nombre": "k", "etiqueta": "Ganancia", "ayuda": "Factor de escala"}, {"nombre": "j", "etiqueta": "Otro"}]}]));
+        let p = &fichas[0].params;
+        assert_eq!(p[0].ayuda, "Factor de escala");
+        assert_eq!(texto_ayuda(&p[0]), "Ganancia\nFactor de escala");
+        assert_eq!(texto_ayuda(&p[1]), "Otro");
     }
 
     #[test]

@@ -649,6 +649,11 @@ fn esc(t: &str) -> String {
 
 // ---------------------------------------------------------------- 3D
 
+/// Valor de una malla en (fila, columna), o `None` si la malla no llega hasta ahí.
+fn celda(m: &[Vec<f64>], i: usize, j: usize) -> Option<f64> {
+    m.get(i)?.get(j).copied()
+}
+
 fn mapa(t: f32) -> Color32 {
     tema::mapa_color(t)
 }
@@ -777,12 +782,16 @@ impl Fig3D {
                 let mut zm = 0.0;
                 let mut ok = true;
                 for (k, (a, b)) in ind.iter().enumerate() {
-                    let z = self.z[*a][*b];
+                    // X e Y pueden venir con otra forma que Z: una celda ausente descarta la cara
+                    let (Some(x), Some(y), Some(z)) = (celda(&self.x, *a, *b), celda(&self.y, *a, *b), celda(&self.z, *a, *b)) else {
+                        ok = false;
+                        break;
+                    };
                     if !z.is_finite() {
                         ok = false;
                         break;
                     }
-                    q[k] = [norm(self.x[*a][*b], rx), norm(self.y[*a][*b], ry), norm(z, rz)];
+                    q[k] = [norm(x, rx), norm(y, ry), norm(z, rz)];
                     zm += q[k][2];
                 }
                 if ok {
@@ -886,5 +895,23 @@ mod pruebas {
 \"a\",0,1
 \"serie 2\",1,2
 ");
+    }
+
+    fn superficie(x: Vec<Vec<f64>>, y: Vec<Vec<f64>>, z: Vec<Vec<f64>>) -> Fig3D {
+        Fig3D { titulo: String::new(), xlabel: String::new(), ylabel: String::new(), zlabel: String::new(), linea: false, x, y, z, az: 0.0, el: 0.0, escala: 1.0 }
+    }
+
+    #[test]
+    fn una_superficie_con_x_o_y_de_otra_forma_no_indexa_fuera_de_rango() {
+        let z = vec![vec![0.0, 1.0, 2.0], vec![1.0, 2.0, 3.0], vec![2.0, 3.0, 4.0]];
+        let coherente = superficie(z.clone(), z.clone(), z.clone());
+        let (rx, ry, rz) = coherente.rangos();
+        assert_eq!(coherente.caras(rx, ry, rz).len(), 4);
+        let corta = superficie(vec![vec![0.0, 1.0]], vec![vec![0.0, 1.0]], z.clone());
+        let (rx, ry, rz) = corta.rangos();
+        assert!(corta.caras(rx, ry, rz).is_empty());
+        let vacia = superficie(vec![], vec![], z);
+        let (rx, ry, rz) = vacia.rangos();
+        assert!(vacia.caras(rx, ry, rz).is_empty());
     }
 }
