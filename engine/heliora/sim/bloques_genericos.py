@@ -8,23 +8,31 @@ import numpy as np
 
 from .nucleo import Bloque, P, registrar, evaluar_numero
 
+def _entero_positivo(valor, que):
+    """Comprueba que `valor` sea un entero mayor o igual que 1; si no, lanza `ValueError` nombrando `que`."""
+    v = float(valor)
+    if v != int(v) or v < 1:
+        raise ValueError(f"{que} debe ser un entero mayor o igual que 1 (se dio {valor:g})")
+
+
 # ---------------------------------------------------------------- Fuentes
 
 
 @registrar
 class Constante(Bloque):
-    """Constante.   y(t) = c"""
+    """Constante.   y(t) = c."""
     tipo = "constante"; nombre = "Constante"; categoria = "Fuentes"; color = "fuente"
     parametros = [P("c", "Valor", 1.0)]
     salidas = ["y"]; directo = False
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         return [self.p["c"]]
 
 
 @registrar
 class Escalon(Bloque):
-    """Escalón.   y(t) = y0 si t < t0;  y1 si t >= t0
+    """Escalón.   y(t) = y0 si t < t0;  y1 si t >= t0.
 
     El salto se aplica al final de un paso aceptado y el solver cae justo en t0,
     así la discontinuidad no degrada el error de integración.
@@ -34,15 +42,19 @@ class Escalon(Bloque):
     salidas = ["y"]; directo = False
 
     def preparar(self):
+        """Deriva de los parámetros los atributos de cálculo del bloque."""
         self.valor = self.p["y0"]
 
     def reiniciar(self):
+        """Devuelve el estado interno del bloque a su valor inicial."""
         self.valor = self.p["y0"]
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         return [self.valor]
 
     def paso_mayor(self, t, x, u, y):
+        """Actualiza el estado discreto del bloque al final de un paso aceptado."""
         nuevo = self.p["y1"] if t >= self.p["t0"] - 1e-12 else self.p["y0"]
         if nuevo != self.valor:
             self.valor = nuevo
@@ -50,33 +62,37 @@ class Escalon(Bloque):
         return False
 
     def proximo_evento(self, t):
+        """Devuelve el siguiente instante, en s, en el que el solver debe caer."""
         return self.p["t0"] if t < self.p["t0"] - 1e-12 else math.inf
 
 
 @registrar
 class Rampa(Bloque):
-    """Rampa.   y(t) = y0 + m·max(0, t - t0)"""
+    """Rampa.   y(t) = y0 + m·max(0, t - t0)."""
     tipo = "rampa"; nombre = "Rampa"; categoria = "Fuentes"; color = "fuente"
     parametros = [P("m", "Pendiente", 1.0), P("t0", "Inicio", 0.0, "s"), P("y0", "Valor inicial", 0.0)]
     salidas = ["y"]; directo = False
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         return [self.p["y0"] + self.p["m"] * max(0.0, t - self.p["t0"])]
 
 
 @registrar
 class Senoidal(Bloque):
-    """Senoidal.   y(t) = A·sin(2π·f·t + φ) + c   (φ en grados)"""
+    """Senoidal.   y(t) = A·sin(2π·f·t + φ) + c   (φ en grados)."""
     tipo = "senoidal"; nombre = "Senoidal"; categoria = "Fuentes"; color = "fuente"
     parametros = [P("A", "Amplitud", 1.0), P("f", "Frecuencia", 1.0, "Hz"),
                   P("fase", "Fase", 0.0, "°"), P("c", "Desplazamiento", 0.0)]
     salidas = ["y"]; directo = False
 
     def preparar(self):
+        """Deriva de los parámetros los atributos de cálculo del bloque."""
         self.w = 2 * math.pi * self.p["f"]
         self.ph = math.radians(self.p["fase"])
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         return [self.p["A"] * math.sin(self.w * t + self.ph) + self.p["c"]]
 
 
@@ -88,15 +104,19 @@ class Pulso(Bloque):
     salidas = ["y"]; directo = False
 
     def preparar(self):
+        """Deriva de los parámetros los atributos de cálculo del bloque."""
         self.valor = self.p["A"]
 
     def reiniciar(self):
+        """Devuelve el estado interno del bloque a su valor inicial."""
         self.valor = self.p["A"]
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         return [self.valor]
 
     def paso_mayor(self, t, x, u, y):
+        """Actualiza el estado discreto del bloque al final de un paso aceptado."""
         T = self.p["T"]
         fase = (t / T) % 1.0
         nuevo = self.p["A"] if fase < self.p["d"] - 1e-12 else 0.0
@@ -105,6 +125,7 @@ class Pulso(Bloque):
         return c
 
     def proximo_evento(self, t):
+        """Devuelve el siguiente instante, en s, en el que el solver debe caer."""
         T, d = self.p["T"], self.p["d"]
         n = math.floor(t / T + 1e-12)
         a = (n + d) * T
@@ -113,55 +134,121 @@ class Pulso(Bloque):
 
 @registrar
 class Reloj(Bloque):
-    """Reloj.   y(t) = t"""
+    """Reloj.   y(t) = t."""
     tipo = "reloj"; nombre = "Reloj"; categoria = "Fuentes"; color = "fuente"
     salidas = ["t"]; directo = False
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         return [t]
+
+
+def _serie_de_tabla(d, col_t, col_y):
+    """Extrae de una tabla el tiempo (en s) y el valor, validados, para interpolar.
+
+    Args:
+        d: DataFrame de origen.
+        col_t: nombre de la columna de tiempo; vacío para la primera.
+        col_y: nombre de la columna de valor; vacío para la segunda.
+
+    Returns:
+        Tupla (tiempo, valor, avisos) con arreglos de float sin NaN, el tiempo estrictamente creciente
+        y los avisos de las filas descartadas. Las fechas se convierten a segundos desde la primera fila.
+
+    Raises:
+        ValueError: si falta una columna (con la lista de las disponibles) o el tiempo no es válido.
+    """
+    import pandas as pd
+    from ..lectura import a_fechas
+    nombres = {str(c): c for c in d.columns}
+    if len(nombres) < 2:
+        raise ValueError("la tabla necesita al menos dos columnas (tiempo y valor)")
+
+    def columna(nombre, defecto):
+        if not str(nombre).strip():
+            return list(d.columns)[defecto]
+        if str(nombre).strip() not in nombres:
+            raise ValueError(f"no existe la columna «{nombre}»; disponibles: {', '.join(nombres)}")
+        return nombres[str(nombre).strip()]
+
+    ct, cy = columna(col_t, 0), columna(col_y, 1)
+    bruto = d[ct]
+    if pd.api.types.is_numeric_dtype(bruto):
+        t = bruto.astype(float)
+    else:
+        f = a_fechas(bruto)
+        t = (f - f.iloc[0]).dt.total_seconds()
+    y = pd.to_numeric(d[cy], errors="coerce").astype(float)
+    t, y = t.to_numpy(), y.to_numpy()
+    validas = np.isfinite(t) & np.isfinite(y)
+    avisos = [f"se descartaron {int((~validas).sum())} filas con valores no numéricos o NaN"] if not validas.all() else []
+    t, y = t[validas], y[validas]
+    if t.size == 0:
+        raise ValueError("la tabla no tiene filas con tiempo y valor numéricos")
+    malo = np.flatnonzero(np.diff(t) <= 0)
+    if malo.size:
+        raise ValueError(f"el tiempo debe ser estrictamente creciente (falla entre las filas válidas {int(malo[0]) + 1} y {int(malo[0]) + 2})")
+    return t, y, avisos
 
 
 @registrar
 class DesdeCSV(Bloque):
     """Desde CSV.   y(t) = interpolación lineal de la columna elegida en el tiempo t.
 
-    La primera columna del archivo (o la indicada) es el tiempo en segundos.
-    Fuera del rango se mantiene el primer o el último valor. También lee Parquet.
+    La primera columna del archivo (o la indicada) es el tiempo en segundos; si son fechas, se
+    convierten a segundos desde la primera fila. El tiempo debe ser estrictamente creciente.
+    Fuera del rango se mantiene el primer o el último valor. Lee CSV (con separador y coma decimal
+    detectados), TSV y Parquet.
     """
     tipo = "desde_csv"; nombre = "Desde CSV"; categoria = "Fuentes"; color = "fuente"
-    parametros = [P("ruta", "Archivo", "", tipo="ruta"), P("col_t", "Columna de tiempo", "", tipo="texto"),
-                  P("col_y", "Columna de valor", "", tipo="texto")]
+    parametros = [P("ruta", "Archivo", "", tipo="ruta"), P("col_t", "Columna de tiempo", "", tipo="columna"),
+                  P("col_y", "Columna de valor", "", tipo="columna")]
     salidas = ["y"]; directo = False
 
     def preparar(self):
-        import pandas as pd
+        """Deriva de los parámetros los atributos de cálculo del bloque."""
+        from ..lectura import leer_tabla
         ruta = self.p["ruta"]
         if not ruta:
-            raise ValueError(f"Bloque «{self.etiqueta}»: elige un archivo CSV")
-        d = pd.read_parquet(ruta) if str(ruta).endswith(".parquet") else pd.read_csv(ruta)
-        ct = self.p["col_t"] or d.columns[0]
-        cy = self.p["col_y"] or d.columns[1]
-        self.tt = d[ct].astype(float).to_numpy()
-        self.yy = d[cy].astype(float).to_numpy()
+            raise ValueError("elige un archivo CSV")
+        self.tt, self.yy, self.avisos_preparacion = _serie_de_tabla(leer_tabla(ruta), self.p["col_t"], self.p["col_y"])
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         return [float(np.interp(t, self.tt, self.yy))]
 
 
 @registrar
 class DesdeEspacio(Bloque):
-    """Desde el espacio de trabajo.   y(t) = interpolación de la variable [t, y] (dos columnas)."""
+    """Desde el espacio de trabajo.   y(t) = interpolación de dos columnas de una variable.
+
+    La variable es una tabla (columnas por nombre) o una matriz (columnas por posición, desde 0).
+    Sin columnas indicadas se usan la primera (tiempo) y la segunda (valor).
+    """
     tipo = "desde_espacio"; nombre = "Desde espacio de trabajo"; categoria = "Fuentes"; color = "fuente"
-    parametros = [P("variable", "Variable", "datos", tipo="texto")]
+    parametros = [P("variable", "Variable", "datos", tipo="variable"), P("col_t", "Columna de tiempo", "", tipo="columna"),
+                  P("col_y", "Columna de valor", "", tipo="columna")]
     salidas = ["y"]; directo = False
 
     def preparar(self):
-        m = np.asarray(self.espacio.get(self.p["variable"]), dtype=float)
-        if m.ndim != 2 or m.shape[1] < 2:
-            raise ValueError(f"Bloque «{self.etiqueta}»: la variable debe tener dos columnas [t, y]")
-        self.tt, self.yy = m[:, 0], m[:, 1]
+        """Deriva de los parámetros los atributos de cálculo del bloque."""
+        import pandas as pd
+        nombre = str(self.p["variable"]).strip()
+        if nombre not in self.espacio:
+            tablas = sorted(k for k, v in self.espacio.items() if isinstance(v, (pd.DataFrame, np.ndarray)) and not str(k).startswith("_"))
+            raise ValueError(f"la variable «{nombre}» no existe en el espacio de trabajo"
+                             + (f"; tablas y matrices disponibles: {', '.join(tablas)}" if tablas else ""))
+        v = self.espacio[nombre]
+        if isinstance(v, pd.DataFrame):
+            d = v
+        elif isinstance(v, np.ndarray) and v.ndim == 2:
+            d = pd.DataFrame(v)
+        else:
+            raise ValueError(f"la variable «{nombre}» debe ser una tabla o una matriz de dos columnas o más")
+        self.tt, self.yy, self.avisos_preparacion = _serie_de_tabla(d, self.p["col_t"], self.p["col_y"])
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         return [float(np.interp(t, self.tt, self.yy))]
 
 
@@ -170,12 +257,18 @@ class DesdeEspacio(Bloque):
 
 @registrar
 class Ganancia(Bloque):
-    """Ganancia.   y = k·u"""
+    """Ganancia.   y = k·u."""
     tipo = "ganancia"; nombre = "Ganancia"; categoria = "Matemática"
     parametros = [P("k", "Ganancia", 1.0)]
     entradas = ["u"]; salidas = ["y"]
 
+    def preparar(self):
+        """Deriva de los parámetros los atributos de cálculo del bloque."""
+        if not np.all(np.isfinite(self.p["k"])):
+            raise ValueError("la ganancia debe ser finita")
+
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         return [self.p["k"] * u[0]]
 
 
@@ -189,13 +282,16 @@ class Suma(Bloque):
 
     @classmethod
     def puertos(cls, params=None):
+        """Devuelve los puertos del bloque según sus parámetros."""
         s = str((params or {}).get("signos", "+-"))
         return {"entradas": [f"u{i+1}" for i in range(len(s))], "salidas": ["y"], "e": [], "e3": []}
 
     def preparar(self):
+        """Deriva de los parámetros los atributos de cálculo del bloque."""
         self.s = [1.0 if c == "+" else -1.0 for c in str(self.p["signos"])]
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         y = 0.0
         for si, ui in zip(self.s, u):
             y = y + si * ui
@@ -204,27 +300,29 @@ class Suma(Bloque):
 
 @registrar
 class Producto(Bloque):
-    """Producto.   y = u1·u2"""
+    """Producto.   y = u1·u2."""
     tipo = "producto"; nombre = "Producto"; categoria = "Matemática"
     entradas = ["u1", "u2"]; salidas = ["y"]
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         return [u[0] * u[1]]
 
 
 @registrar
 class Absoluto(Bloque):
-    """Valor absoluto.   y = |u|"""
+    """Valor absoluto.   y = |u|."""
     tipo = "absoluto"; nombre = "Valor absoluto"; categoria = "Matemática"
     entradas = ["u"]; salidas = ["y"]
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         return [abs(u[0])]
 
 
 @registrar
 class FuncionPython(Bloque):
-    """Función en Python.   y = f(t, u)
+    """Función en Python.   y = f(t, u).
 
     Código editable por el usuario. `u` es la lista de entradas, `t` el tiempo y `np`
     NumPy. El código debe terminar asignando `y`.
@@ -236,13 +334,16 @@ class FuncionPython(Bloque):
 
     @classmethod
     def puertos(cls, params=None):
+        """Devuelve los puertos del bloque según sus parámetros."""
         n = int(float((params or {}).get("n", 1)))
         return {"entradas": [f"u{i+1}" for i in range(n)], "salidas": ["y"], "e": [], "e3": []}
 
     def preparar(self):
+        """Deriva de los parámetros los atributos de cálculo del bloque."""
         self.cod = compile(str(self.p["codigo"]), f"<{self.etiqueta}>", "exec")
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         ns = {"t": t, "u": u, "np": np, "math": math, "y": 0.0}
         exec(self.cod, ns)
         return [ns["y"]]
@@ -250,24 +351,30 @@ class FuncionPython(Bloque):
 
 @registrar
 class Mux(Bloque):
-    """Combinar señales.   y = [u1, u2, ...]"""
+    """Combinar señales.   y = [u1, u2, ...]."""
     tipo = "mux"; nombre = "Combinar (mux)"; categoria = "Señales"
     parametros = [P("n", "Entradas", 3)]
     salidas = ["y"]
     puertos_dinamicos = {"param": "n", "modo": "valor", "prefijo": "u"}
 
+    def preparar(self):
+        """Deriva de los parámetros los atributos de cálculo del bloque."""
+        _entero_positivo(self.p["n"], "el número de entradas")
+
     @classmethod
     def puertos(cls, params=None):
+        """Devuelve los puertos del bloque según sus parámetros."""
         n = int(float((params or {}).get("n", 3)))
         return {"entradas": [f"u{i+1}" for i in range(n)], "salidas": ["y"], "e": [], "e3": []}
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         return [np.hstack([np.ravel(a) for a in u])]
 
 
 @registrar
 class Demux(Bloque):
-    """Separar señales.   y_i = u[i]"""
+    """Separar señales.   y_i = u[i]."""
     tipo = "demux"; nombre = "Separar (demux)"; categoria = "Señales"
     parametros = [P("n", "Salidas", 3)]
     entradas = ["u"]
@@ -275,10 +382,12 @@ class Demux(Bloque):
 
     @classmethod
     def puertos(cls, params=None):
+        """Devuelve los puertos del bloque según sus parámetros."""
         n = int(float((params or {}).get("n", 3)))
         return {"entradas": ["u"], "salidas": [f"y{i+1}" for i in range(n)], "e": [], "e3": []}
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         n = int(self.p["n"])
         v = np.ravel(u[0])
         return [float(v[i]) if i < v.size else 0.0 for i in range(n)]
@@ -296,19 +405,26 @@ class Integrador(Bloque):
     entradas = ["u"]; salidas = ["y"]; directo = False
 
     def preparar(self):
+        """Deriva de los parámetros los atributos de cálculo del bloque."""
         self.li = float(self.p["lim_inf"])
         self.ls = float(self.p["lim_sup"])
+        if self.li > self.ls:
+            raise ValueError(f"el límite inferior ({self.li:g}) es mayor que el superior ({self.ls:g})")
 
     def n_estados(self):
+        """Devuelve el número de estados continuos del bloque."""
         return 1
 
     def x0(self):
+        """Devuelve el valor inicial de los estados."""
         return [float(self.p["x0"])]
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         return [min(self.ls, max(self.li, float(x[0])))]
 
     def derivada(self, t, x, u):
+        """Calcula la derivada temporal de los estados."""
         v = float(u[0])
         if (x[0] >= self.ls and v > 0) or (x[0] <= self.li and v < 0):
             return [0.0]
@@ -322,19 +438,23 @@ class Derivador(Bloque):
     entradas = ["u"]; salidas = ["y"]
 
     def preparar(self):
+        """Deriva de los parámetros los atributos de cálculo del bloque."""
         self.ta = None
         self.ua = 0.0
         self.ya = 0.0
 
     def reiniciar(self):
+        """Devuelve el estado interno del bloque a su valor inicial."""
         self.preparar()
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         if self.ta is None or t <= self.ta:
             return [self.ya]
         return [(u[0] - self.ua) / (t - self.ta)]
 
     def paso_mayor(self, t, x, u, y):
+        """Actualiza el estado discreto del bloque al final de un paso aceptado."""
         if self.ta is not None and t > self.ta:
             self.ya = (u[0] - self.ua) / (t - self.ta)
         self.ta = t
@@ -344,7 +464,7 @@ class Derivador(Bloque):
 
 @registrar
 class FuncionTransferencia(Bloque):
-    """Función de transferencia.   Y(s)/U(s) = (b0·s^m + ... + bm) / (a0·s^n + ... + an)
+    """Función de transferencia.   Y(s)/U(s) = (b0·s^m + ... + bm) / (a0·s^n + ... + an).
 
     Se convierte a espacio de estados en forma canónica controlable (dx/dt = A·x + B·u,
     y = C·x + D·u). Debe ser propia (m <= n).
@@ -354,9 +474,12 @@ class FuncionTransferencia(Bloque):
     entradas = ["u"]; salidas = ["y"]
 
     def preparar(self):
+        """Deriva de los parámetros los atributos de cálculo del bloque."""
         from scipy.signal import tf2ss
         num = np.atleast_1d(self.p["num"]).astype(float)
         den = np.atleast_1d(self.p["den"]).astype(float)
+        if not np.any(den):
+            raise ValueError("el denominador no puede ser nulo")
         if len(num) > len(den):
             raise ValueError(f"Bloque «{self.etiqueta}»: función impropia (numerador mayor que denominador)")
         A, B, C, D = tf2ss(num, den)
@@ -364,30 +487,35 @@ class FuncionTransferencia(Bloque):
         self.directo = self.D != 0.0
 
     def n_estados(self):
+        """Devuelve el número de estados continuos del bloque."""
         return self.A.shape[0]
 
     def x0(self):
+        """Devuelve el valor inicial de los estados."""
         return [0.0] * self.A.shape[0]
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         y = float(self.C @ x) if x.size else 0.0
         if self.directo:
             y += self.D * float(u[0])
         return [y]
 
     def derivada(self, t, x, u):
+        """Calcula la derivada temporal de los estados."""
         return self.A @ x + self.B * float(u[0])
 
 
 @registrar
 class EspacioEstados(Bloque):
-    """Espacio de estados.   dx/dt = A·x + B·u,   y = C·x + D·u"""
+    """Espacio de estados.   dx/dt = A·x + B·u,   y = C·x + D·u."""
     tipo = "espacio_estados"; nombre = "Espacio de estados"; categoria = "Continuo"
     parametros = [P("A", "Matriz A", "[[-1]]"), P("B", "Matriz B", "[[1]]"), P("C", "Matriz C", "[[1]]"),
                   P("D", "Matriz D", "[[0]]"), P("x0", "Estado inicial", "0")]
     entradas = ["u"]; salidas = ["y"]
 
     def preparar(self):
+        """Deriva de los parámetros los atributos de cálculo del bloque."""
         self.A = np.atleast_2d(self.p["A"]).astype(float)
         self.B = np.atleast_2d(self.p["B"]).astype(float)
         self.C = np.atleast_2d(self.p["C"]).astype(float)
@@ -395,21 +523,25 @@ class EspacioEstados(Bloque):
         self.directo = bool(np.any(self.D != 0))
 
     def n_estados(self):
+        """Devuelve el número de estados continuos del bloque."""
         return self.A.shape[0]
 
     def x0(self):
+        """Devuelve el valor inicial de los estados."""
         return np.broadcast_to(np.ravel(self.p["x0"]).astype(float), (self.A.shape[0],)).tolist()
 
     def _vec(self, u):
         return np.ravel(u[0]).astype(float)
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         y = self.C @ x
         if self.directo:
             y = y + self.D @ self._vec(u)
         return [float(y[0]) if y.size == 1 else y]
 
     def derivada(self, t, x, u):
+        """Calcula la derivada temporal de los estados."""
         return self.A @ x + self.B @ self._vec(u)
 
 
@@ -418,7 +550,7 @@ class EspacioEstados(Bloque):
 
 @registrar
 class Saturacion(Bloque):
-    """Saturación.   y = min(sup, max(inf, u))
+    """Saturación.   y = min(sup, max(inf, u)).
 
     Con paso variable mantiene su zona (inferior, lineal o superior) durante el paso y el solver
     localiza el instante en que u cruza un límite.
@@ -429,15 +561,20 @@ class Saturacion(Bloque):
     de_evento = True
 
     def preparar(self):
+        """Deriva de los parámetros los atributos de cálculo del bloque."""
+        if self.p["inf"] > self.p["sup"]:
+            raise ValueError(f"el límite inferior ({self.p['inf']:g}) es mayor que el superior ({self.p['sup']:g})")
         self.zona = None
 
     def reiniciar(self):
+        """Devuelve el estado interno del bloque a su valor inicial."""
         self.zona = None
 
     def _zona(self, v):
         return -1 if v < self.p["inf"] else (1 if v > self.p["sup"] else 0)
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         a = u[0]
         if isinstance(a, np.ndarray):
             return [np.clip(a, self.p["inf"], self.p["sup"])]
@@ -445,12 +582,14 @@ class Saturacion(Bloque):
         return [self.p["inf"] if z < 0 else (self.p["sup"] if z > 0 else a)]
 
     def cruce(self, t, x, u):
+        """Devuelve las señales de cruce por cero del bloque."""
         a = u[0]
         if isinstance(a, np.ndarray):
             return []
         return [float(a) - float(self.p["inf"]), float(a) - float(self.p["sup"])]
 
     def paso_mayor(self, t, x, u, y):
+        """Actualiza el estado discreto del bloque al final de un paso aceptado."""
         if not self.usar_zc or isinstance(u[0], np.ndarray):
             return False
         z = self._zona(float(u[0]))
@@ -472,19 +611,24 @@ class Interruptor(Bloque):
     de_evento = True
 
     def preparar(self):
+        """Deriva de los parámetros los atributos de cálculo del bloque."""
         self.arriba = None
 
     def reiniciar(self):
+        """Devuelve el estado interno del bloque a su valor inicial."""
         self.arriba = None
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         a = self.arriba if (self.usar_zc and self.arriba is not None) else u[1] >= self.p["umbral"]
         return [u[0] if a else u[2]]
 
     def cruce(self, t, x, u):
+        """Devuelve las señales de cruce por cero del bloque."""
         return [float(u[1]) - float(self.p["umbral"])]
 
     def paso_mayor(self, t, x, u, y):
+        """Actualiza el estado discreto del bloque al final de un paso aceptado."""
         if not self.usar_zc:
             return False
         a = bool(u[1] >= self.p["umbral"])
@@ -501,13 +645,19 @@ class Retardo(Bloque):
     entradas = ["u"]; salidas = ["y"]; directo = False
 
     def preparar(self):
+        """Deriva de los parámetros los atributos de cálculo del bloque."""
+        if not self.p["tau"] > 0.0:
+            raise ValueError("el retardo τ debe ser positivo")
         self.tt = []
         self.uu = []
 
     def reiniciar(self):
-        self.preparar()
+        """Devuelve el estado interno del bloque a su valor inicial."""
+        self.tt = []
+        self.uu = []
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         td = t - self.p["tau"]
         if not self.tt or td < self.tt[0]:
             return [self.p["y0"]]
@@ -519,6 +669,7 @@ class Retardo(Bloque):
         return [self.uu[i - 1] + a * (self.uu[i] - self.uu[i - 1])]
 
     def paso_mayor(self, t, x, u, y):
+        """Actualiza el estado discreto del bloque al final de un paso aceptado."""
         if not self.tt or t > self.tt[-1]:
             self.tt.append(t)
             self.uu.append(float(u[0]))
@@ -533,15 +684,19 @@ class Memoria(Bloque):
     entradas = ["u"]; salidas = ["y"]; directo = False
 
     def preparar(self):
+        """Deriva de los parámetros los atributos de cálculo del bloque."""
         self.v = self.p["y0"]
 
     def reiniciar(self):
+        """Devuelve el estado interno del bloque a su valor inicial."""
         self.preparar()
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         return [self.v]
 
     def paso_mayor(self, t, x, u, y):
+        """Actualiza el estado discreto del bloque al final de un paso aceptado."""
         self.v = u[0]
         return False
 
@@ -555,12 +710,14 @@ class TablaBusqueda(Bloque):
     entradas = ["u"]; salidas = ["y"]
 
     def preparar(self):
+        """Deriva de los parámetros los atributos de cálculo del bloque."""
         self.xs = np.ravel(self.p["xs"]).astype(float).tolist()
         self.ys = np.ravel(self.p["ys"]).astype(float).tolist()
         if len(self.xs) != len(self.ys) or len(self.xs) < 2:
             raise ValueError(f"Bloque «{self.etiqueta}»: x e y deben tener igual largo (al menos 2)")
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque."""
         v = float(u[0])
         xs, ys = self.xs, self.ys
         if self.p["fuera"] == "saturar":
@@ -605,8 +762,14 @@ class Osciloscopio(_Registrador):
 
     @classmethod
     def puertos(cls, params=None):
+        """Devuelve los puertos del bloque según sus parámetros."""
         n = int(float((params or {}).get("n", 1)))
         return {"entradas": [f"u{i+1}" for i in range(n)], "salidas": [], "e": [], "e3": []}
+
+    def preparar(self):
+        """Deriva de los parámetros los atributos de cálculo del bloque."""
+        _entero_positivo(self.p["n"], "el número de entradas")
+        super().preparar()
 
 
 @registrar

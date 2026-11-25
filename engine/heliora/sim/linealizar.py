@@ -137,8 +137,8 @@ def linealizar(diagrama, espacio=None, entradas=None, salidas=None, punto=None, 
         t = float(evaluar_numero(punto.get("t", cfg.get("t_fin", 1.0))))
         metodo = cfg.get("metodo", "dopri")
         info = integrar_modelo(
-            m, metodo=metodo, t0=float(evaluar_numero(cfg.get("t_ini", 0.0))), tf=t, paso=_num(cfg.get("paso")),
-            rtol=float(evaluar_numero(cfg.get("rtol", 1e-3))), atol=float(evaluar_numero(cfg.get("atol", 1e-6))),
+            m, metodo=metodo, t0=float(evaluar_numero(cfg.get("t_ini", 0.0), vacio=0.0)), tf=t, paso=_num(cfg.get("paso")),
+            rtol=float(evaluar_numero(cfg.get("rtol", 1e-3), vacio=1e-3)), atol=float(evaluar_numero(cfg.get("atol", 1e-6), vacio=1e-6)),
             paso_max=_num(cfg.get("paso_max")), cancelar=cancelar)
         x = np.asarray(info["x_final"], dtype=float)
         metodo_punto = "simulado hasta t = %g s" % t

@@ -29,7 +29,9 @@ from __future__ import annotations
 from typing_extensions import override
 import ast
 import math
+import operator
 import re
+import types
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -44,7 +46,7 @@ class P:
     etiqueta: str
     defecto: object = 0.0
     unidad: str = ""
-    tipo: str = "num"  # num | texto | opcion | ruta | codigo
+    tipo: str = "num"  # num | texto | opcion | ruta | codigo | columna | variable
     opciones: list = field(default_factory=list)
     ayuda: str = ""
 
@@ -82,13 +84,165 @@ def _con_unidad(texto, unidad):
     raise ErrorUnidad(f"la unidad «{sufijo}» no es válida aquí" + (f": se esperaba {unidad}" if unidad else ""))
 
 
-def evaluar_numero(valor, espacio=None, unidad=""):
+_BINARIOS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv,
+             ast.FloorDiv: operator.floordiv, ast.Mod: operator.mod, ast.Pow: operator.pow, ast.MatMult: operator.matmul}
+_UNARIOS = {ast.UAdd: operator.pos, ast.USub: operator.neg, ast.Not: operator.not_, ast.Invert: operator.invert}
+_COMPARADORES = {ast.Eq: operator.eq, ast.NotEq: operator.ne, ast.Lt: operator.lt, ast.LtE: operator.le,
+                 ast.Gt: operator.gt, ast.GtE: operator.ge, ast.In: lambda a, b: a in b, ast.NotIn: lambda a, b: a not in b}
+
+# Atributos que dan acceso a ficheros, a la evaluación de texto o a otros módulos del sistema.
+_ATRIBUTOS_DENEGADOS = frozenset({
+    "load", "loads", "save", "savez", "savez_compressed", "savetxt", "loadtxt", "genfromtxt", "fromfile", "tofile",
+    "memmap", "fromregex", "dump", "dumps", "ctypeslib", "testing", "f2py", "distutils", "eval", "query", "io",
+    "loadmat", "savemat", "DataSource", "show_config", "source", "lookfor"})
+_MODULOS_PERMITIDOS = ("numpy", "scipy", "math")
+_EXPONENTE_MAX = 10_000
+
+
+def _atributo_seguro(objeto, nombre):
+    """Lee `objeto.nombre` si el acceso está permitido; en otro caso lanza `ValueError`."""
+    prohibido = nombre.startswith("_") or nombre in _ATRIBUTOS_DENEGADOS
+    if prohibido or (nombre.startswith(("read_", "to_")) and nombre != "to_numpy"):
+        raise ValueError(f"el atributo «{nombre}» no está permitido en una expresión")
+    valor = getattr(objeto, nombre)
+    if isinstance(valor, types.ModuleType) and valor.__name__.partition(".")[0] not in _MODULOS_PERMITIDOS:
+        raise ValueError(f"el módulo «{nombre}» no está permitido en una expresión")
+    return valor
+
+
+class _Evaluador:
+    """Evalúa una expresión de Python recorriendo su AST con una lista blanca de nodos.
+
+    Admite literales, nombres del espacio, operadores, comparaciones, subíndices, listas, tuplas,
+    atributos que no empiezan por `_` y llamadas a funciones de `_ESPACIO_MAT` o a métodos de un
+    valor. Rechaza lambdas, comprensiones, cadenas formateadas y el acceso a ficheros o a módulos
+    del sistema, de modo que un diagrama ajeno no pueda ejecutar código al simular.
+    """
+
+    def __init__(self, espacio):
+        self.ns = espacio
+
+    def __call__(self, nodo):
+        metodo = getattr(self, "n_" + type(nodo).__name__, None)
+        if metodo is None:
+            raise ValueError(f"la expresión usa una construcción no permitida ({type(nodo).__name__})")
+        return metodo(nodo)
+
+    def n_Expression(self, n):
+        return self(n.body)
+
+    def n_Constant(self, n):
+        if isinstance(n.value, bytes):
+            raise ValueError("los literales de bytes no están permitidos")
+        return n.value
+
+    def n_Name(self, n):
+        if n.id not in self.ns:
+            raise NameError(f"la variable «{n.id}» no está definida")
+        return self.ns[n.id]
+
+    def n_List(self, n):
+        return [self(e) for e in n.elts]
+
+    def n_Tuple(self, n):
+        return tuple(self(e) for e in n.elts)
+
+    def n_UnaryOp(self, n):
+        return _UNARIOS[type(n.op)](self(n.operand))
+
+    def n_BinOp(self, n):
+        a, b = self(n.left), self(n.right)
+        if isinstance(n.op, ast.Pow) and isinstance(a, int) and isinstance(b, int) and abs(b) > _EXPONENTE_MAX:
+            raise ValueError("el exponente entero es demasiado grande")
+        return _BINARIOS[type(n.op)](a, b)
+
+    def n_BoolOp(self, n):
+        r = None
+        for e in n.values:
+            r = self(e)
+            if bool(r) == isinstance(n.op, ast.Or):
+                return r
+        return r
+
+    def n_IfExp(self, n):
+        return self(n.body) if self(n.test) else self(n.orelse)
+
+    def n_Compare(self, n):
+        izq = self(n.left)
+        r = True
+        for op, e in zip(n.ops, n.comparators):
+            der = self(e)
+            r = _COMPARADORES[type(op)](izq, der)
+            if not r:
+                return r
+            izq = der
+        return r
+
+    def n_Attribute(self, n):
+        return _atributo_seguro(self(n.value), n.attr)
+
+    def n_Subscript(self, n):
+        return self(n.value)[self._indice(n.slice)]
+
+    def _indice(self, n):
+        if isinstance(n, ast.Slice):
+            return slice(*(None if x is None else self(x) for x in (n.lower, n.upper, n.step)))
+        if isinstance(n, ast.Tuple):
+            return tuple(self._indice(e) for e in n.elts)
+        return self(n)
+
+    def n_Call(self, n):
+        f = n.func
+        if isinstance(f, ast.Name):
+            if f.id not in _ESPACIO_MAT or self.ns.get(f.id) is not _ESPACIO_MAT[f.id]:
+                raise ValueError(f"la función «{f.id}» no está permitida en una expresión")
+            fn = _ESPACIO_MAT[f.id]
+        elif isinstance(f, ast.Attribute):
+            fn = self(f)
+        else:
+            raise ValueError("solo se pueden llamar funciones por su nombre o como atributo")
+        if any(isinstance(a, ast.Starred) for a in n.args) or any(k.arg is None for k in n.keywords):
+            raise ValueError("no se admiten argumentos con * ni **")
+        return fn(*[self(a) for a in n.args], **{k.arg: self(k.value) for k in n.keywords})
+
+
+def evaluar_expresion(texto, espacio):
+    """Evalúa una expresión de Python con la lista blanca de nodos de `_Evaluador`.
+
+    Args:
+        texto: código de la expresión.
+        espacio: nombres disponibles (variables y funciones).
+
+    Returns:
+        El valor de la expresión.
+
+    Raises:
+        ValueError: si la expresión usa algo que la lista blanca no permite.
+        SyntaxError: si el texto no es Python válido.
+    """
+    return _Evaluador(espacio)(ast.parse(texto, mode="eval"))
+
+
+_COMA_DECIMAL = re.compile(r"^[-+]?\d+,\d+(?:[eE][-+]?\d+)?$")
+
+
+def evaluar_numero(valor, espacio=None, unidad="", vacio=None):
     """Convierte un parámetro a número o arreglo.
 
     Acepta números, listas y expresiones: `2*pi*50`, `[1, 2, 3]`, `Vdc/2`
     (las variables se buscan en el espacio de trabajo). También un número con unidad y prefijo,
     como `10 mH` o `1 kΩ`, que se comprueba contra la unidad del parámetro: `10 mF` en una
-    inductancia da un error en lugar de un modelo equivocado.
+    inductancia da un error en lugar de un modelo equivocado. La coma decimal («0,5») se acepta.
+    Las expresiones se evalúan con una lista blanca de nodos (ver `_Evaluador`).
+
+    Args:
+        valor: número, lista o texto.
+        espacio: variables del espacio de trabajo.
+        unidad: unidad del parámetro, para validar el sufijo de un número con unidad.
+        vacio: valor que se devuelve si el texto está vacío; con None, un texto vacío es un error.
+
+    Raises:
+        ValueError: si el valor falta, no se puede evaluar o usa algo no permitido.
     """
     if isinstance(valor, bool):
         return float(valor)
@@ -98,7 +252,11 @@ def evaluar_numero(valor, espacio=None, unidad=""):
         return np.asarray(valor, dtype=float)
     texto = str(valor).strip()
     if not texto:
-        return 0.0
+        if vacio is None:
+            raise ValueError("falta valor")
+        return vacio
+    if _COMA_DECIMAL.match(texto):
+        texto = texto.replace(",", ".")
     r = _con_unidad(texto, unidad)
     if r is not None:
         return r
@@ -113,7 +271,7 @@ def evaluar_numero(valor, espacio=None, unidad=""):
     ns = dict(_ESPACIO_MAT)
     if espacio:
         ns.update(espacio)
-    r = eval(texto, {"__builtins__": {}}, ns)  # expresión escrita por el propio usuario
+    r = evaluar_expresion(texto, ns)
     if isinstance(r, (list, tuple)):
         return np.asarray(r, dtype=float)
     return r
@@ -140,6 +298,7 @@ class Bloque:
         self.etiqueta = etiqueta or self.nombre
         self.espacio = espacio or {}
         self.crudos = dict(params or {})
+        self.avisos_preparacion = []
         self.p = {}
         for d in self.definicion_parametros(self.crudos):
             v = self.crudos.get(d.nombre, d.defecto)
@@ -147,11 +306,15 @@ class Bloque:
                 try:
                     v = evaluar_numero(v, self.espacio, d.unidad)
                 except Exception as e:
-                    raise ValueError(
-                        f"Bloque «{self.etiqueta}»: no se pudo evaluar {d.etiqueta} = {v!r} ({e})"
-                    ) from e
+                    detalle = f"falta valor en {d.etiqueta}" if str(e) == "falta valor" else f"no se pudo evaluar {d.etiqueta} = {v!r} ({e})"
+                    raise ValueError(f"Bloque «{self.etiqueta}»: {detalle}") from e
             self.p[d.nombre] = v
-        self.preparar()
+        try:
+            self.preparar()
+        except ValueError as e:
+            if str(e).startswith("Bloque «"):
+                raise
+            raise ValueError(f"Bloque «{self.etiqueta}»: {e}") from e
 
     @classmethod
     def definicion_parametros(cls, crudos=None):
