@@ -16,67 +16,259 @@ Modelo físico esperado (PVWatts):
 from __future__ import annotations
 
 import copy
+import csv
 import datetime as dt
 import json
 import os
+import re
+import unicodedata
 
 import numpy as np
 import pandas as pd
 
+from ..lectura import a_fechas, leer_tabla
+
 ALIAS = {
-    "fecha": ["fecha", "timestamp", "datetime", "time", "hora", "date", "tiempo"],
+    "fecha": ["fecha", "timestamp", "datetime", "fecha_hora", "date", "time", "tiempo", "hora"],
     "inversor": ["inversor", "inverter", "equipo", "id_inversor"],
-    "irradiancia_wm2": ["irradiancia_wm2", "irradiancia", "poa", "ghi", "g_poa", "g"],
-    "temp_amb_c": ["temp_amb_c", "t_amb", "tamb", "temperatura_ambiente"],
-    "temp_modulo_c": ["temp_modulo_c", "t_modulo", "tmod", "temperatura_modulo"],
+    "irradiancia_wm2": ["irradiancia_wm2", "irradiancia", "irradiancia_poa", "poa", "ghi", "g_poa", "g"],
+    "temp_amb_c": ["temp_amb_c", "t_amb", "tamb", "temp_amb", "temp_ambiente", "temperatura_ambiente"],
+    "temp_modulo_c": ["temp_modulo_c", "t_modulo", "tmod", "temp_modulo", "temperatura_modulo"],
     "p_dc_kw": ["p_dc_kw", "pdc", "p_dc", "potencia_dc"],
     "p_ac_kw": ["p_ac_kw", "pac", "p_ac", "potencia_ac", "potencia"],
     "v_dc_v": ["v_dc_v", "vdc", "v_dc", "tension_dc"],
     "i_dc_a": ["i_dc_a", "idc", "i_dc", "corriente_dc"],
     "v_ac_v": ["v_ac_v", "vac", "v_ac", "tension_ac"],
     "i_ac_a": ["i_ac_a", "iac", "i_ac", "corriente_ac"],
-    "temp_igbt_c": ["temp_igbt_c", "t_igbt", "tigbt", "temperatura_igbt"],
+    "temp_igbt_c": ["temp_igbt_c", "t_igbt", "tigbt", "temp_igbt", "temperatura_igbt"],
     "alarma": ["alarma", "alarm", "alarmas", "codigo_alarma"],
-    "en_servicio": ["en_servicio", "disponible", "online"],
+    "en_servicio": ["en_servicio", "disponible", "online", "servicio", "estado_inversor"],
 }
+# Columna de hora aceptada cuando la fecha viene en otra columna
+ALIAS_HORA = ["hora", "time", "hour", "hora_local"]
+# Nombres de columna que contienen solo la fecha y, por tanto, admiten una columna de hora aparte
+_SOLO_FECHA = {"fecha", "date"}
+_NO_NUMERICAS = {"fecha", "inversor", "alarma", "en_servicio"}
+_SI = {"on", "true", "t", "si", "s", "yes", "y", "1", "ok", "online", "run", "running", "servicio", "en servicio"}
+_NO = {"off", "false", "f", "no", "n", "0", "offline", "stop", "stopped", "fault", "fallo", "parado", "fuera de servicio"}
+
+
+def _sin_acentos(texto):
+    """Texto sin marcas diacríticas («sí» pasa a «si»)."""
+    return "".join(ch for ch in unicodedata.normalize("NFKD", texto) if not unicodedata.combining(ch))
+
+
+def _clave(nombre):
+    """Normaliza un nombre de columna: sin unidades entre paréntesis, sin acentos, en minúsculas y con «_»."""
+    t = re.sub(r"[\(\[][^\)\]]*[\)\]]", " ", str(nombre).strip().lower())
+    t = _sin_acentos(t)
+    return re.sub(r"[^a-z0-9]+", "_", t).strip("_")
+
+
+def _columna(claves, alias):
+    """Primera columna original cuyo nombre normalizado coincide con algún alias, o None."""
+    for a in alias:
+        if _clave(a) in claves:
+            return claves[_clave(a)]
+    return None
+
+
+def nombres_aceptados(columna):
+    """Nombres con los que se reconoce una columna normal, para los mensajes de error."""
+    return ", ".join(ALIAS.get(columna, [columna]))
+
+
+def requerir_columnas(d, columnas, uno_de=()):
+    """Comprueba que la tabla tiene las columnas normales necesarias.
+
+    Args:
+        d: tabla SCADA ya normalizada.
+        columnas: nombres que deben estar todos.
+        uno_de: tuplas de nombres de las que debe estar al menos uno.
+
+    Raises:
+        ValueError: «Falta la columna X (nombres aceptados: ...)» con la primera que falte.
+    """
+    for c in columnas:
+        if c not in d.columns:
+            raise ValueError(f"Falta la columna {c} (nombres aceptados: {nombres_aceptados(c)})")
+    for grupo in uno_de:
+        if not any(c in d.columns for c in grupo):
+            opciones = " o ".join(f"{c} (nombres aceptados: {nombres_aceptados(c)})" for c in grupo)
+            raise ValueError(f"Falta una de estas columnas: {opciones}")
+
+
+def requerir_scada(d, aislamiento=False):
+    """Comprueba las columnas que necesitan los KPI, la detección de fallas y la fiabilidad.
+
+    Args:
+        d: tabla SCADA normalizada.
+        aislamiento: si es True y hay temperatura de IGBT, exige también la temperatura ambiente.
+
+    Raises:
+        ValueError: con la columna que falta y los nombres con que se acepta.
+    """
+    requerir_columnas(d, ["fecha", "inversor", "irradiancia_wm2", "p_ac_kw"], uno_de=[("temp_modulo_c", "temp_amb_c")])
+    if aislamiento and "temp_igbt_c" in d.columns:
+        requerir_columnas(d, ["temp_amb_c"])
+
+
+def _a_servicio(serie, p_ac=None):
+    """Convierte la columna en_servicio (ON/OFF, sí/no, true/false, 0/1) en enteros 0/1.
+
+    Los valores vacíos se completan con `p_ac > 0` cuando hay potencia y con 0 si no.
+
+    Returns:
+        Tupla (serie de 0/1, número de valores vacíos completados).
+
+    Raises:
+        ValueError: si hay textos que no corresponden a un estado conocido.
+    """
+    relleno = (p_ac > 0).astype(int) if p_ac is not None else pd.Series(0, index=serie.index)
+    if pd.api.types.is_bool_dtype(serie):
+        return serie.astype(int), 0
+    if pd.api.types.is_numeric_dtype(serie):
+        vacias = serie.isna()
+        return (serie.fillna(0) > 0).astype(int).where(~vacias, relleno), int(vacias.sum())
+    texto = serie.astype(str).str.strip().str.lower().map(_sin_acentos).where(serie.notna(), "")
+    valores = texto.map(lambda t: 1 if t in _SI else 0 if t in _NO else (-2 if t == "" else -1))
+    raros = sorted(set(serie.astype(str).str.strip()[valores == -1]))
+    if raros:
+        raise ValueError(f"La columna en_servicio tiene valores que no se reconocen: {', '.join(raros[:5])} "
+                         "(se admiten ON/OFF, true/false, sí/no y 1/0)")
+    vacias = valores == -2
+    return valores.where(~vacias, relleno).astype(int), int(vacias.sum())
+
+
+def _fechas_del_archivo(d, claves):
+    """Columna de fechas del archivo, uniendo fecha y hora cuando vienen en columnas separadas.
+
+    Returns:
+        Tupla (columna de fecha, fechas interpretadas, columna de hora usada o None).
+    """
+    col = _columna(claves, ALIAS["fecha"])
+    if col is None:
+        raise ValueError("El archivo no tiene una columna de fecha reconocible "
+                         f"(nombres aceptados: {nombres_aceptados('fecha')})")
+    hora = _columna({k: v for k, v in claves.items() if v != col}, ALIAS_HORA)
+    if hora is not None and _clave(col) in _SOLO_FECHA:
+        f = d[col]
+        f = f.dt.strftime("%Y-%m-%d") if pd.api.types.is_datetime64_any_dtype(f) else f.astype(str).str.strip()
+        h = d[hora]
+        if pd.api.types.is_numeric_dtype(h):
+            h = h.astype(int).map(lambda x: f"{x:02d}:00")
+        return col, a_fechas(f + " " + h.astype(str).str.strip()), hora
+    return col, a_fechas(d[col]), None
+
+
+def _normalizar(df):
+    """Normaliza la tabla y devuelve (tabla, {"duplicados": n, "avisos": [...]})."""
+    claves = {}
+    for c in df.columns:
+        claves.setdefault(_clave(c), c)
+    col_fecha, fechas, col_hora = _fechas_del_archivo(df, claves)
+    libres = {k: v for k, v in claves.items() if v not in (col_fecha, col_hora)}
+    nombres = {}
+    for destino, alias in ALIAS.items():
+        orig = None if destino == "fecha" else _columna(libres, alias)
+        if orig is not None:
+            nombres[orig] = destino
+    d = df.drop(columns=[col_hora] if col_hora is not None else []).rename(columns=nombres).copy()
+    d = d.rename(columns={col_fecha: "fecha"})
+    d["fecha"] = fechas.to_numpy()
+    avisos = []
+    if "inversor" not in d:
+        d["inversor"] = "INV-1"
+    d["inversor"] = d["inversor"].astype(str).str.strip()
+    for c in d.columns:
+        if (c in ALIAS or str(c).startswith("i_s")) and c not in _NO_NUMERICAS and d[c].dtype == object:
+            antes = int(d[c].isna().sum())
+            num = pd.to_numeric(d[c].astype(str).str.replace(",", ".", regex=False), errors="coerce")
+            nuevas = int(num.isna().sum()) - antes
+            if nuevas > 0:
+                avisos.append(f"{nuevas} valores de «{c}» no son números y se tomaron como faltantes.")
+            d[c] = num
+    if "en_servicio" in d:
+        d["en_servicio"], vacios = _a_servicio(d["en_servicio"], d["p_ac_kw"] if "p_ac_kw" in d else None)
+        if vacios:
+            avisos.append(f"{vacios} valores vacíos de en_servicio se completaron con p_ac_kw > 0.")
+    n0 = len(d)
+    d = d.drop_duplicates(["fecha", "inversor"], keep="first")
+    duplicados = n0 - len(d)
+    if duplicados:
+        avisos.append(f"{duplicados} filas repetidas (misma fecha e inversor) se eliminaron; se conservó la primera.")
+    return d.sort_values(["fecha", "inversor"]).reset_index(drop=True), {"duplicados": duplicados, "avisos": avisos}
 
 
 def normalizar_columnas(df):
-    """Renombra columnas a sus nombres normales y convierte la fecha."""
-    nombres = {}
-    bajas = {str(c).strip().lower(): c for c in df.columns}
-    for destino, alias in ALIAS.items():
-        for a in alias:
-            if a in bajas:
-                nombres[bajas[a]] = destino
-                break
-    d = df.rename(columns=nombres).copy()
-    if "fecha" not in d:
-        raise ValueError("El archivo no tiene una columna de fecha reconocible")
-    d["fecha"] = pd.to_datetime(d["fecha"])
-    if "inversor" not in d:
-        d["inversor"] = "INV-1"
-    return d.sort_values(["fecha", "inversor"]).reset_index(drop=True)
+    """Renombra columnas a sus nombres normales, une fecha y hora, convierte tipos y elimina duplicados.
+
+    Args:
+        df: tabla leída del archivo, con nombres de columna libres (admite unidades y acentos).
+
+    Returns:
+        Tabla ordenada por fecha e inversor, sin repetidos (fecha, inversor).
+
+    Raises:
+        ValueError: si no hay columna de fecha, una fecha no se interpreta o en_servicio tiene valores desconocidos.
+    """
+    return _normalizar(df)[0]
 
 
 def importar_scada(ruta):
-    """Lee CSV o Parquet y devuelve los datos normalizados y un resumen de calidad."""
-    d = pd.read_parquet(ruta) if str(ruta).lower().endswith(".parquet") else pd.read_csv(ruta)
-    d = normalizar_columnas(d)
-    return d, resumen_calidad(d)
+    """Lee un CSV, TSV o Parquet de SCADA y devuelve los datos normalizados y un resumen de calidad.
+
+    Args:
+        ruta: archivo con las lecturas (admite CSV de Excel en español).
+
+    Returns:
+        Tupla (tabla, resumen). El resumen es el de `resumen_calidad` más `duplicados` y `avisos`.
+
+    Raises:
+        ValueError: si el archivo no se lee, falta la fecha o el paso temporal no es positivo.
+    """
+    d, info = _normalizar(leer_tabla(ruta))
+    q = resumen_calidad(d)
+    if not q["paso_min"] > 0:
+        raise ValueError("No se puede determinar el paso temporal: hace falta más de una lectura por inversor con fechas distintas")
+    q.update(info)
+    return d, q
 
 
 def resumen_calidad(d):
-    """Resume filas, inversores, rango de fechas, paso de muestreo, faltantes y columnas del conjunto."""
+    """Resume filas, inversores, fechas, paso de muestreo, faltantes, columnas y cobertura temporal.
+
+    La cobertura compara las lecturas existentes con las esperadas entre la primera y la última
+    fecha de cada inversor al paso mediano; un salto de más de 1.5 pasos es un hueco.
+
+    Returns:
+        Diccionario con `cobertura` (0 a 1), `esperadas`, `huecos_total` y `huecos` (hasta 20, con
+        `inversor`, `desde`, `hasta` y `perdidas`).
+    """
     paso = d.groupby("inversor")["fecha"].diff().median()
     faltan = {c: int(d[c].isna().sum()) for c in d.columns if d[c].isna().any()}
+    paso_min = float(paso.total_seconds() / 60.0) if pd.notna(paso) else 0.0
+    esperadas, huecos = 0, []
+    if paso_min > 0:
+        for nombre, g in d.groupby("inversor"):
+            f = g["fecha"].sort_values().reset_index(drop=True)
+            esperadas += int(round((f.iloc[-1] - f.iloc[0]) / paso)) + 1
+            saltos = f.diff()
+            for i in np.flatnonzero(saltos > paso * 1.5):
+                huecos.append({"inversor": str(nombre), "desde": str(f.iloc[i - 1]), "hasta": str(f.iloc[i]),
+                               "perdidas": int(round(saltos.iloc[i] / paso)) - 1})
     return {"filas": int(len(d)), "inversores": int(d["inversor"].nunique()), "desde": str(d["fecha"].min()),
-            "hasta": str(d["fecha"].max()), "paso_min": float(paso.total_seconds() / 60.0) if pd.notna(paso) else 0.0,
-            "faltantes": faltan, "columnas": [str(c) for c in d.columns]}
+            "hasta": str(d["fecha"].max()), "paso_min": paso_min, "faltantes": faltan, "columnas": [str(c) for c in d.columns],
+            "esperadas": esperadas, "cobertura": float(min(len(d) / esperadas, 1.0)) if esperadas else 0.0,
+            "huecos_total": len(huecos), "huecos": huecos[:20]}
 
 
 def _horas_paso(d):
-    return d.groupby("inversor")["fecha"].diff().median().total_seconds() / 3600.0
+    """Paso mediano de muestreo en horas; falla si no es positivo (evita divisiones por cero en los KPI)."""
+    paso = d.groupby("inversor")["fecha"].diff().median()
+    if pd.isna(paso) or paso.total_seconds() <= 0:
+        raise ValueError("No se puede determinar el paso temporal de los datos (fechas repetidas o una sola lectura por inversor)")
+    return paso.total_seconds() / 3600.0
 
 
 def generar_scada(inicio="2024-01-01", dias=730, paso_min=30, inversores=2, p_nom_kw=500.0, semilla=7, lat=40.4, lon=-3.7,
@@ -163,6 +355,7 @@ def potencia_esperada(d, p_nom_kw, gamma=-0.0037, eta_inv=0.975):
 
 def kpis(d, p_nom_kw, gamma=-0.0037, g_min=50.0, eta_inv=0.975):
     """KPIs globales de la planta y por inversor. p_nom_kw es la potencia por inversor."""
+    requerir_columnas(d, ["fecha", "inversor", "irradiancia_wm2", "p_ac_kw"])
     h = _horas_paso(d)
     filas = []
     for nombre, g in d.groupby("inversor"):
@@ -188,6 +381,7 @@ def kpis(d, p_nom_kw, gamma=-0.0037, g_min=50.0, eta_inv=0.975):
 
 def pr_diario(d, p_nom_kw, gamma=-0.0037, g_min=300.0, eta_inv=1.0):
     """Índice de rendimiento diario corregido por temperatura, con G > g_min y en servicio."""
+    requerir_scada(d)
     tc = d["temp_modulo_c"] if "temp_modulo_c" in d else d["temp_amb_c"]
     sel = d["irradiancia_wm2"] > g_min
     if "en_servicio" in d:
@@ -331,11 +525,18 @@ def desviacion_modelo(d, p_nom_kw, gamma=-0.0037, k=0.5, h=5.0):
 
 
 def tiempos_de_eventos(d):
-    """Tiempos entre fallos y de reparación a partir de la columna en_servicio."""
+    """Tiempos entre fallos y de reparación a partir de la columna en_servicio (o de p_ac_kw > 0 si falta).
+
+    Raises:
+        ValueError: si no hay ni en_servicio ni p_ac_kw, o el paso temporal no es válido.
+    """
+    requerir_columnas(d, ["fecha", "inversor"])
+    if "en_servicio" not in d.columns:
+        requerir_columnas(d, ["p_ac_kw"])
     h = _horas_paso(d)
     tbf, ttr, ev = [], [], []
     for nombre, g in d.groupby("inversor"):
-        s = (g["en_servicio"].to_numpy() > 0)
+        s = (g["en_servicio"].to_numpy() > 0) if "en_servicio" in g else (g["p_ac_kw"].to_numpy() > 0)
         f = g["fecha"].to_numpy()
         cambios = np.flatnonzero(np.diff(s.astype(int)))
         ini = 0
@@ -448,26 +649,177 @@ AMEF_BASE = {
 }
 
 
+FORMATO = "heliora-mantenimiento/1"
+TIPOS_ORDEN = ["correctiva", "preventiva", "predictiva", "inspección"]
+ESTADOS_ORDEN = ("pendiente", "cerrada")
+COLUMNAS_AMEF = ["Equipo", "Modo de falla", "Causa", "Efecto", "S", "O", "D", "RPN", "Control", "Acción"]
+COLUMNAS_HISTORIAL = ["Fecha", "Orden", "Equipo", "Trabajo", "Lista completa", "Notas"]
+
+
+def fecha_valida(texto, campo="fecha"):
+    """Interpreta una fecha AAAA-MM-DD estricta.
+
+    Args:
+        texto: fecha escrita.
+        campo: nombre de la fecha para el mensaje de error.
+
+    Returns:
+        `datetime.date` de la fecha.
+
+    Raises:
+        ValueError: si el formato no es AAAA-MM-DD o el día no existe.
+    """
+    t = str(texto).strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", t):
+        raise ValueError(f"La {campo} «{texto}» no tiene el formato AAAA-MM-DD")
+    try:
+        return dt.date.fromisoformat(t)
+    except ValueError:
+        raise ValueError(f"La {campo} «{texto}» no existe en el calendario") from None
+
+
+def _hoy(hoy):
+    """Fecha de referencia como `date`; la del sistema si no se indica."""
+    return fecha_valida(hoy, "fecha de hoy") if hoy else dt.date.today()
+
+
+def validar_plan(p):
+    """Comprueba que un plan se puede usar para generar órdenes.
+
+    Args:
+        p: diccionario del plan.
+
+    Raises:
+        ValueError: con el nombre del plan y el motivo (clave ausente, frecuencia no positiva, fecha inválida).
+    """
+    nombre = p.get("nombre") or p.get("id") or "sin nombre"
+    try:
+        for k in ("id", "nombre", "tipo_equipo", "frecuencia_dias", "inicio"):
+            if k not in p:
+                raise ValueError(f"falta la clave «{k}»")
+        f = p["frecuencia_dias"]
+        if isinstance(f, bool) or not isinstance(f, (int, float)) or f != int(f) or f < 1:
+            raise ValueError("la frecuencia debe ser un número entero de días mayor que 0")
+        fecha_valida(p["inicio"], "fecha de inicio")
+        if not isinstance(p.get("checklist", []), list):
+            raise ValueError("la lista de comprobación debe ser una lista")
+    except ValueError as e:
+        raise ValueError(f"Plan «{nombre}»: {e}") from None
+
+
+def validar_estado(e):
+    """Comprueba la estructura de un plan de mantenimiento cargado de un archivo y completa lo opcional.
+
+    Los problemas de valores de un plan o de un equipo (frecuencia, fechas) no impiden abrirlo, para
+    que se puedan corregir; se devuelven como avisos. La estructura sí es obligatoria.
+
+    Args:
+        e: contenido del archivo ya leído como JSON.
+
+    Returns:
+        Tupla (estado completado, lista de avisos).
+
+    Raises:
+        ValueError: si el formato no es heliora-mantenimiento/1, falta una clave obligatoria, hay
+            identificadores repetidos o una orden tiene una fecha o un estado inválidos.
+    """
+    if not isinstance(e, dict):
+        raise ValueError("El archivo no es un plan de mantenimiento (se esperaba un objeto JSON)")
+    if e.get("formato") != FORMATO:
+        raise ValueError(f"Formato no reconocido: «{e.get('formato')}» (se espera {FORMATO})")
+    for k in ("equipos", "planes", "ordenes"):
+        if not isinstance(e.get(k), list):
+            raise ValueError(f"Falta la clave obligatoria «{k}» (una lista) en el plan")
+    e.setdefault("historial", [])
+    e.setdefault("amef", [])
+    for k in ("historial", "amef"):
+        if not isinstance(e[k], list):
+            raise ValueError(f"La clave «{k}» debe ser una lista")
+    avisos = []
+    codigos = set()
+    for q in e["equipos"]:
+        if not isinstance(q, dict) or not str(q.get("codigo", "")).strip() or "tipo" not in q:
+            raise ValueError("Cada equipo necesita «codigo» y «tipo»")
+        if q["codigo"] in codigos:
+            raise ValueError(f"Código de equipo repetido: {q['codigo']}")
+        codigos.add(q["codigo"])
+        for k in ("descripcion", "ubicacion"):
+            q.setdefault(k, "")
+        q.setdefault("instalado", "")
+        if q["instalado"]:
+            try:
+                fecha_valida(q["instalado"], "fecha de instalación")
+            except ValueError as err:
+                avisos.append(f"Equipo «{q['codigo']}»: {err}")
+    ids = set()
+    for p in e["planes"]:
+        if not isinstance(p, dict) or "id" not in p:
+            raise ValueError("Cada plan necesita «id»")
+        if p["id"] in ids:
+            raise ValueError(f"Identificador de plan repetido: {p['id']}")
+        ids.add(p["id"])
+        p.setdefault("checklist", [])
+        p.setdefault("activo", True)
+        try:
+            validar_plan(p)
+        except ValueError as err:
+            avisos.append(str(err))
+    ords = set()
+    for o in e["ordenes"]:
+        if not isinstance(o, dict) or any(k not in o for k in ("id", "plan", "nombre", "equipo", "fecha", "estado")):
+            raise ValueError("Cada orden necesita «id», «plan», «nombre», «equipo», «fecha» y «estado»")
+        if o["id"] in ords:
+            raise ValueError(f"Identificador de orden repetido: {o['id']}")
+        ords.add(o["id"])
+        if o["estado"] not in ESTADOS_ORDEN:
+            raise ValueError(f"La orden {o['id']} tiene un estado desconocido: «{o['estado']}»")
+        fecha_valida(o["fecha"], f"fecha de la orden {o['id']}")
+        o.setdefault("responsable", "")
+        o.setdefault("checklist", [])
+        o.setdefault("notas", "")
+        o.setdefault("cerrada", "")
+    for f in e["amef"]:
+        if not isinstance(f, dict) or any(k not in f for k in ("tipo_equipo", "modo", "S", "O", "D")):
+            raise ValueError("Cada modo de falla del AMEF necesita «tipo_equipo», «modo», «S», «O» y «D»")
+        for k in ("S", "O", "D"):
+            if isinstance(f[k], bool) or not isinstance(f[k], int) or not 1 <= f[k] <= 10:
+                raise ValueError(f"El modo de falla «{f['modo']}» tiene {k} fuera de 1 a 10")
+        for k in ("causa", "efecto", "control", "accion"):
+            f.setdefault(k, "")
+    numeros = [int(m.group(1)) for o in e["ordenes"] if (m := re.fullmatch(r"OT-(\d+)", str(o["id"])))]
+    c = e.get("contador")
+    e["contador"] = max(c if isinstance(c, int) and not isinstance(c, bool) else 0, *numeros, 0)
+    return e, avisos
+
+
+def estado_vacio():
+    """Plan de mantenimiento sin equipos, planes, órdenes ni AMEF."""
+    return {"formato": FORMATO, "equipos": [], "planes": [], "ordenes": [], "historial": [], "amef": [], "contador": 0}
+
+
 def estado_inicial(hoy=None):
-    """Plan de mantenimiento de ejemplo con catálogo, planes y AMEF."""
-    hoy = hoy or dt.date.today().isoformat()
+    """Plan de mantenimiento de ejemplo con catálogo, planes y AMEF.
+
+    El inicio de cada plan se escalona 3 días respecto al anterior para que las órdenes no caigan el mismo día.
+    """
+    hoy = _hoy(hoy)
     equipos = []
     ejemplos = [("MOD-A", "Módulos", "Campo A (12 x 20 CS1H-330MS)"), ("MOD-B", "Módulos", "Campo B (12 x 20 CS1H-330MS)"),
                 ("INV-1", "Inversores", "Inversor central 500 kW"), ("INV-2", "Inversores", "Inversor central 500 kW"),
                 ("TRK-01", "Trackers", "Fila de trackers 01"), ("TR-01", "Transformadores", "Transformador 1 MVA 0.4/20 kV"),
                 ("CAB-01", "Cableado", "Cajas de string, campo A")]
-    for i, (cod, tipo, desc) in enumerate(ejemplos):
+    for cod, tipo, desc in ejemplos:
         equipos.append({"codigo": cod, "tipo": tipo, "descripcion": desc, "ubicacion": "Planta", "instalado": "2024-01-15"})
     planes = []
     for tipo, lista in PLANES_BASE.items():
         for nombre, frec, chk in lista:
             planes.append({"id": f"P{len(planes) + 1:03d}", "nombre": nombre, "tipo_equipo": tipo, "frecuencia_dias": frec, "checklist": chk,
-                           "inicio": hoy, "activo": True})
+                           "inicio": (hoy + dt.timedelta(days=3 * len(planes))).isoformat(), "activo": True})
     amef = []
     for tipo, lista in AMEF_BASE.items():
         for modo, causa, efecto, s, o, d_, ctrl in lista:
             amef.append({"tipo_equipo": tipo, "modo": modo, "causa": causa, "efecto": efecto, "S": s, "O": o, "D": d_, "control": ctrl, "accion": ""})
-    return {"formato": "heliora-mantenimiento/1", "equipos": equipos, "planes": planes, "ordenes": [], "historial": [], "amef": amef, "contador": 0}
+    return {"formato": FORMATO, "equipos": equipos, "planes": planes, "ordenes": [], "historial": [], "amef": amef, "contador": 0}
 
 
 def rpn(fila):
@@ -481,59 +833,439 @@ def amef_por_equipo(estado, tipo=None):
     return sorted(filas, key=lambda f: -f["RPN"])
 
 
-def generar_ordenes(estado, hasta):
+def _id_orden(estado):
+    """Siguiente identificador de orden que no existe todavía."""
+    existentes = {o["id"] for o in estado["ordenes"]}
+    while True:
+        estado["contador"] += 1
+        ident = f"OT-{estado['contador']:05d}"
+        if ident not in existentes:
+            return ident
+
+
+def _nueva_orden(estado, plan, nombre, equipo, fecha, checklist, tipo, notas="", responsable=""):
+    """Añade una orden pendiente al estado y la devuelve."""
+    o = {"id": _id_orden(estado), "plan": plan, "nombre": nombre, "equipo": equipo, "fecha": fecha, "estado": "pendiente", "tipo": tipo,
+         "responsable": responsable, "checklist": [{"texto": t, "hecho": False} for t in checklist], "notas": notas, "cerrada": ""}
+    estado["ordenes"].append(o)
+    return o
+
+
+def tipo_de(orden):
+    """Tipo de una orden: el guardado o, en planes antiguos, correctiva si viene de una falla y preventiva si no."""
+    return orden.get("tipo") or ("correctiva" if orden.get("plan") == "CORR" else "preventiva")
+
+
+def generar_ordenes(estado, hasta, errores=None, solo_plan=None):
     """Crea las órdenes de trabajo que tocan hasta la fecha, según la frecuencia de cada plan.
 
     Cada combinación plan-equipo avanza desde su última fecha (real o programada) sumando
-    frecuencia_dias. No duplica órdenes ya creadas. Devuelve el número de órdenes nuevas.
+    frecuencia_dias. No duplica órdenes ya creadas.
+
+    Args:
+        estado: plan de mantenimiento, que se modifica.
+        hasta: fecha límite AAAA-MM-DD.
+        errores: lista donde se anotan los planes inválidos, que se omiten. Si es None, el primero lanza la excepción.
+        solo_plan: identificador de un plan; si se da, solo se generan sus órdenes.
+
+    Returns:
+        Número de órdenes nuevas.
+
+    Raises:
+        ValueError: si `hasta` no es una fecha válida o, sin lista de errores, un plan no es válido.
     """
-    hasta = dt.date.fromisoformat(str(hasta)[:10])
+    hasta = fecha_valida(hasta, "fecha límite")
     nuevas = 0
     ya = {(o["plan"], o["equipo"], o["fecha"]) for o in estado["ordenes"]}
     for p in estado["planes"]:
-        if not p.get("activo", True):
+        if not p.get("activo", True) or solo_plan not in (None, p.get("id")):
             continue
+        try:
+            validar_plan(p)
+        except ValueError as e:
+            if errores is None:
+                raise
+            errores.append(str(e))
+            continue
+        paso = dt.timedelta(days=max(1, int(p["frecuencia_dias"])))
         for e in estado["equipos"]:
             if e["tipo"] != p["tipo_equipo"]:
                 continue
-            ultima = None
-            for o in estado["ordenes"]:
-                if o["plan"] == p["id"] and o["equipo"] == e["codigo"]:
-                    f = dt.date.fromisoformat(o["fecha"])
-                    ultima = f if ultima is None or f > ultima else ultima
-            fecha = dt.date.fromisoformat(p["inicio"][:10]) if ultima is None else ultima + dt.timedelta(days=int(p["frecuencia_dias"]))
+            fechas = [dt.date.fromisoformat(o["fecha"]) for o in estado["ordenes"] if o["plan"] == p["id"] and o["equipo"] == e["codigo"]]
+            fecha = fecha_valida(p["inicio"], "fecha de inicio") if not fechas else max(fechas) + paso
             while fecha <= hasta:
                 clave = (p["id"], e["codigo"], fecha.isoformat())
                 if clave not in ya:
-                    estado["contador"] += 1
-                    estado["ordenes"].append({
-                        "id": f"OT-{estado['contador']:05d}", "plan": p["id"], "nombre": p["nombre"], "equipo": e["codigo"],
-                        "fecha": fecha.isoformat(), "estado": "pendiente", "responsable": "",
-                        "checklist": [{"texto": c, "hecho": False} for c in p["checklist"]], "notas": "", "cerrada": ""})
+                    _nueva_orden(estado, p["id"], p["nombre"], e["codigo"], fecha.isoformat(), p.get("checklist", []), "preventiva")
                     ya.add(clave)
                     nuevas += 1
-                fecha += dt.timedelta(days=int(p["frecuencia_dias"]))
+                fecha += paso
     estado["ordenes"].sort(key=lambda o: (o["fecha"], o["id"]))
     return nuevas
 
 
-def cerrar_orden(estado, ident, fecha=None, notas=""):
-    """Cierra una orden y la pasa al historial."""
+def _orden(estado, ident):
+    """Orden con ese identificador."""
     for o in estado["ordenes"]:
         if o["id"] == ident:
-            o["estado"] = "cerrada"
-            o["cerrada"] = fecha or dt.date.today().isoformat()
-            if notas:
-                o["notas"] = notas
-            estado["historial"].append({"orden": o["id"], "equipo": o["equipo"], "trabajo": o["nombre"], "fecha": o["cerrada"], "notas": o["notas"],
-                                        "completo": all(c["hecho"] for c in o["checklist"])})
             return o
-    raise KeyError(ident)
+    raise ValueError(f"No existe la orden {ident}")
+
+
+def cerrar_orden(estado, ident, fecha=None, notas=""):
+    """Cierra una orden y la pasa al historial. Cerrar una orden ya cerrada no cambia nada.
+
+    Args:
+        estado: plan de mantenimiento.
+        ident: identificador de la orden.
+        fecha: fecha de cierre AAAA-MM-DD; hoy si no se indica.
+        notas: notas del cierre; sustituyen a las de la orden si no están vacías.
+
+    Returns:
+        La orden.
+
+    Raises:
+        ValueError: si la orden no existe o la fecha no es válida.
+    """
+    o = _orden(estado, ident)
+    cierre = fecha_valida(fecha, "fecha de cierre").isoformat() if fecha else dt.date.today().isoformat()
+    if o["estado"] == "cerrada":
+        return o
+    o["estado"] = "cerrada"
+    o["cerrada"] = cierre
+    if notas:
+        o["notas"] = notas
+    estado["historial"].append({"orden": o["id"], "equipo": o["equipo"], "trabajo": o["nombre"], "fecha": o["cerrada"], "notas": o["notas"],
+                                "completo": all(c["hecho"] for c in o["checklist"])})
+    return o
+
+
+def reabrir_orden(estado, ident):
+    """Devuelve una orden cerrada a pendiente y quita su entrada del historial. Si ya está pendiente no hace nada.
+
+    Raises:
+        ValueError: si la orden no existe.
+    """
+    o = _orden(estado, ident)
+    if o["estado"] != "cerrada":
+        return o
+    o["estado"] = "pendiente"
+    o["cerrada"] = ""
+    estado["historial"] = [h for h in estado["historial"] if h["orden"] != ident]
+    return o
+
+
+def _equipo(estado, codigo):
+    """Equipo del catálogo con ese código."""
+    for e in estado["equipos"]:
+        if e["codigo"] == codigo:
+            return e
+    raise ValueError(f"No existe el equipo «{codigo}» en el catálogo")
+
+
+def crear_orden(estado, equipo, trabajo, fecha, tipo="correctiva", responsable="", checklist=None, notas=""):
+    """Crea una orden manual. Si ya hay una pendiente igual (equipo, trabajo, fecha y tipo) devuelve esa.
+
+    Args:
+        estado: plan de mantenimiento.
+        equipo: código de un equipo del catálogo.
+        trabajo: descripción del trabajo.
+        fecha: fecha programada AAAA-MM-DD.
+        tipo: uno de `TIPOS_ORDEN`.
+        responsable: persona o empresa a cargo.
+        checklist: pasos de la lista de comprobación (por defecto diagnosticar, ejecutar y verificar).
+        notas: notas libres.
+
+    Returns:
+        Tupla (orden, creada).
+
+    Raises:
+        ValueError: si el equipo no existe, el trabajo está vacío, la fecha o el tipo no son válidos.
+    """
+    _equipo(estado, equipo)
+    trabajo = str(trabajo).strip()
+    if not trabajo:
+        raise ValueError("El trabajo de la orden no puede estar vacío")
+    fecha = fecha_valida(fecha, "fecha de la orden").isoformat()
+    if tipo not in TIPOS_ORDEN:
+        raise ValueError(f"Tipo de orden desconocido «{tipo}» (se admite: {', '.join(TIPOS_ORDEN)})")
+    for o in estado["ordenes"]:
+        if o["estado"] == "cerrada" or (o["equipo"], o["nombre"]) != (equipo, trabajo):
+            continue
+        # Una correctiva abierta no se repite aunque cambie la fecha; las demás se distinguen por fecha y tipo
+        if (tipo == "correctiva" and o["plan"] == "CORR") or (o["fecha"], tipo_de(o)) == (fecha, tipo):
+            return o, False
+    pasos = ["Diagnosticar", "Ejecutar", "Verificar"] if checklist is None else list(checklist)
+    o = _nueva_orden(estado, "CORR" if tipo == "correctiva" else "MAN", trabajo, equipo, fecha, pasos, tipo, notas, responsable)
+    estado["ordenes"].sort(key=lambda x: (x["fecha"], x["id"]))
+    return o, True
+
+
+def editar_orden(estado, ident, **campos):
+    """Cambia campos de una orden: `trabajo`, `equipo`, `fecha`, `tipo`, `responsable`, `notas`.
+
+    Una orden cerrada solo admite `responsable` y `notas`; para el resto hay que reabrirla.
+
+    Returns:
+        La orden modificada.
+
+    Raises:
+        ValueError: si la orden no existe, un valor no es válido o se intenta cambiar una orden cerrada.
+    """
+    o = _orden(estado, ident)
+    permitidos = {"trabajo", "equipo", "fecha", "tipo", "responsable", "notas"}
+    if set(campos) - permitidos:
+        raise ValueError(f"Campos no editables: {', '.join(sorted(set(campos) - permitidos))}")
+    if o["estado"] == "cerrada" and set(campos) - {"responsable", "notas"}:
+        raise ValueError(f"La orden {ident} está cerrada: reábrela para cambiar su fecha, trabajo, equipo o tipo")
+    cambios = dict(campos)
+    if "trabajo" in cambios:
+        cambios["trabajo"] = str(cambios["trabajo"]).strip()
+        if not cambios["trabajo"]:
+            raise ValueError("El trabajo de la orden no puede estar vacío")
+    if "equipo" in cambios:
+        _equipo(estado, cambios["equipo"])
+    if "fecha" in cambios:
+        cambios["fecha"] = fecha_valida(cambios["fecha"], "fecha de la orden").isoformat()
+    if "tipo" in cambios and cambios["tipo"] not in TIPOS_ORDEN:
+        raise ValueError(f"Tipo de orden desconocido «{cambios['tipo']}»")
+    if "trabajo" in cambios:
+        o["nombre"] = cambios.pop("trabajo")
+    o.update(cambios)
+    if o["estado"] == "cerrada":
+        for h in estado["historial"]:
+            if h["orden"] == ident:
+                h["notas"] = o["notas"]
+    estado["ordenes"].sort(key=lambda x: (x["fecha"], x["id"]))
+    return o
+
+
+def reprogramar_orden(estado, ident, fecha):
+    """Cambia la fecha de una orden pendiente."""
+    return editar_orden(estado, ident, fecha=fecha)
+
+
+def borrar_orden(estado, ident):
+    """Borra una orden y su entrada del historial.
+
+    Returns:
+        True si existía; False si ya no estaba (borrar dos veces no falla).
+    """
+    n = len(estado["ordenes"])
+    estado["ordenes"] = [o for o in estado["ordenes"] if o["id"] != ident]
+    estado["historial"] = [h for h in estado["historial"] if h["orden"] != ident]
+    return len(estado["ordenes"]) < n
+
+
+def _borrar_pendientes(estado, criterio):
+    """Quita las órdenes no cerradas que cumplen el criterio y devuelve cuántas."""
+    antes = len(estado["ordenes"])
+    estado["ordenes"] = [o for o in estado["ordenes"] if o["estado"] == "cerrada" or not criterio(o)]
+    return antes - len(estado["ordenes"])
+
+
+def _id_plan(estado):
+    """Siguiente identificador de plan P### que no existe."""
+    usados = {p["id"] for p in estado["planes"]}
+    n = 1 + max([int(m.group(1)) for i in usados if (m := re.fullmatch(r"P(\d+)", str(i)))], default=0)
+    while f"P{n:03d}" in usados:
+        n += 1
+    return f"P{n:03d}"
+
+
+def crear_plan(estado, nombre, tipo_equipo, frecuencia_dias, inicio, checklist=None, activo=True):
+    """Añade un plan preventivo con identificador único.
+
+    Raises:
+        ValueError: si el plan no es válido (nombre vacío, frecuencia no positiva, fecha inválida).
+    """
+    p = {"id": _id_plan(estado), "nombre": str(nombre).strip(), "tipo_equipo": tipo_equipo, "frecuencia_dias": frecuencia_dias,
+         "checklist": list(checklist) if checklist is not None else ["Paso 1"], "inicio": str(inicio).strip(), "activo": bool(activo)}
+    if not p["nombre"]:
+        raise ValueError("El nombre del plan no puede estar vacío")
+    validar_plan(p)
+    estado["planes"].append(p)
+    return p
+
+
+def _plan(estado, ident):
+    """Plan con ese identificador."""
+    for p in estado["planes"]:
+        if p["id"] == ident:
+            return p
+    raise ValueError(f"No existe el plan {ident}")
+
+
+def editar_plan(estado, ident, **campos):
+    """Cambia campos de un plan: `nombre`, `tipo_equipo`, `frecuencia_dias`, `inicio`, `checklist`, `activo`.
+
+    El nuevo nombre se copia a las órdenes pendientes del plan.
+
+    Returns:
+        Tupla (plan, regenerar). `regenerar` es True si cambió algo que afecta a las fechas de las
+        órdenes pendientes (frecuencia, inicio, tipo de equipo o activación) y el plan tiene alguna.
+
+    Raises:
+        ValueError: si el plan no existe o el resultado no es un plan válido.
+    """
+    p = _plan(estado, ident)
+    permitidos = {"nombre", "tipo_equipo", "frecuencia_dias", "inicio", "checklist", "activo"}
+    if set(campos) - permitidos:
+        raise ValueError(f"Campos no editables: {', '.join(sorted(set(campos) - permitidos))}")
+    nuevo = dict(p, **campos)
+    nuevo["nombre"] = str(nuevo["nombre"]).strip()
+    if not nuevo["nombre"]:
+        raise ValueError("El nombre del plan no puede estar vacío")
+    validar_plan(nuevo)
+    afecta = any(p.get(k) != nuevo[k] for k in ("frecuencia_dias", "inicio", "tipo_equipo", "activo"))
+    p.update(nuevo)
+    if "nombre" in campos:
+        for o in estado["ordenes"]:
+            if o["plan"] == ident and o["estado"] != "cerrada":
+                o["nombre"] = p["nombre"]
+    pendientes = any(o["plan"] == ident and o["estado"] != "cerrada" for o in estado["ordenes"])
+    return p, bool(afecta and pendientes)
+
+
+def borrar_plan(estado, ident, borrar_pendientes=False):
+    """Borra un plan y, si se pide, sus órdenes pendientes. Las cerradas se conservan en el historial.
+
+    Returns:
+        Número de órdenes pendientes borradas; -1 si el plan ya no existía.
+    """
+    n = len(estado["planes"])
+    estado["planes"] = [p for p in estado["planes"] if p["id"] != ident]
+    if len(estado["planes"]) == n:
+        return -1
+    return _borrar_pendientes(estado, lambda o: o["plan"] == ident) if borrar_pendientes else 0
+
+
+def regenerar_plan(estado, ident, hasta):
+    """Rehace las órdenes pendientes de un plan: borra las pendientes y genera de nuevo hasta la fecha.
+
+    Returns:
+        Tupla (borradas, nuevas).
+
+    Raises:
+        ValueError: si el plan no existe o no es válido, o la fecha no es válida.
+    """
+    p = _plan(estado, ident)
+    fecha_valida(hasta, "fecha límite")
+    if p.get("activo", True):
+        validar_plan(p)
+    borradas = _borrar_pendientes(estado, lambda o: o["plan"] == ident)
+    return borradas, generar_ordenes(estado, hasta, solo_plan=ident)
+
+
+def _codigo_libre(estado):
+    """Código EQ-### sin usar."""
+    usados = {e["codigo"] for e in estado["equipos"]}
+    n = len(usados) + 1
+    while f"EQ-{n:03d}" in usados:
+        n += 1
+    return f"EQ-{n:03d}"
+
+
+def crear_equipo(estado, codigo=None, tipo="Módulos", descripcion="", ubicacion="", instalado=None):
+    """Añade un equipo al catálogo; sin código se asigna uno libre.
+
+    Raises:
+        ValueError: si el código ya existe, está vacío o la fecha de instalación no es válida.
+    """
+    codigo = _codigo_libre(estado) if codigo is None else str(codigo).strip()
+    if not codigo:
+        raise ValueError("El código del equipo no puede estar vacío")
+    if any(e["codigo"] == codigo for e in estado["equipos"]):
+        raise ValueError(f"Ya existe un equipo con el código «{codigo}»")
+    instalado = dt.date.today().isoformat() if instalado is None else fecha_valida(instalado, "fecha de instalación").isoformat()
+    e = {"codigo": codigo, "tipo": tipo, "descripcion": descripcion, "ubicacion": ubicacion, "instalado": instalado}
+    estado["equipos"].append(e)
+    return e
+
+
+def editar_equipo(estado, actual, **campos):
+    """Cambia campos de un equipo: `codigo`, `tipo`, `descripcion`, `ubicacion`, `instalado`.
+
+    Renombrar el código actualiza sus órdenes y su historial. Cambiar el tipo borra las órdenes
+    pendientes que venían de planes de otro tipo.
+
+    Returns:
+        Tupla (equipo, órdenes pendientes borradas por el cambio de tipo).
+
+    Raises:
+        ValueError: si el equipo no existe, el nuevo código está repetido o vacío, o la fecha no es válida.
+    """
+    e = _equipo(estado, actual)
+    permitidos = {"codigo", "tipo", "descripcion", "ubicacion", "instalado"}
+    if set(campos) - permitidos:
+        raise ValueError(f"Campos no editables: {', '.join(sorted(set(campos) - permitidos))}")
+    nuevo = dict(campos)
+    if "codigo" in nuevo:
+        nuevo["codigo"] = str(nuevo["codigo"]).strip()
+        if not nuevo["codigo"]:
+            raise ValueError("El código del equipo no puede estar vacío")
+        if nuevo["codigo"] != actual and any(x["codigo"] == nuevo["codigo"] for x in estado["equipos"]):
+            raise ValueError(f"Ya existe un equipo con el código «{nuevo['codigo']}»")
+    if "instalado" in nuevo and nuevo["instalado"]:
+        nuevo["instalado"] = fecha_valida(nuevo["instalado"], "fecha de instalación").isoformat()
+    borradas = 0
+    if "tipo" in nuevo and nuevo["tipo"] != e["tipo"]:
+        tipos = {p["id"]: p["tipo_equipo"] for p in estado["planes"]}
+        borradas = _borrar_pendientes(estado, lambda o: o["equipo"] == actual and o["plan"] in tipos and tipos[o["plan"]] != nuevo["tipo"])
+    e.update(nuevo)
+    if e["codigo"] != actual:
+        for o in estado["ordenes"]:
+            if o["equipo"] == actual:
+                o["equipo"] = e["codigo"]
+        for h in estado["historial"]:
+            if h["equipo"] == actual:
+                h["equipo"] = e["codigo"]
+    return e, borradas
+
+
+def borrar_equipo(estado, codigo, borrar_ordenes=True):
+    """Borra un equipo del catálogo y, si se pide, sus órdenes pendientes. Las cerradas se conservan.
+
+    Returns:
+        Número de órdenes pendientes borradas; -1 si el equipo ya no existía.
+    """
+    n = len(estado["equipos"])
+    estado["equipos"] = [e for e in estado["equipos"] if e["codigo"] != codigo]
+    if len(estado["equipos"]) == n:
+        return -1
+    return _borrar_pendientes(estado, lambda o: o["equipo"] == codigo) if borrar_ordenes else 0
+
+
+def crear_modo_falla(estado, tipo_equipo, modo="Modo de falla", causa="", efecto="", s=5, o=5, d=5, control="", accion=""):
+    """Añade un modo de falla al AMEF.
+
+    Raises:
+        ValueError: si S, O o D no son enteros de 1 a 10.
+    """
+    for k, v in (("S", s), ("O", o), ("D", d)):
+        if isinstance(v, bool) or not isinstance(v, int) or not 1 <= v <= 10:
+            raise ValueError(f"{k} debe ser un entero de 1 a 10")
+    f = {"tipo_equipo": tipo_equipo, "modo": modo, "causa": causa, "efecto": efecto, "S": s, "O": o, "D": d, "control": control, "accion": accion}
+    estado["amef"].append(f)
+    return f
+
+
+def borrar_modo_falla(estado, indice):
+    """Borra el modo de falla en esa posición del AMEF; False si no existe."""
+    if not 0 <= indice < len(estado["amef"]):
+        return False
+    del estado["amef"][indice]
+    return True
+
+
+def ordenar_amef(estado):
+    """Ordena el AMEF de mayor a menor RPN, conservando el orden relativo de los empatados."""
+    estado["amef"].sort(key=lambda f: -rpn(f))
 
 
 def tablero(estado, hoy=None):
     """Resumen: pendientes, vencidas, próximas 30 días y cumplimiento del plan."""
-    hoy = dt.date.fromisoformat(hoy) if hoy else dt.date.today()
+    hoy = _hoy(hoy)
     pend = [o for o in estado["ordenes"] if o["estado"] != "cerrada"]
     venc = [o for o in pend if dt.date.fromisoformat(o["fecha"]) < hoy]
     prox = [o for o in pend if hoy <= dt.date.fromisoformat(o["fecha"]) <= hoy + dt.timedelta(days=30)]
@@ -543,16 +1275,188 @@ def tablero(estado, hoy=None):
 
 
 def ordenes_de_alarmas(estado, eventos, hoy=None):
-    """Crea órdenes correctivas a partir de fallas detectadas por el análisis."""
-    hoy = hoy or dt.date.today().isoformat()
+    """Crea órdenes correctivas a partir de fallas detectadas por el análisis.
+
+    No duplica una correctiva abierta con el mismo equipo y trabajo: ejecutarlo dos veces con los
+    mismos hallazgos deja el mismo estado.
+
+    Returns:
+        Número de órdenes nuevas.
+    """
+    hoy = _hoy(hoy).isoformat()
     n = 0
     for ev in eventos:
-        estado["contador"] += 1
-        estado["ordenes"].append({"id": f"OT-{estado['contador']:05d}", "plan": "CORR", "nombre": ev["trabajo"], "equipo": ev["equipo"], "fecha": hoy,
-                                  "estado": "pendiente", "responsable": "", "checklist": [{"texto": t, "hecho": False} for t in ev.get("checklist", ["Diagnosticar", "Reparar", "Verificar"])],
-                                  "notas": ev.get("notas", ""), "cerrada": ""})
+        if any(o["plan"] == "CORR" and o["estado"] != "cerrada" and (o["equipo"], o["nombre"]) == (ev["equipo"], ev["trabajo"]) for o in estado["ordenes"]):
+            continue
+        _nueva_orden(estado, "CORR", ev["trabajo"], ev["equipo"], hoy, ev.get("checklist", ["Diagnosticar", "Reparar", "Verificar"]), "correctiva", ev.get("notas", ""))
         n += 1
     return n
+
+
+def _escribir_csv(ruta, columnas, filas):
+    """Escribe un CSV legible por Excel en español: separador «;», comillas donde hacen falta y UTF-8 con BOM.
+
+    Raises:
+        ValueError: si no se puede escribir el archivo.
+    """
+    tmp = f"{ruta}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f, delimiter=";", lineterminator="\r\n")
+            w.writerow(columnas)
+            w.writerows(filas)
+        os.replace(tmp, ruta)
+    except OSError as e:
+        raise ValueError(f"No se pudo escribir «{ruta}»: {e.strerror or e}") from None
+    return len(filas)
+
+
+def exportar_amef(estado, ruta, tipo=None):
+    """Exporta el AMEF (en el orden mostrado y filtrado por tipo de equipo) a CSV.
+
+    Returns:
+        Número de filas escritas.
+
+    Raises:
+        ValueError: si no se puede escribir el archivo.
+    """
+    filas = [[f["tipo_equipo"], f["modo"], f.get("causa", ""), f.get("efecto", ""), f["S"], f["O"], f["D"], rpn(f), f.get("control", ""), f.get("accion", "")]
+             for f in estado["amef"] if tipo in (None, "", f["tipo_equipo"])]
+    return _escribir_csv(ruta, COLUMNAS_AMEF, filas)
+
+
+def exportar_historial(estado, ruta, equipo=None):
+    """Exporta el historial de trabajos (más recientes primero, filtrado por equipo) a CSV.
+
+    Returns:
+        Número de filas escritas.
+
+    Raises:
+        ValueError: si no se puede escribir el archivo.
+    """
+    filas = [[h["fecha"], h["orden"], h["equipo"], h["trabajo"], "sí" if h.get("completo") else "no", h.get("notas", "")]
+             for h in reversed(estado["historial"]) if equipo in (None, "", h["equipo"])]
+    return _escribir_csv(ruta, COLUMNAS_HISTORIAL, filas)
+
+
+def _op_orden_crear(estado, hoy=None, **a):
+    o, creada = crear_orden(estado, **a)
+    return f"Orden {o['id']} creada." if creada else f"Ya existía la orden {o['id']} con los mismos datos; no se duplicó."
+
+
+def _op_orden_editar(estado, hoy=None, ident="", **campos):
+    editar_orden(estado, ident, **campos)
+    return f"Orden {ident} actualizada."
+
+
+def _op_orden_cerrar(estado, hoy=None, ident="", fecha=None, notas=""):
+    o = _orden(estado, ident)
+    ya = o["estado"] == "cerrada"
+    cerrar_orden(estado, ident, fecha or _hoy(hoy).isoformat(), notas)
+    return f"La orden {ident} ya estaba cerrada." if ya else f"Orden {ident} cerrada."
+
+
+def _op_orden_reabrir(estado, hoy=None, ident=""):
+    ya = _orden(estado, ident)["estado"] != "cerrada"
+    reabrir_orden(estado, ident)
+    return f"La orden {ident} ya estaba abierta." if ya else f"Orden {ident} reabierta."
+
+
+def _op_orden_borrar(estado, hoy=None, ident=""):
+    return f"Orden {ident} borrada." if borrar_orden(estado, ident) else f"La orden {ident} ya no existe."
+
+
+def _op_plan_crear(estado, hoy=None, **a):
+    a.setdefault("inicio", _hoy(hoy).isoformat())
+    return f"Plan {crear_plan(estado, **a)['id']} creado."
+
+
+def _op_plan_editar(estado, hoy=None, ident="", **campos):
+    _, regenerar = editar_plan(estado, ident, **campos)
+    return f"Plan {ident} actualizado." + (" Sus órdenes pendientes siguen con las fechas anteriores: puedes regenerarlas." if regenerar else "")
+
+
+def _op_plan_borrar(estado, hoy=None, ident="", borrar_pendientes=False):
+    n = borrar_plan(estado, ident, borrar_pendientes)
+    if n < 0:
+        return f"El plan {ident} ya no existe."
+    return f"Plan {ident} borrado" + (f" junto con {n} órdenes pendientes." if borrar_pendientes else ".")
+
+
+def _op_plan_regenerar(estado, hoy=None, ident="", hasta=""):
+    b, n = regenerar_plan(estado, ident, hasta)
+    return f"Plan {ident}: {b} órdenes pendientes sustituidas por {n} nuevas."
+
+
+def _op_equipo_crear(estado, hoy=None, **a):
+    a.setdefault("instalado", _hoy(hoy).isoformat())
+    return f"Equipo {crear_equipo(estado, **a)['codigo']} añadido."
+
+
+def _op_equipo_editar(estado, hoy=None, actual="", **campos):
+    e, n = editar_equipo(estado, actual, **campos)
+    return f"Equipo {e['codigo']} actualizado." + (f" Se borraron {n} órdenes pendientes de planes de otro tipo." if n else "")
+
+
+def _op_equipo_borrar(estado, hoy=None, codigo="", borrar_ordenes=True):
+    n = borrar_equipo(estado, codigo, borrar_ordenes)
+    if n < 0:
+        return f"El equipo {codigo} ya no existe."
+    return f"Equipo {codigo} borrado" + (f" junto con {n} órdenes pendientes." if borrar_ordenes else ".")
+
+
+def _op_amef_crear(estado, hoy=None, **a):
+    crear_modo_falla(estado, **a)
+    return "Modo de falla añadido."
+
+
+def _op_amef_borrar(estado, hoy=None, indice=-1):
+    return "Modo de falla borrado." if borrar_modo_falla(estado, indice) else "El modo de falla ya no existe."
+
+
+def _op_amef_ordenar(estado, hoy=None):
+    ordenar_amef(estado)
+    return "AMEF ordenado por RPN."
+
+
+def _op_exportar(estado, hoy=None, que="", ruta="", filtro=None):
+    if que == "amef":
+        return f"AMEF exportado: {exportar_amef(estado, ruta, filtro)} filas en {ruta}"
+    if que == "historial":
+        return f"Historial exportado: {exportar_historial(estado, ruta, filtro)} filas en {ruta}"
+    raise ValueError(f"No se puede exportar «{que}»")
+
+
+OPERACIONES = {
+    "orden_crear": _op_orden_crear, "orden_editar": _op_orden_editar, "orden_cerrar": _op_orden_cerrar, "orden_reabrir": _op_orden_reabrir,
+    "orden_borrar": _op_orden_borrar, "plan_crear": _op_plan_crear, "plan_editar": _op_plan_editar, "plan_borrar": _op_plan_borrar,
+    "plan_regenerar": _op_plan_regenerar, "equipo_crear": _op_equipo_crear, "equipo_editar": _op_equipo_editar, "equipo_borrar": _op_equipo_borrar,
+    "amef_crear": _op_amef_crear, "amef_borrar": _op_amef_borrar, "amef_ordenar": _op_amef_ordenar, "exportar": _op_exportar,
+}
+
+
+def aplicar(estado, operacion, args=None, hoy=None):
+    """Ejecuta una operación del planificador sobre el estado, que se modifica en sitio.
+
+    Args:
+        estado: plan de mantenimiento.
+        operacion: clave de `OPERACIONES`.
+        args: parámetros de la operación.
+        hoy: fecha de referencia AAAA-MM-DD para los valores por defecto.
+
+    Returns:
+        Mensaje para mostrar a la persona.
+
+    Raises:
+        ValueError: si la operación no existe o sus datos no son válidos; el estado no se modifica en ese caso.
+    """
+    f = OPERACIONES.get(operacion)
+    if f is None:
+        raise ValueError(f"Operación desconocida: {operacion}")
+    try:
+        return f(estado, hoy=hoy, **(args or {}))
+    except TypeError as e:
+        raise ValueError(f"Parámetros no válidos para «{operacion}»: {e}") from None
 
 
 def guardar_estado(estado, ruta):
@@ -565,9 +1469,28 @@ def guardar_estado(estado, ruta):
 
 
 def cargar_estado(ruta):
-    """Carga el estado desde un archivo JSON."""
-    with open(ruta, encoding="utf8") as f:
-        return json.load(f)
+    """Carga y valida un plan de mantenimiento desde un archivo JSON.
+
+    Raises:
+        ValueError: si el archivo no existe, no es JSON o no es un plan válido (ver `validar_estado`).
+    """
+    return cargar_estado_con_avisos(ruta)[0]
+
+
+def cargar_estado_con_avisos(ruta):
+    """Como `cargar_estado`, y además devuelve los avisos de valores dudosos.
+
+    Returns:
+        Tupla (estado, avisos).
+    """
+    try:
+        with open(ruta, encoding="utf-8-sig") as f:
+            e = json.load(f)
+    except OSError as err:
+        raise ValueError(f"No se pudo leer «{ruta}»: {err.strerror or err}") from None
+    except json.JSONDecodeError as err:
+        raise ValueError(f"«{ruta}» no es un JSON válido: {err}") from None
+    return validar_estado(e)
 
 
 def copiar(estado):

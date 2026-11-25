@@ -495,11 +495,25 @@ class Motor:
         mt.generar_ordenes(e, hasta)
         return {"estado": e, "tablero": mt.tablero(e, hoy)}
 
-    def plan_generar(self, estado, hasta, hoy=None):
-        """Atiende la orden `plan_generar`: genera órdenes hasta `hasta` y devuelve el estado, el número de nuevas y el tablero."""
+    def plan_vacio(self, hoy=None):
+        """Atiende la orden `plan_vacio`: devuelve un plan de mantenimiento sin datos y su tablero."""
         from .lib import mantenimiento as mt
-        n = mt.generar_ordenes(estado, hasta)
-        return {"estado": estado, "nuevas": n, "tablero": mt.tablero(estado, hoy)}
+        e = mt.estado_vacio()
+        return {"estado": e, "tablero": mt.tablero(e, hoy)}
+
+    def plan_generar(self, estado, hasta, hoy=None):
+        """Atiende la orden `plan_generar`: genera órdenes hasta `hasta` y devuelve el estado, el número de nuevas, los planes omitidos por errores y el tablero."""
+        from .lib import mantenimiento as mt
+        errores = []
+        n = mt.generar_ordenes(estado, hasta, errores)
+        msg = f"{n} órdenes nuevas." + "".join(f" {e}; se omitió." for e in errores)
+        return {"estado": estado, "nuevas": n, "errores": errores, "mensaje": msg, "tablero": mt.tablero(estado, hoy)}
+
+    def plan_operar(self, estado, operacion, args=None, hoy=None):
+        """Atiende la orden `plan_operar`: aplica una operación de edición (órdenes, planes, equipos, AMEF, exportación) y devuelve el estado, el mensaje y el tablero."""
+        from .lib import mantenimiento as mt
+        msg = mt.aplicar(estado, operacion, args, hoy)
+        return {"estado": estado, "mensaje": msg, "tablero": mt.tablero(estado, hoy)}
 
     def plan_tablero(self, estado, hoy=None):
         """Atiende la orden `plan_tablero`: devuelve el tablero del estado de mantenimiento."""
@@ -509,8 +523,8 @@ class Motor:
     def plan_cerrar(self, estado, ident, fecha=None, notas="", hoy=None):
         """Atiende la orden `plan_cerrar`: cierra la orden `ident` y devuelve el estado y el tablero."""
         from .lib import mantenimiento as mt
-        mt.cerrar_orden(estado, ident, fecha, notas)
-        return {"estado": estado, "tablero": mt.tablero(estado, hoy)}
+        msg = mt.aplicar(estado, "orden_cerrar", {"ident": ident, "fecha": fecha, "notas": notas}, hoy)
+        return {"estado": estado, "mensaje": msg, "tablero": mt.tablero(estado, hoy)}
 
     def plan_correctivas(self, estado, hoy=None):
         """Crea órdenes correctivas a partir de la tabla de hallazgos."""
@@ -521,7 +535,8 @@ class Motor:
         ev = [{"trabajo": f"{f['tipo']}: {f['valor']}", "equipo": str(f["equipo"]), "notas": str(f["detalle"])}
               for _, f in h.iterrows() if f["estado"] == "falla"]
         n = mt.ordenes_de_alarmas(estado, ev, hoy)
-        return {"estado": estado, "nuevas": n, "tablero": mt.tablero(estado, hoy)}
+        msg = f"{n} correctivas nuevas" + (f"; {len(ev) - n} ya estaban abiertas." if len(ev) > n else ".")
+        return {"estado": estado, "nuevas": n, "mensaje": msg, "tablero": mt.tablero(estado, hoy)}
 
     def plan_guardar(self, estado, ruta):
         """Atiende la orden `plan_guardar`: guarda el estado en `ruta` y devuelve la ruta."""
@@ -530,10 +545,10 @@ class Motor:
         return ruta
 
     def plan_cargar(self, ruta, hoy=None):
-        """Atiende la orden `plan_cargar`: carga el estado desde `ruta` y devuelve el estado y el tablero."""
+        """Atiende la orden `plan_cargar`: carga y valida el estado desde `ruta` y devuelve el estado, los avisos y el tablero."""
         from .lib import mantenimiento as mt
-        e = mt.cargar_estado(ruta)
-        return {"estado": e, "tablero": mt.tablero(e, hoy)}
+        e, avisos = mt.cargar_estado_con_avisos(ruta)
+        return {"estado": e, "avisos": avisos, "tablero": mt.tablero(e, hoy)}
 
     def informe_om(self, estado, carpeta, hoy=None, planta="Planta fotovoltaica"):
         """Informe de O&M en HTML y PDF con los hallazgos y KPIs de la sesión, si los hay."""

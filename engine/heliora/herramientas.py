@@ -33,11 +33,13 @@ def herramienta(modulo, ident, titulo, params=None, grupo=""):
 
 
 def listar():
+    """Fichas de las herramientas registradas, sin la función que las ejecuta."""
     return [{k: v for k, v in h.items() if k != "fn"} for h in HERRAMIENTAS.values()]
 
 
 def ejecutar(ident, valores, espacio):
-    h = HERRAMIENTAS[ident]
+    """Ejecuta la herramienta `ident` con los valores dados, evaluando los numéricos en el espacio de trabajo."""
+    h =HERRAMIENTAS[ident]
     v = {p["nombre"]: valores.get(p["nombre"], p["defecto"]) for p in h["params"]}
     for p in h["params"]:
         if p["tipo"] == "num":
@@ -48,6 +50,7 @@ def ejecutar(ident, valores, espacio):
 
 
 def espacio_eval(x, espacio):
+    """Evalúa una expresión numérica con las variables del espacio de trabajo."""
     from .sim.nucleo import evaluar_numero
     return evaluar_numero(x, espacio.ns)
 
@@ -61,6 +64,7 @@ class Ctx:
         self.sec = []
 
     def df(self, nombre):
+        """Tabla del espacio de trabajo con ese nombre (convierte series y matrices en tabla)."""
         if not nombre:
             raise ValueError("Elige una tabla de datos. Puedes crearlas desde la consola o con «Importar datos».")
         d = self.ns.get(nombre)
@@ -74,27 +78,34 @@ class Ctx:
         return d
 
     def col(self, nombre, columna):
-        d = self.df(nombre)
+        """Columna numérica de una tabla como vector, sin los valores no numéricos."""
+        d =self.df(nombre)
         if columna not in d.columns:
             raise ValueError(f"La tabla «{nombre}» no tiene la columna «{columna}»")
         return pd.to_numeric(d[columna], errors="coerce").dropna().to_numpy(dtype=float)
 
     def texto(self, t):
+        """Añade un párrafo al informe."""
         self.sec.append({"tipo": "texto", "texto": t})
 
     def aviso(self, nivel, t):
+        """Añade un aviso con su nivel (bueno, alerta o falla)."""
         self.sec.append({"tipo": "aviso", "nivel": nivel, "texto": t})
 
     def kv(self, titulo, items):
+        """Añade una lista de pares nombre-valor, con unidad opcional como tercer elemento."""
         self.sec.append({"tipo": "kv", "titulo": titulo, "items": [[str(a), _fmt(b), str(c) if len(_x) > 2 else ""] for _x in items for a, b, c in [(*_x, "")[:3]]]})
 
     def tabla(self, titulo, columnas, filas):
+        """Añade una tabla con sus columnas y filas."""
         self.sec.append({"tipo": "tabla", "titulo": titulo, "columnas": [str(c) for c in columnas], "filas": [[_fmt(x) for x in f] for f in filas]})
 
     def grafica(self, fig):
+        """Añade una gráfica."""
         self.sec.append({"tipo": "grafica", "figura": fig})
 
     def informe(self, titulo):
+        """Devuelve el informe con las secciones acumuladas y las variables del espacio de trabajo."""
         return {"titulo": titulo, "secciones": self.sec, "variables": self.espacio.variables()}
 
 
@@ -585,8 +596,14 @@ def mt_importar(c, ruta, nombre):
     """Lee el archivo, reconoce alias de columnas (potencia, tensiones, corrientes, temperaturas, irradiancia, alarmas) y revisa la calidad."""
     d, q = mt.importar_scada(ruta)
     c.ns[nombre] = d
-    c.kv("Calidad de los datos", [("Filas", q["filas"]), ("Inversores", q["inversores"]), ("Desde", q["desde"]), ("Hasta", q["hasta"]), ("Paso", q["paso_min"], "min")])
+    c.kv("Calidad de los datos", [("Filas", q["filas"]), ("Inversores", q["inversores"]), ("Desde", q["desde"]), ("Hasta", q["hasta"]), ("Paso", q["paso_min"], "min"),
+                                  ("Cobertura temporal", _pct(q["cobertura"])), ("Filas repetidas eliminadas", q["duplicados"])])
     c.texto("Columnas: " + ", ".join(q["columnas"]))
+    for a in q["avisos"]:
+        c.aviso("alerta", a)
+    if q["huecos_total"]:
+        c.aviso("alerta", f"Hay {q['huecos_total']} huecos en la serie temporal ({q['filas']} lecturas de {q['esperadas']} esperadas).")
+        c.tabla("Huecos en los datos", ["Inversor", "Desde", "Hasta", "Lecturas perdidas"], [[h["inversor"], h["desde"], h["hasta"], h["perdidas"]] for h in q["huecos"]])
     if q["faltantes"]:
         c.tabla("Valores faltantes", ["Columna", "Faltantes"], [[a, b] for a, b in q["faltantes"].items()])
     return c.informe("Importación SCADA")
@@ -600,6 +617,7 @@ def _p_inv(d, p_nom):
 def mt_kpi(c, tabla, p_nom, gamma):
     """Performance Ratio, disponibilidad, energía perdida y rendimiento del inversor."""
     d = c.df(tabla)
+    mt.requerir_scada(d)
     tot, t = mt.kpis(d, p_nom, gamma)
     c.kv("Planta", [("Performance Ratio", _pct(tot["PR"])), ("Disponibilidad", _pct(tot["disponibilidad"])), ("Energía producida", tot["energia_kwh"] / 1000, "MWh"),
                    ("Energía perdida", tot["energia_perdida_kwh"] / 1000, "MWh"), ("Rendimiento del inversor", _pct(tot["eta_inversor"]))])
@@ -629,6 +647,7 @@ def mt_kpi(c, tabla, p_nom, gamma):
 def mt_fallas(c, tabla, p_nom, gamma, t_lim):
     """Busca degradación de módulos, suciedad, strings caídos, sobretemperatura de IGBT y desviación del modelo físico."""
     d = c.df(tabla)
+    mt.requerir_scada(d, aislamiento=True)
     filas = []
     ser_env = []
     for nombre, g in d.groupby("inversor"):
@@ -671,6 +690,7 @@ def mt_fallas(c, tabla, p_nom, gamma, t_lim):
 def mt_fiabilidad(c, tabla, t_actual, umbral, p_nom):
     """MTBF, MTTR, disponibilidad intrínseca, Weibull de los tiempos entre fallos y vida remanente."""
     d = c.df(tabla)
+    mt.requerir_scada(d)
     tbf, ttr, ev = mt.tiempos_de_eventos(d)
     f = mt.fiabilidad(tbf, ttr)
     c.kv("Mantenibilidad", [("MTBF", f["mtbf_h"], "h"), ("MTTR", f["mttr_h"], "h"), ("Disponibilidad intrínseca", _pct(f["disponibilidad"])), ("Fallos", f["fallos"])])
@@ -686,10 +706,15 @@ def mt_fiabilidad(c, tabla, t_actual, umbral, p_nom):
         c.grafica(figura("Tiempos entre fallos", "Horas", "Frecuencia", [serie(0.5 * (e[:-1] + e[1:]), h, "n", "barras")]))
     filas = []
     for nombre, g in d.groupby("inversor"):
-        dg = mt.estimar_degradacion(g, p_nom)
+        try:
+            dg = mt.estimar_degradacion(g, p_nom)
+        except ValueError as e:
+            c.aviso("alerta", f"Degradación de {nombre}: {e}")
+            continue
         anos = np.log(umbral) / np.log(1 - max(dg["tasa_anual"], 1e-6))
         filas.append([nombre, f"{100 * dg['tasa_anual']:.2f} %/año", f"{anos:.1f} años"])
-    c.tabla(f"Vida de los módulos hasta {umbral:.0%} de su potencia", ["Inversor", "Degradación", "Vida estimada"], filas)
+    if filas:
+        c.tabla(f"Vida de los módulos hasta {umbral:.0%} de su potencia", ["Inversor", "Degradación", "Vida estimada"], filas)
     return c.informe("Fiabilidad")
 
 
