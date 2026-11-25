@@ -29,12 +29,17 @@ jobs:
       - name: Validación por fases
         working-directory: engine
         run: ../$PY -W ignore validar_todo.py
+      # La ventana se distribuye para Windows y macOS; en Linux solo se valida el motor
       - uses: dtolnay/rust-toolchain@stable
+        if: matrix.os != 'ubuntu-latest'
         with:
           components: clippy
       - name: Compilar sin avisos
+        if: matrix.os != 'ubuntu-latest'
         run: RUSTFLAGS="-D warnings" cargo build
       - name: Clippy sin avisos
+        if: matrix.os != 'ubuntu-latest'
         run: cargo clippy -- -D warnings
       - name: Pruebas de la ventana y del puente con el motor
+        if: matrix.os != 'ubuntu-latest'
         run: cargo test
