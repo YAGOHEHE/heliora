@@ -28,7 +28,7 @@ pub const CAPACIDAD_ENVIO: usize = 256;
 /// Peticiones que se pueden repetir sin efectos: no dependen de variables de la consola.
 const REPETIBLES: &[&str] = &[
     "catalogo", "herramientas", "ejemplos", "ejemplo", "puertos", "variables", "leer_archivo", "pruebas", "simular", "validar",
-    "plan_inicial", "plan_generar", "plan_tablero", "plan_cerrar", "plan_cargar", "amef_rpn",
+    "plan_inicial", "plan_generar", "plan_tablero", "plan_cerrar", "plan_cargar", "plan_vacio", "plan_operar", "amef_rpn",
 ];
 /// Peticiones que el motor contesta aunque esté ocupado: no cuentan para cancelar.
 const SOLO_LECTURA: &[&str] = &["variables", "ver_variable"];

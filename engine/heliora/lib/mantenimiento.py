@@ -1373,7 +1373,8 @@ def _op_plan_crear(estado, hoy=None, **a):
 
 def _op_plan_editar(estado, hoy=None, ident="", **campos):
     _, regenerar = editar_plan(estado, ident, **campos)
-    return f"Plan {ident} actualizado." + (" Sus órdenes pendientes siguen con las fechas anteriores: puedes regenerarlas." if regenerar else "")
+    msg = f"Plan {ident} actualizado." + (" Sus órdenes pendientes siguen con las fechas anteriores: puedes regenerarlas." if regenerar else "")
+    return {"mensaje": msg, "regenerar": ident if regenerar else None}
 
 
 def _op_plan_borrar(estado, hoy=None, ident="", borrar_pendientes=False):
@@ -1445,7 +1446,8 @@ def aplicar(estado, operacion, args=None, hoy=None):
         hoy: fecha de referencia AAAA-MM-DD para los valores por defecto.
 
     Returns:
-        Mensaje para mostrar a la persona.
+        Diccionario con `mensaje` para la persona y, si la operación lo indica, `regenerar` con el
+        plan cuyas órdenes pendientes conviene rehacer.
 
     Raises:
         ValueError: si la operación no existe o sus datos no son válidos; el estado no se modifica en ese caso.
@@ -1454,9 +1456,10 @@ def aplicar(estado, operacion, args=None, hoy=None):
     if f is None:
         raise ValueError(f"Operación desconocida: {operacion}")
     try:
-        return f(estado, hoy=hoy, **(args or {}))
+        r = f(estado, hoy=hoy, **(args or {}))
     except TypeError as e:
         raise ValueError(f"Parámetros no válidos para «{operacion}»: {e}") from None
+    return r if isinstance(r, dict) else {"mensaje": r}
 
 
 def guardar_estado(estado, ruta):

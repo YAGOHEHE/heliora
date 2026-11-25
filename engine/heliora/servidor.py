@@ -512,8 +512,8 @@ class Motor:
     def plan_operar(self, estado, operacion, args=None, hoy=None):
         """Atiende la orden `plan_operar`: aplica una operación de edición (órdenes, planes, equipos, AMEF, exportación) y devuelve el estado, el mensaje y el tablero."""
         from .lib import mantenimiento as mt
-        msg = mt.aplicar(estado, operacion, args, hoy)
-        return {"estado": estado, "mensaje": msg, "tablero": mt.tablero(estado, hoy)}
+        r = mt.aplicar(estado, operacion, args, hoy)
+        return {"estado": estado, "mensaje": r["mensaje"], "regenerar": r.get("regenerar"), "tablero": mt.tablero(estado, hoy)}
 
     def plan_tablero(self, estado, hoy=None):
         """Atiende la orden `plan_tablero`: devuelve el tablero del estado de mantenimiento."""
@@ -523,8 +523,8 @@ class Motor:
     def plan_cerrar(self, estado, ident, fecha=None, notas="", hoy=None):
         """Atiende la orden `plan_cerrar`: cierra la orden `ident` y devuelve el estado y el tablero."""
         from .lib import mantenimiento as mt
-        msg = mt.aplicar(estado, "orden_cerrar", {"ident": ident, "fecha": fecha, "notas": notas}, hoy)
-        return {"estado": estado, "mensaje": msg, "tablero": mt.tablero(estado, hoy)}
+        r = mt.aplicar(estado, "orden_cerrar", {"ident": ident, "fecha": fecha, "notas": notas}, hoy)
+        return {"estado": estado, "mensaje": r["mensaje"], "tablero": mt.tablero(estado, hoy)}
 
     def plan_correctivas(self, estado, hoy=None):
         """Crea órdenes correctivas a partir de la tabla de hallazgos."""

@@ -488,18 +488,27 @@ def operaciones(m):
     """`aplicar` ejecuta cada operación y devuelve un mensaje; ante un error el estado queda intacto."""
     e = mt.estado_inicial("2026-01-01")
     mt.generar_ordenes(e, "2026-03-01")
-    msg = mt.aplicar(e, "orden_crear", {"equipo": "INV-1", "trabajo": "Revisar ventilador", "fecha": "2026-02-02", "tipo": "inspección"}, "2026-01-15")
+    msg = _msg(e, "orden_crear", {"equipo": "INV-1", "trabajo": "Revisar ventilador", "fecha": "2026-02-02", "tipo": "inspección"}, "2026-01-15")
     m.verdad("Crear una orden por nombre", "creada" in msg and any(o["nombre"] == "Revisar ventilador" for o in e["ordenes"]))
     ident = next(o["id"] for o in e["ordenes"] if o["nombre"] == "Revisar ventilador")
-    m.verdad("Cerrar sin fecha usa hoy", "cerrada" in mt.aplicar(e, "orden_cerrar", {"ident": ident}, "2026-01-15") and _orden_por_id(e, ident)["cerrada"] == "2026-01-15")
-    m.verdad("Reabrir", "reabierta" in mt.aplicar(e, "orden_reabrir", {"ident": ident}))
+    m.verdad("Cerrar sin fecha usa hoy", "cerrada" in _msg(e, "orden_cerrar", {"ident": ident}, "2026-01-15") and _orden_por_id(e, ident)["cerrada"] == "2026-01-15")
+    m.verdad("Reabrir", "reabierta" in _msg(e, "orden_reabrir", {"ident": ident}))
     foto = json.dumps(e, sort_keys=True)
     m.verdad("Error: operación desconocida", "desconocida" in (_error(mt.aplicar, e, "volar", {}) or ""))
     m.verdad("Error: parámetros que sobran", "no válidos" in (_error(mt.aplicar, e, "orden_borrar", {"ident": ident, "otro": 1}) or ""))
     m.verdad("Error: fecha inválida, sin cambios", _error(mt.aplicar, e, "orden_editar", {"ident": ident, "fecha": "ayer", "trabajo": "X"}) is not None and json.dumps(e, sort_keys=True) == foto)
-    m.verdad("Plan nuevo con inicio por defecto en hoy", "creado" in mt.aplicar(e, "plan_crear", {"nombre": "Nuevo", "tipo_equipo": "Módulos", "frecuencia_dias": 10}, "2026-01-15") and e["planes"][-1]["inicio"] == "2026-01-15")
-    m.verdad("Borrar equipo inexistente es un aviso, no un error", "ya no existe" in mt.aplicar(e, "equipo_borrar", {"codigo": "NADA"}))
+    m.verdad("Plan nuevo con inicio por defecto en hoy", "creado" in _msg(e, "plan_crear", {"nombre": "Nuevo", "tipo_equipo": "Módulos", "frecuencia_dias": 10}, "2026-01-15") and e["planes"][-1]["inicio"] == "2026-01-15")
+    m.verdad("Borrar equipo inexistente es un aviso, no un error", "ya no existe" in _msg(e, "equipo_borrar", {"codigo": "NADA"}))
+    plan = next(p for p in e["planes"] if any(o["plan"] == p["id"] and o["estado"] != "cerrada" for o in e["ordenes"]))
+    r = mt.aplicar(e, "plan_editar", {"ident": plan["id"], "frecuencia_dias": plan["frecuencia_dias"] + 1})
+    m.verdad("Editar la frecuencia indica qué plan regenerar", r["regenerar"] == plan["id"])
+    m.verdad("Renombrar no indica regenerar", mt.aplicar(e, "plan_editar", {"ident": plan["id"], "nombre": "Otro nombre"})["regenerar"] is None)
     m.verdad("tipo_de infiere correctiva/preventiva en órdenes antiguas", mt.tipo_de({"plan": "CORR"}) == "correctiva" and mt.tipo_de({"plan": "P001"}) == "preventiva")
+
+
+def _msg(e, operacion, args=None, hoy=None):
+    """Mensaje que devuelve una operación del planificador."""
+    return mt.aplicar(e, operacion, args, hoy)["mensaje"]
 
 
 def _orden_por_id(e, ident):
