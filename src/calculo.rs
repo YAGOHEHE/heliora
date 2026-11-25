@@ -232,6 +232,7 @@ impl Calculo {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 interfaz::pagina(ui, |ui| {
                     interfaz::fila(ui, &[8, 4], alturas[0], |i, ui| {
+                        ui.scope_builder(egui::UiBuilder::new().id_salt(("calculo_fila_1", i)), |ui| {
                         ui.spacing_mut().item_spacing.y = 4.0;
                         if i == 0 {
                             let acciones = |ui: &mut egui::Ui| {
@@ -247,8 +248,10 @@ impl Calculo {
                             interfaz::tarjeta_con_titulo(ui, "Espacio de trabajo", acciones, |ui| self.variables(ui, motor, c));
                             self.atender_acciones_variables(motor, c, borrar, importar);
                         }
+                        });
                     });
                     interfaz::fila(ui, &[8, 4], alturas[1], |i, ui| {
+                        ui.scope_builder(egui::UiBuilder::new().id_salt(("calculo_fila_2", i)), |ui| {
                         ui.spacing_mut().item_spacing.y = 4.0;
                         if i == 0 {
                             let ejecutando = self.id_eval.is_some();
@@ -270,6 +273,7 @@ impl Calculo {
                         } else {
                             interfaz::tarjeta_plena(ui, |ui| self.panel_figuras(ui, c));
                         }
+                        });
                     });
                 });
             });
