@@ -340,6 +340,12 @@ impl Mantenimiento {
         }
     }
 
+    /// Abre la pestaña Órdenes con el filtro de pendientes (el de las próximas órdenes de Inicio).
+    pub fn ver_ordenes_pendientes(&mut self) {
+        self.pestana = Pestana::Ordenes;
+        self.f_estado = "pendiente".into();
+    }
+
     pub fn fijar_pestana(&mut self, p: &str) {
         self.pestana = match p {
             "tablero" => Pestana::Tablero,
@@ -547,7 +553,7 @@ impl Mantenimiento {
             let nombres: Vec<&str> = PESTANAS.iter().map(|(_, n)| *n).collect();
             ui::barra_pestanas(ui, &nombres, &mut activa, |ui| self.acciones_plan(ui, motor));
             self.pestana = PESTANAS[activa].0;
-            if !self.mensaje.is_empty() && self.pestana != Pestana::Analisis {
+            if !self.mensaje.is_empty() {
                 let color = if self.mensaje_error { pal.falla } else { pal.texto_2 };
                 ui.label(egui::RichText::new(&self.mensaje).size(12.0).color(color));
                 ui.add_space(4.0);
@@ -581,7 +587,7 @@ impl Mantenimiento {
             }
             let disponible = (alto - 2.0 * ui::MARGEN - 1.0).max(0.0);
             ui.add_enabled_ui(!ocupado, |ui| {
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                egui::ScrollArea::vertical().id_salt("plan_desplazable_1").auto_shrink([false, false]).show(ui, |ui| {
                     ui::pagina(ui, |ui| match self.pestana {
                         Pestana::Tablero => self.p_tablero(ui, disponible, &mut acciones),
                         Pestana::Ordenes => self.p_ordenes(ui, disponible, &mut acciones),
@@ -1039,7 +1045,7 @@ impl Mantenimiento {
             ui.label(egui::RichText::new("Sin órdenes pendientes desde esta fecha.").size(12.5).color(pal.texto_2));
             return;
         }
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("plan_desplazable_2").auto_shrink([false, false]).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             let mut dia_actual = "";
             for o in lista {
@@ -1174,7 +1180,7 @@ impl Mantenimiento {
                 ui.painter().text(Pos2::new(cab.left() + x.0, cab.center().y), egui::Align2::LEFT_CENTER, ui::mayusculas(t), tema::fuente_semi(10.5), pal.texto_2);
             }
             let alto_cuerpo = (ui.available_height() - ALTO_PIE).max(40.0);
-            egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(alto_cuerpo).show(ui, |ui| {
+            egui::ScrollArea::vertical().id_salt("plan_desplazable_3").auto_shrink([false, false]).max_height(alto_cuerpo).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 if pagina.is_empty() {
                     ui.add_space(24.0);
@@ -1231,7 +1237,7 @@ impl Mantenimiento {
             let r_cuerpo = Rect::from_min_max(r.min, Pos2::new(r.right(), r_pie.top()));
             let mut edicion: Option<Accion> = None;
             let mut cuerpo = ui.new_child(egui::UiBuilder::new().max_rect(r_cuerpo));
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(&mut cuerpo, |ui| {
+            egui::ScrollArea::vertical().id_salt("plan_desplazable_4").auto_shrink([false, false]).show(&mut cuerpo, |ui| {
                 egui::Frame::new().inner_margin(egui::Margin::same(16)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.spacing_mut().item_spacing.y = 6.0;
@@ -1376,7 +1382,7 @@ impl Mantenimiento {
             }
         });
         let pendientes: Vec<usize> = self.estado["equipos"].as_array().map(|a| a.iter().map(|e| self.pendientes_de("equipo", texto(e, "codigo"))).collect()).unwrap_or_default();
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("plan_desplazable_5").auto_shrink([false, false]).show(ui, |ui| {
             let Some(eq) = self.estado["equipos"].as_array_mut() else { return };
             egui::Grid::new("g_eq").striped(true).num_columns(6).spacing([10.0, 5.0]).show(ui, |ui| {
                 for t in ["Código", "Tipo", "Descripción", "Ubicación", "Instalado", ""] {
@@ -1437,7 +1443,7 @@ impl Mantenimiento {
             ui.add_space(4.0);
         }
         let pendientes: Vec<usize> = self.estado["planes"].as_array().map(|a| a.iter().map(|p| self.pendientes_de("plan", texto(p, "id"))).collect()).unwrap_or_default();
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("plan_desplazable_6").auto_shrink([false, false]).show(ui, |ui| {
             let Some(planes) = self.estado["planes"].as_array_mut() else { return };
             for (i, p) in planes.iter_mut().enumerate() {
                 let id = texto(p, "id").to_string();
@@ -1515,7 +1521,7 @@ impl Mantenimiento {
         });
         ui.label(egui::RichText::new("RPN = S·O·D, con severidad, ocurrencia y detección de 1 a 10. Más alto significa actuar antes.").small().color(tema::p().texto_2));
         let filtro = self.filtro_amef.clone();
-        egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+        egui::ScrollArea::both().id_salt("plan_desplazable_7").auto_shrink([false, false]).show(ui, |ui| {
             let Some(am) = self.estado["amef"].as_array_mut() else { return };
             let rpn = |a: &Value| a["S"].as_i64().unwrap_or(1) * a["O"].as_i64().unwrap_or(1) * a["D"].as_i64().unwrap_or(1);
             egui::Grid::new("g_amef").striped(true).num_columns(11).spacing([8.0, 5.0]).show(ui, |ui| {
@@ -1577,7 +1583,7 @@ impl Mantenimiento {
             ui.label(egui::RichText::new("Aún no hay trabajos cerrados. Se registran al cerrar una orden.").color(tema::p().texto_2));
             return;
         }
-        egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+        egui::ScrollArea::both().id_salt("plan_desplazable_8").auto_shrink([false, false]).show(ui, |ui| {
             egui::Grid::new("g_hist").striped(true).num_columns(6).spacing([14.0, 4.0]).show(ui, |ui| {
                 for t in ["Fecha", "Orden", "Equipo", "Trabajo", "Lista completa", "Notas"] {
                     ui.label(egui::RichText::new(t).strong().color(tema::p().texto));
@@ -1720,7 +1726,7 @@ fn cuadricula_semanal(ui: &mut egui::Ui, equipos: &[Value], ordenes: &[Value], l
     let disponible = ui.available_height().max(60.0);
     let filas = equipos.len() as f32;
     let alto_fila = (disponible / filas).clamp(36.0, 90.0);
-    egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(disponible).show(ui, |ui| {
+    egui::ScrollArea::vertical().id_salt("plan_desplazable_9").auto_shrink([false, false]).max_height(disponible).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         let (cuerpo, _) = ui.allocate_exact_size(Vec2::new(ancho, alto_fila * filas), Sense::hover());
         let p = ui.painter();

@@ -68,9 +68,20 @@ pub fn fila(ui: &mut Ui, spans: &[usize], alto: f32, mut contenido: impl FnMut(u
 
 /// Alto de las filas que llenan la pantalla: reparte `disponible` (menos huecos y filas fijas) según `pesos`.
 pub fn altos(disponible: f32, fijos: f32, pesos: &[f32]) -> Vec<f32> {
+    const MINIMO: f32 = 120.0;
     let libres = (disponible - fijos - HUECO * pesos.len() as f32).max(0.0);
     let total: f32 = pesos.iter().sum::<f32>().max(f32::EPSILON);
-    pesos.iter().map(|p| (libres * p / total).max(120.0)).collect()
+    let mut a: Vec<f32> = pesos.iter().map(|p| libres * p / total).collect();
+    // Las filas que no llegan al mínimo lo reciben a costa de las demás, para no pasarse del alto disponible
+    let faltan: f32 = a.iter().map(|x| (MINIMO - x).max(0.0)).sum();
+    let sobrante: f32 = a.iter().map(|x| (x - MINIMO).max(0.0)).sum();
+    if faltan > 0.0 && sobrante > 0.0 {
+        let k = (1.0 - faltan / sobrante).max(0.0);
+        a = a.into_iter().map(|x| if x < MINIMO { MINIMO } else { MINIMO + (x - MINIMO) * k }).collect();
+    } else if faltan > 0.0 {
+        a = a.into_iter().map(|x| x.max(MINIMO)).collect();
+    }
+    a
 }
 
 /// Página con el margen de 20 px y el fondo de la ventana.
@@ -138,7 +149,7 @@ pub fn tarjeta_plena<R>(ui: &mut Ui, contenido: impl FnOnce(&mut Ui) -> R) -> R 
 pub fn ficha_kpi(ui: &mut Ui, etiqueta: &str, valor: &str, unidad: &str, nota: &str, activa: Option<bool>) -> egui::Response {
     let pal = tema::p();
     let r = ui.max_rect();
-    let resp = ui.interact(r, ui.id().with(("ficha", etiqueta)), if activa.is_some() { Sense::click() } else { Sense::hover() });
+    let resp = ui.interact(r, ui.id().with(("ficha", etiqueta, r.min.x as i32, r.min.y as i32)), if activa.is_some() { Sense::click() } else { Sense::hover() });
     let marcada = activa == Some(true);
     let fondo = if marcada {
         pal.acento_fondo
@@ -312,6 +323,13 @@ mod pruebas {
         assert!(apilar(1000.0, &[8, 4]));
         assert!(!apilar(1300.0, &[8, 4]));
         assert!(!apilar(1000.0, &[2; 6]));
+    }
+
+    #[test]
+    fn el_minimo_por_fila_no_desborda_el_alto_disponible() {
+        let a = altos(500.0, 0.0, &[3.0, 1.0, 1.0]);
+        assert!(a.iter().all(|x| *x >= 120.0 - 1e-3));
+        assert!((a.iter().sum::<f32>() + 3.0 * HUECO - 500.0).abs() < 1e-2);
     }
 
     #[test]

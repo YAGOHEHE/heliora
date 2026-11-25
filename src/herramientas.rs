@@ -500,7 +500,7 @@ impl Pagina {
             let r_pie = Rect::from_min_max(Pos2::new(r.left(), r.bottom() - alto_pie), r.max);
             ui.painter().line_segment([r_pie.left_top(), r_pie.right_top()], Stroke::new(1.0_f32, pal.linea));
             let mut cuerpo = ui.new_child(UiBuilder::new().max_rect(r_cuerpo));
-            cuerpo.set_clip_rect(r_cuerpo);
+            cuerpo.set_clip_rect(r_cuerpo.intersect(ui.clip_rect()));
             egui::ScrollArea::vertical().id_salt(("parametros", &h.id)).auto_shrink([false, false]).show(&mut cuerpo, |ui| {
                 egui::Frame::new().inner_margin(egui::Margin { left: 16, right: 16, top: 12, bottom: 10 }).show(ui, |ui| {
                     ui.set_width(ui.available_width());
@@ -704,6 +704,12 @@ impl Pagina {
         self.valores.entry(id.to_string()).or_default().insert(param.to_string(), valor.to_string());
     }
 
+    /// Olvida los informes y errores calculados: pertenecían al proyecto anterior.
+    pub fn limpiar_informes(&mut self) {
+        self.informes.clear();
+        self.errores.clear();
+    }
+
     /// Título de la herramienta abierta, para la ruta de la cabecera.
     pub fn titulo_seleccion(&self, todas: &[Herramienta]) -> Option<String> {
         let id = self.seleccion.as_deref()?;
@@ -893,7 +899,8 @@ impl Vista {
                 MarcaV { x: fr, etiqueta: "f res".into(), color: Some(pal.acento) },
                 MarcaV { x: fsw, etiqueta: "f sw".into(), color: Some(pal.senal) },
             ],
-            franjas: vec![Franja { x0: 10.0 * f0, x1: fsw / 2.0 }],
+            // Sin franja cuando no existe zona recomendada (10·f_red ≥ f_sw/2): sombrearla invertida engañaría
+            franjas: if 10.0 * f0 < fsw / 2.0 { vec![Franja { x0: 10.0 * f0, x1: fsw / 2.0 }] } else { vec![] },
         };
         self.nota = "franja: zona recomendada para f_res".into();
         self.principal = Principal::Figuras(vec![fig]);
@@ -927,7 +934,8 @@ impl Vista {
             let pos = |c: &str| col.iter().position(|x| x.starts_with(c));
             if let (Some(g), Some(t), Some(p), 9) = (pos("G"), pos("T"), pos("P_mp"), fil.len()) {
                 // Las cinco primeras filas varían G a T fija; las cuatro últimas, T a G fija
-                let ficha = |f: &Vec<String>| Ficha::nueva(&format!("Pmp · {} W/m², {} °C", f[g], f[t]), &f[p], "W", "");
+                let celda = |f: &Vec<String>, i: usize| f.get(i).cloned().unwrap_or_default();
+                let ficha = |f: &Vec<String>| Ficha::nueva(&format!("Pmp · {} W/m², {} °C", celda(f, g), celda(f, t)), &celda(f, p), "W", "");
                 let mut fichas = vec![];
                 if let Some(m) = valores.get("modelo") {
                     let (nombre, nota) = m.split_once(" (").map_or((m.as_str(), ""), |(a, b)| (a, b.trim_end_matches(')')));
@@ -994,7 +1002,7 @@ fn mapa_confusion(col: &[String], fil: &[Vec<String>]) -> Option<MapaCalor> {
     if z.is_empty() || z.iter().any(|f| f.len() != col.len().saturating_sub(1)) {
         return None;
     }
-    Some(MapaCalor { filas: fil.iter().map(|f| f.first().cloned().unwrap_or_default()).collect(), columnas: col[1..].to_vec(), titulo_filas: String::new(), titulo_columnas: String::new(), z, estilo: EstiloMapa::Confusion })
+    Some(MapaCalor { filas: fil.iter().map(|f| f.first().cloned().unwrap_or_default()).collect(), columnas: col.get(1..).map(<[String]>::to_vec).unwrap_or_default(), titulo_filas: String::new(), titulo_columnas: String::new(), z, estilo: EstiloMapa::Confusion })
 }
 
 /// Pide el archivo y guarda el informe en HTML.

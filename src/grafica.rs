@@ -1028,7 +1028,7 @@ impl MapaCalor {
                 let (color, texto) = if conf {
                     let t = (v / max_abs).clamp(0.0, 1.0) as f32;
                     if i == j {
-                        (pal.senal.gamma_multiply(0.30 + 0.70 * t), if t > 0.55 { Color32::WHITE } else { pal.texto })
+                        (pal.senal.gamma_multiply(0.30 + 0.70 * t), if t > 0.55 { if tema::modo() == tema::Modo::Oscuro { pal.sobre_acento } else { Color32::WHITE } } else { pal.texto })
                     } else {
                         (pal.acento.gamma_multiply(0.18 + 0.50 * t), pal.texto)
                     }

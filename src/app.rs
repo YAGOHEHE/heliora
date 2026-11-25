@@ -193,6 +193,8 @@ pub struct App {
     /// Objetos de Python (`.pkl`) de un proyecto abierto que esperan confirmación: carpeta y nombres
     pkl_pendientes: Option<(PathBuf, Vec<String>)>,
     id_pkl: Option<u64>,
+    /// Diálogo de confirmación de «Nuevo proyecto» abierto
+    confirmar_nuevo: bool,
     pidiendo_columnas: HashMap<u64, String>,
     aviso: String,
     instalando: Option<Receiver<String>>,
@@ -258,6 +260,7 @@ impl App {
             abriendo: None,
             pkl_pendientes: None,
             id_pkl: None,
+            confirmar_nuevo: false,
             pidiendo_columnas: HashMap::new(),
             aviso: String::new(),
             instalando: None,
@@ -722,6 +725,7 @@ impl App {
         self.mantenimiento.tablero = Value::Null;
         self.mantenimiento.ruta = None;
         self.pkl_pendientes = None;
+        self.limpiar_informes();
         // La carga del plan es asíncrona: el plan de ejemplo solo se pide si el proyecto no trae uno,
         // porque su respuesta llegaría después y sustituiría al plan del proyecto
         let cargando_plan = m.exists()
@@ -883,7 +887,7 @@ impl App {
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("Nuevo proyecto").clicked() {
-                    self.nuevo_proyecto();
+                    self.confirmar_nuevo = true;
                 }
                 if ui.button("Abrir proyecto").clicked() {
                     self.abrir_proyecto();
@@ -892,13 +896,60 @@ impl App {
         });
     }
 
-    /// Estado limpio sin carpeta: diagrama vacío (recuperable con Ctrl Z) y espacio de trabajo vacío.
+    /// Proyecto vacío sin carpeta: diagrama, espacio de trabajo, scripts, plan de mantenimiento e
+    /// informes nuevos, para que un guardado posterior no lleve nada del proyecto anterior.
     fn nuevo_proyecto(&mut self) {
         self.motor.llamar("limpiar_espacio", json!({}));
         self.compartido.variables.clear();
         self.editor.nuevo_diagrama();
+        self.calculo.fijar_guiones(vec![]);
+        self.mantenimiento.estado = Value::Null;
+        self.mantenimiento.tablero = Value::Null;
+        self.mantenimiento.ruta = None;
+        self.mantenimiento.iniciar(&mut self.motor);
+        self.limpiar_informes();
+        self.pkl_pendientes = None;
         self.carpeta = None;
         self.aviso = "Proyecto nuevo sin guardar".into();
+    }
+
+    /// Olvida los informes de todas las páginas de análisis.
+    fn limpiar_informes(&mut self) {
+        for p in [&mut self.potencia, &mut self.fotovoltaica, &mut self.estadistica, &mut self.aprendizaje, &mut self.mantenimiento.analisis] {
+            p.limpiar_informes();
+        }
+    }
+
+    /// Pide confirmación antes de descartar el proyecto abierto.
+    fn dialogo_nuevo_proyecto(&mut self, ctx: &egui::Context) {
+        if !self.confirmar_nuevo {
+            return;
+        }
+        let mut decision = None;
+        let r = egui::Modal::new(egui::Id::new("nuevo_proyecto")).show(ctx, |ui| {
+            ui.set_width(420.0);
+            ui.label(egui::RichText::new("¿Empezar un proyecto nuevo?").size(16.0).family(tema::semi()));
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Se vacían el diagrama, las variables, los scripts y el plan de mantenimiento. Lo que no hayas guardado se pierde.").color(tema::p().texto_2));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if tema::boton_principal(ui, "Empezar uno nuevo").clicked() {
+                    decision = Some(true);
+                }
+                if ui.button("Cancelar").clicked() {
+                    decision = Some(false);
+                }
+            });
+        });
+        if r.should_close() {
+            decision.get_or_insert(false);
+        }
+        if let Some(si) = decision {
+            self.confirmar_nuevo = false;
+            if si {
+                self.nuevo_proyecto();
+            }
+        }
     }
 
     fn tarjeta_continuar(&mut self, ui: &mut egui::Ui) {
@@ -927,7 +978,13 @@ impl App {
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
-                    let (color, texto) = if self.editor.avisos.is_empty() { (pal.ok, "Sin avisos".to_string()) } else { (pal.alerta, format!("{} avisos", self.editor.avisos.len())) };
+                    let (color, texto) = if self.editor.ultima.is_none() {
+                        (pal.texto_3, "Sin simular".to_string())
+                    } else if self.editor.avisos.is_empty() && self.editor.error.is_none() {
+                        (pal.ok, "Sin avisos".to_string())
+                    } else {
+                        (pal.alerta, format!("{} avisos", self.editor.avisos.len() + usize::from(self.editor.error.is_some())))
+                    };
                     ui::chip(ui, &texto, Some(color));
                     ui::chip(ui, &format!("{} bloques", self.editor.diagrama.sistema.bloques.len()), None);
                     ui::chip(ui, &self.editor.resumen_solver().split(" · ").next().unwrap_or("").to_lowercase(), None);
@@ -973,8 +1030,14 @@ impl App {
             },
             |ui| {
                 if kpis.is_empty() {
-                    if ui::estado_vacio(ui, "Aún no hay KPIs de planta. Se calculan con una tabla SCADA.", "Generar datos de muestra y calcular KPIs") {
-                        self.mantenimiento.analisis.seleccionar("mt_muestra");
+                    let hay_scada = self.compartido.variables.iter().any(|v| v.nombre == "scada" && !v.columnas.is_empty());
+                    let (texto, accion, herramienta) = if hay_scada {
+                        ("Aún no hay KPIs de planta para la tabla «scada».", "Calcular KPIs", "mt_kpi")
+                    } else {
+                        ("Aún no hay KPIs de planta. Se calculan con una tabla SCADA.", "Importar o generar datos SCADA", "mt_importar")
+                    };
+                    if ui::estado_vacio(ui, texto, accion) {
+                        self.mantenimiento.analisis.seleccionar(herramienta);
                         ir_analisis.set(true);
                     }
                     return;
@@ -1071,6 +1134,7 @@ impl App {
         let mut proximas: Vec<&Value> = self.mantenimiento.estado["ordenes"].as_array().map(|a| a.iter().filter(|o| o["estado"].as_str() != Some("cerrada")).collect()).unwrap_or_default();
         proximas.sort_by(|a, b| a["fecha"].as_str().cmp(&b["fecha"].as_str()).then(a["id"].as_str().cmp(&b["id"].as_str())));
         let ir_plan = std::cell::Cell::new(false);
+        let ir_tablero = std::cell::Cell::new(false);
         ui::tarjeta_con_titulo(
             ui,
             "Próximas órdenes",
@@ -1090,7 +1154,7 @@ impl App {
                         ui.add_space(30.0);
                         ui.label(egui::RichText::new("No hay órdenes pendientes. Genera el plan de ejemplo o abre un plan en Mantenimiento.").color(pal.texto_2));
                         if ui.button("Abrir Mantenimiento · Tablero").clicked() {
-                            ir_plan.set(true);
+                            ir_tablero.set(true);
                         }
                     });
                     return;
@@ -1123,7 +1187,11 @@ impl App {
             },
         );
         if ir_plan.get() {
-            self.mantenimiento.fijar_pestana("ordenes");
+            self.mantenimiento.ver_ordenes_pendientes();
+            self.modulo = Modulo::Mantenimiento;
+        }
+        if ir_tablero.get() {
+            self.mantenimiento.fijar_pestana("tablero");
             self.modulo = Modulo::Mantenimiento;
         }
     }
@@ -1394,6 +1462,7 @@ impl eframe::App for App {
         self.pie(ctx);
         self.panel_sin_motor(ctx);
         self.panel_pkl(ctx);
+        self.dialogo_nuevo_proyecto(ctx);
         self.barra_modulos(ctx);
         egui::CentralPanel::default().frame(egui::Frame::new().fill(tema::p().fondo)).show(ctx, |ui| {
             let herr = self.herramientas.clone();

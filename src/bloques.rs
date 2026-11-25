@@ -952,10 +952,13 @@ impl Editor {
             "bdf" => "BDF",
             _ => "Dormand-Prince",
         };
-        let t0 = valor_txt(d.get("t_ini"));
-        let t0 = if t0.is_empty() { "0".to_string() } else { t0 };
-        let fin = if matches!(metodo, "euler" | "rk4") { format!("h {}", valor_txt(d.get("paso"))) } else { format!("rtol {}", valor_txt(d.get("rtol"))) };
-        format!("{nombre} · {t0} → {} s · {fin}", valor_txt(d.get("t_fin")))
+        // Un campo ausente muestra el mismo valor por defecto que el panel del solver
+        let o = |k: &str, def: &str| {
+            let t = valor_txt(d.get(k));
+            if t.is_empty() { def.to_string() } else { t }
+        };
+        let fin = if matches!(metodo, "euler" | "rk4") { format!("h {}", o("paso", "1e-3")) } else { format!("rtol {}", o("rtol", "1e-3")) };
+        format!("{nombre} · {} → {} s · {fin}", o("t_ini", "0"), o("t_fin", "10"))
     }
 
     /// Ajustes del solver en el desplegable de la barra superior.
@@ -1152,12 +1155,12 @@ impl Editor {
             let r = ui.max_rect();
             let r_lib = Rect::from_min_max(r.min, Pos2::new(r.left() + 200.0, r.bottom()));
             let mut lib = ui.new_child(egui::UiBuilder::new().id_salt("libreria").max_rect(r_lib.shrink2(Vec2::new(8.0, 12.0))));
-            lib.set_clip_rect(r_lib);
+            lib.set_clip_rect(r_lib.intersect(ui.clip_rect()));
             self.paleta(&mut lib);
             ui.painter().line_segment([r_lib.right_top(), r_lib.right_bottom()], Stroke::new(1.0_f32, pal.linea));
             let r_lienzo = Rect::from_min_max(Pos2::new(r_lib.right() + 1.0, r.top()), r.max);
             let mut zona = ui.new_child(egui::UiBuilder::new().id_salt("zona_lienzo").max_rect(r_lienzo));
-            zona.set_clip_rect(r_lienzo);
+            zona.set_clip_rect(r_lienzo.intersect(ui.clip_rect()));
             self.lienzo(&mut zona);
         });
     }
