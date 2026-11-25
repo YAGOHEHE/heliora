@@ -60,8 +60,8 @@ class ModuloFV:
         return self.Vmp * self.Imp
 
 
+def extraer_parametros(m: ModuloFV):
     """Extrae (a, I_L, I_0, R_s, R_sh) resolviendo cinco condiciones a STC (ver la lista).
-
 
     1. Cortocircuito:   I(0) = I_sc
     2. Circuito abierto: I(V_oc) = 0
