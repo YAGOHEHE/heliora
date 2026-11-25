@@ -17,11 +17,31 @@ elemento puede usar el nodo -1 sin casos especiales.
 """
 from __future__ import annotations
 
+from typing_extensions import override
 import numpy as np
 
 from .nucleo import Bloque
 
 GMIN = 1e-12  # conductancia mínima de cada nodo a tierra (evita nodos flotantes)
+
+# Iteración de los elementos no lineales: converge cuando el cambio entre iterados baja de
+# TOL_NO_LINEAL. Si se agotan las iteraciones, el último iterado solo se acepta si su residuo
+# escalado (|M(z)·z - b(z)| frente a la magnitud de los términos de cada ecuación) es menor que
+# TOL_RESIDUO; si no, la evaluación falla con un error.
+MAX_ITER_NO_LINEAL = 30
+TOL_NO_LINEAL = 1e-8
+TOL_RESIDUO = 1e-9
+# Intentos de encontrar un estado coherente de los interruptores en un mismo instante
+MAX_ITER_CONMUTADORES = 12
+
+# Al reducir la red a dx/dt = f(t, x), cada condensador, inercia o capacidad térmica es una fuente de
+# tensión: si dos quedan en paralelo (directamente o por un transformador o engranaje ideal) su estado
+# está duplicado y la matriz es singular.
+MENSAJE_SINGULAR = (
+    "La red no tiene solución única: hay fuentes de tensión, condensadores, inercias, capacidades térmicas o "
+    "fuentes de velocidad en paralelo, directamente o a través de un transformador o un engranaje ideal. "
+    "Deja solo una (suma las inercias, refiriéndolas con n² si hay engranaje) o separa las dos con una "
+    "resistencia, una fricción o un resorte.")
 
 
 class Estampa:
@@ -59,26 +79,82 @@ class Elemento(Bloque):
     con_estado_discreto = False # sus interruptores cambian la matriz
     entradas_compuerta = ()     # entradas que solo se leen al final de cada paso
     entradas_vector = {}        # entradas con tres componentes
+    # Dominio físico de cada puerto que no sea eléctrico ("termico", "mecanico"). La misma MNA
+    # resuelve todos los dominios por analogía, pero un nodo no puede mezclar dos de ellos.
+    dominio_puertos = {}
+    # Puertos que pueden quedar sin conectar: entonces no crean nodo y `self.conectados[q]` es False
+    puertos_opcionales = ()
 
     def estampar_fijo(self, S):
-        pass
+        """Escribe en la matriz M las estampas que no cambian durante la simulación.
+
+        Args:
+            S: `Estampa` sobre M; los nodos del elemento están en `self.n`.
+        """
 
     def estampar_estado(self, S):
-        pass
+        """Escribe en la matriz M las estampas que dependen del estado discreto (interruptores).
+
+        Args:
+            S: `Estampa` sobre M; se llama solo si `con_estado_discreto` es True.
+        """
 
     def clave(self):
+        """Devuelve el valor hashable que identifica el estado discreto actual de la matriz M.
+
+        La red guarda una factorización por cada combinación de claves de sus elementos con
+        `con_estado_discreto`.
+        """
         return 0
 
     def estampar_din(self, M, b, z, t, x, u):
-        pass
+        """Añade a M y b las estampas que dependen de la solución z (elementos no lineales o dinámicos).
+
+        Args:
+            M: matriz de la red, copia sobre la que se escribe.
+            b: término independiente, copia sobre la que se escribe.
+            z: solución vigente, con tensiones de nodo y corrientes de rama.
+            t: tiempo de simulación, en s.
+            x: estados del elemento.
+            u: entradas del elemento.
+        """
 
     def rhs(self, b, t, x, u):
-        pass
+        """Acumula en el término independiente b la contribución del elemento.
+
+        Args:
+            b: término independiente de la red, indexado como z.
+            t: tiempo de simulación, en s.
+            x: estados del elemento.
+            u: entradas del elemento.
+        """
 
     def derivada_e(self, z, t, x, u):
+        """Calcula la derivada temporal de los estados del elemento.
+
+        Args:
+            z: solución de la red, con tensiones de nodo y corrientes de rama.
+            t: tiempo de simulación, en s.
+            x: estados del elemento.
+            u: entradas del elemento.
+
+        Returns:
+            Lista de dx/dt, de longitud `n_estados()`.
+        """
         return []
 
     def salida_e(self, z, t, x, u):
+        """Calcula las salidas del elemento a partir de la solución de la red.
+
+        Args:
+            z: solución de la red, con tensiones de nodo y corrientes de rama.
+            t: tiempo de simulación, en s.
+            x: estados del elemento.
+            u: entradas del elemento.
+
+        Returns:
+            Lista con un valor por salida, en el orden de `salidas`.
+        """
         return []
 
     def actualizar(self, z, t, x, u):
@@ -88,10 +164,15 @@ class Elemento(Bloque):
     cruce_e = None   # señales de cruce por cero del elemento: cruce_e(z, t, x, u) -> lista
 
     def tras_paso(self, z, t, x, u):
-        """Al terminar un paso aceptado (pérdidas, muestreo)."""
+        """Al terminar un paso aceptado (pérdidas, muestreo).
+
+        Devuelve True si el elemento cambió algún valor de `estampar_estado` (por ejemplo, una
+        resistencia que depende de la temperatura): la red vuelve entonces a factorizar sus matrices.
+        Los valores de `estampar_fijo` no pueden cambiar durante la simulación.
+        """
 
     def reiniciar_e(self):
-        pass
+        """Restablece el estado del elemento ligado a la red; la red lo llama tras `reiniciar`."""
 
 
 class Red(Bloque):
@@ -141,6 +222,22 @@ class Red(Bloque):
         def raiz_de(bid, puerto):
             return raiz(llaves(bid, puerto)[0])
 
+        # Cuántos puertos de elementos llegan a cada nodo, y de qué dominio son
+        cuenta, dominio = {}, {}
+        for e in self.elementos:
+            pu = e.puertos(e.crudos)
+            for q in pu["e"] + pu["e3"]:
+                d = e.dominio_puertos.get(q, "eléctrico")
+                for k in llaves(e.id, q):
+                    r = raiz(k)
+                    cuenta[r] = cuenta.get(r, 0) + 1
+                    previo = dominio.setdefault(r, (d, e.etiqueta))
+                    if previo[0] != d:
+                        raise ValueError(f"No se puede unir un puerto {previo[0]} ({previo[1]}) con uno {d} ({e.etiqueta})")
+        for e in self.elementos:
+            pu = e.puertos(e.crudos)
+            e.conectados = {q: cuenta.get(raiz(llaves(e.id, q)[0]), 0) > 1 for q in pu["e"] + pu["e3"]}
+
         for e in self.elementos:
             e.red = self
             if hasattr(e, "antes_de_numerar"):
@@ -166,7 +263,8 @@ class Red(Bloque):
             pu = e.puertos(e.crudos)
             e.n = {}
             for q in pu["e"]:
-                e.n[q] = nodo((e.id, q, None))
+                # Un puerto opcional suelto no crea nodo: la red queda igual que sin ese puerto
+                e.n[q] = -1 if (q in e.puertos_opcionales and not e.conectados[q]) else nodo((e.id, q, None))
             for q in pu["e3"]:
                 e.n[q] = tuple(nodo((e.id, q, f)) for f in range(3))
         nn = len(numeros)
@@ -201,6 +299,7 @@ class Red(Bloque):
         self.nx = xpos
 
     def indice_salida(self, bid, puerto):
+        """Devuelve el índice de la salida `puerto` del elemento `bid` en `salidas_lista`."""
         i = self._salida_idx.get((bid, puerto))
         if i is None:
             raise ValueError(f"El elemento {bid} no tiene la salida «{puerto}»")
@@ -229,8 +328,10 @@ class Red(Bloque):
         self._usar_clave()
 
     def _revisar_nodos(self, M):
-        """Un nodo al que solo llegan corrientes impuestas (bobinas en serie) no tiene tensión
-        definida. Se le añade una resistencia a tierra alta y se avisa."""
+        """Añade 10 Ω a tierra y un aviso en los nodos sin tensión definida.
+
+        Un nodo al que solo llegan corrientes impuestas (bobinas en serie) no tiene tensión definida.
+        """
         prueba = M.copy()
         S = Estampa(prueba)
         for e in self.elementos:
@@ -261,7 +362,10 @@ class Red(Bloque):
             S = Estampa(M)
             for e in self.conmutados:
                 e.estampar_estado(S)
-            inv = None if self.din else np.linalg.inv(M[:-1, :-1])
+            try:
+                inv = None if self.din else np.linalg.inv(M[:-1, :-1])
+            except np.linalg.LinAlgError:
+                raise ValueError(MENSAJE_SINGULAR) from None
             d = (M, inv)
             self._cache[clave] = d
         self.M, self.Minv = d
@@ -285,31 +389,67 @@ class Red(Bloque):
         z = self.z
         if not self.din:
             z[:-1] = self.Minv.dot(b[:-1])
+            self._comprobar_finita(z, t)
             self._clave_resolver = clave
             return z
-        for _ in range(30 if self.hay_no_lineal else 1):
-            M = self.M.copy()
-            bb = b.copy()
-            for e in self.din:
-                e.estampar_din(M, bb, z, t, x[e.xa:e.xb], u[e.ua:e.ub])
-            nuevo = np.linalg.solve(M[:-1, :-1], bb[:-1])
+        for _ in range(MAX_ITER_NO_LINEAL if self.hay_no_lineal else 1):
+            M, bb = self._estampar_din(z, b, t, x, u)
+            try:
+                nuevo = np.linalg.solve(M[:-1, :-1], bb[:-1])
+            except np.linalg.LinAlgError:
+                raise ValueError(MENSAJE_SINGULAR) from None
             error = np.max(np.abs(nuevo - z[:-1])) if self.hay_no_lineal else 0.0
             z[:-1] = nuevo
-            if error < 1e-8:
+            self._comprobar_finita(z, t)
+            if error < TOL_NO_LINEAL:
                 break
+        else:
+            # Se agotaron las iteraciones: el último iterado solo vale si cumple las ecuaciones
+            residuo = self._residuo_escalado(z, b, t, x, u)
+            if residuo > TOL_RESIDUO:
+                raise ValueError(
+                    f"La red no lineal no convergió en t = {t:.6g} s: tras {MAX_ITER_NO_LINEAL} iteraciones el último "
+                    f"cambio es {error:.3g} y el residuo escalado de sus ecuaciones {residuo:.3g} "
+                    f"(tolerancia {TOL_RESIDUO:g}). Elementos no lineales: "
+                    + ", ".join(e.etiqueta for e in self.din if e.no_lineal)[:300])
         self._clave_resolver = clave
         return z
 
+    def _estampar_din(self, z, b, t, x, u):
+        """Matriz y término independiente con las estampas que dependen de la solución z."""
+        M = self.M.copy()
+        bb = b.copy()
+        for e in self.din:
+            e.estampar_din(M, bb, z, t, x[e.xa:e.xb], u[e.ua:e.ub])
+        return M, bb
+
+    def _residuo_escalado(self, z, b, t, x, u):
+        """Máximo de |M(z)·z - b(z)| relativo a la magnitud de los términos de cada ecuación."""
+        M, bb = self._estampar_din(z, b, t, x, u)
+        A, zz, c = M[:-1, :-1], z[:-1], bb[:-1]
+        r = np.abs(A @ zz - c)
+        escala = np.abs(A) @ np.abs(zz) + np.abs(c)
+        return float(np.max(r / np.maximum(escala, 1e-300))) if r.size else 0.0
+
+    @staticmethod
+    def _comprobar_finita(z, t):
+        if not np.all(np.isfinite(z)):
+            raise ValueError(f"La solución de la red dejó de ser finita en t = {t:.6g} s "
+                             "(una entrada o un parámetro no finito, o una red mal condicionada).")
+
     # ---------------------------------------------------------------- interfaz de bloque
+    @override
     def n_estados(self):
         return self.nx
 
+    @override
     def x0(self):
         v = []
         for e in self.elementos:
             v.extend(e.x0())
         return v
 
+    @override
     def reiniciar(self):
         for e in self.elementos:
             e.reiniciar()
@@ -318,11 +458,13 @@ class Red(Bloque):
         self._usar_clave()
 
     def calcular_salidas(self, t, x, u, Y):
+        """Resuelve la red y escribe en Y[e.ya:e.yb] las salidas de cada elemento."""
         self.x_actual = x
         z = self._resolver(t, x, u)
         for e in self.con_salida:
             Y[e.ya:e.yb] = e.salida_e(z, t, x[e.xa:e.xb], u[e.ua:e.ub])
 
+    @override
     def derivada(self, t, x, u):
         z = self._resolver(t, x, u)
         dx = np.empty(self.nx)
@@ -335,21 +477,32 @@ class Red(Bloque):
         """Lee las compuertas y busca el estado coherente de los interruptores."""
         cambio = False
         if self.conmutados:
-            for _ in range(12):
+            for _ in range(MAX_ITER_CONMUTADORES):
                 z = self._resolver(t, x, u)
-                hubo = False
-                for e in self.conmutados:
-                    if e.actualizar(z, t, x[e.xa:e.xb], u[e.ua:e.ub]):
-                        hubo = True
-                if not hubo:
+                cambiados = [e for e in self.conmutados if e.actualizar(z, t, x[e.xa:e.xb], u[e.ua:e.ub])]
+                if not cambiados:
                     break
                 cambio = True
                 self._usar_clave()
+            else:
+                raise ValueError(
+                    f"Los interruptores no encuentran un estado coherente en t = {t:.6g} s: tras "
+                    f"{MAX_ITER_CONMUTADORES} intentos siguen cambiando "
+                    + ", ".join(e.etiqueta for e in cambiados)[:300]
+                    + ". Revisa si dos interruptores se contradicen (por ejemplo, un diodo en antiparalelo con una fuente).")
         z = self._resolver(t, x, u)
+        estampa = False
         for e in self.elementos:
-            e.tras_paso(z, t, x[e.xa:e.xb], u[e.ua:e.ub])
+            if e.tras_paso(z, t, x[e.xa:e.xb], u[e.ua:e.ub]):
+                estampa = True
+        if estampa:
+            # Cambió algún valor de `estampar_estado`: las factorizaciones guardadas ya no valen
+            self._cache = {}
+            self._usar_clave()
+            cambio = True
         return cambio
 
+    @override
     def proximo_evento(self, t):
         m = np.inf
         for e in self.elementos:
@@ -397,11 +550,14 @@ class Red(Bloque):
         self.hay_directas = bool(self.salidas_directas)
 
     def entradas_directas(self):
+        """Devuelve los índices de las entradas que afectan a alguna salida en el mismo instante."""
         return self._entradas_directas
 
+    @override
     def tiene_cruce(self):
         return any(e.cruce_e is not None for e in self.elementos)
 
+    @override
     def cruce(self, t, x, u):
         z = self._resolver(t, x, u)
         g = []

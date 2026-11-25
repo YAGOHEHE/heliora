@@ -118,7 +118,7 @@ pub fn dibujar_informe(ui: &mut egui::Ui, inf: &mut Informe, c: &mut Compartido,
             Seccion::Aviso(n, t) => {
                 // Estado con forma y texto: cuadrado de 7 px y la frase, sobre la superficie PANEL
                 let nivel = tema::Nivel::desde(n.as_str());
-                egui::Frame::new().fill(if nivel == tema::Nivel::Falla { tema::p().falla_fondo } else { tema::p().panel }).stroke(egui::Stroke::new(1.0, tema::p().linea)).corner_radius(tema::radio_ventana()).inner_margin(8).show(ui, |ui| {
+                egui::Frame::new().fill(if nivel == tema::Nivel::Falla { tema::p().falla_fondo } else { tema::p().panel }).stroke(egui::Stroke::new(1.0_f32, tema::p().linea)).corner_radius(tema::radio_ventana()).inner_margin(8).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     tema::estado(ui, nivel, t.as_str());
                 });
@@ -417,7 +417,7 @@ pub fn tabla(ui: &mut egui::Ui, col: &[String], fil: &[Vec<String>]) {
     }
     for (i, f) in fil.iter().enumerate() {
         let y = r.top() + alto_fila * (i + 1) as f32;
-        pt.line_segment([egui::Pos2::new(r.left(), y), egui::Pos2::new(r.left() + total, y)], egui::Stroke::new(1.0, pal.linea));
+        pt.line_segment([egui::Pos2::new(r.left(), y), egui::Pos2::new(r.left() + total, y)], egui::Stroke::new(1.0_f32, pal.linea));
         let mut x = r.left();
         for (j, v) in f.iter().enumerate() {
             let w = anchos.get(j).copied().unwrap_or(80.0);

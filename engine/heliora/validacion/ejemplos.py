@@ -9,6 +9,7 @@ from .pruebas_fase2 import ordenar_planta, planta_promediada
 
 
 def rc_serie():
+    """Devuelve el diagrama del circuito RC serie con escalón de tensión."""
     return diagrama("Circuito RC: respuesta al escalón", [
         bloque("v", "fuente_dc", 80, 80, "Fuente 10 V", V=10.0),
         bloque("r", "resistor", 280, 60, "R 1 kΩ", R=1000.0),
@@ -104,20 +105,107 @@ def sombreado():
         metodo="rk4", t_fin=0.6, paso=2e-5)
 
 
+def pid_discreto():
+    """PID discreto a 10 kHz con medida ruidosa muestreada y consigna con limitador de tasa."""
+    return diagrama("Control PID discreto a 10 kHz", [
+        bloque("r", "escalon", 40, 80, "Consigna", t0=0.02, y0=0.0, y1=1.0),
+        bloque("lim", "limitador_tasa_discreto", 200, 80, "Limitador de tasa", Ts=1e-4, R_alta=50.0, R_baja=-50.0),
+        bloque("pid", "pid_discreto", 380, 90, "PID discreto", Ts=1e-4, Kp=2.0, Ki=40.0, Kd=0.02, N=500.0, c=0.0,
+               u_min=-5.0, u_max=5.0),
+        bloque("g", "funcion_transferencia", 560, 90, "Planta 1/(0.05 s + 1)", num="[1]", den="[0.05, 1]"),
+        bloque("n", "ruido", 560, 220, "Ruido de medida", Ts=1e-4, PSD=1e-8, semilla=1),
+        bloque("s", "suma", 720, 200, "Medida", signos="++"),
+        bloque("mu", "muestreo", 880, 200, "Muestreo 10 kHz", Ts=1e-4),
+        bloque("o", "osciloscopio", 880, 60, "Consigna, salida y mando", n=3, cada=10),
+    ], [hilo("r.y", "lim.u"), hilo("lim.y", "pid.r"), hilo("mu.y", "pid.y"), hilo("pid.u", "g.u"),
+        hilo("g.y", "s.u1"), hilo("n.y", "s.u2"), hilo("s.y", "mu.u"),
+        hilo("lim.y", "o.u1"), hilo("g.y", "o.u2"), hilo("pid.u", "o.u3")], metodo="dopri", t_fin=0.3, rtol=1e-4, atol=1e-6)
+
+
+def troceador_termico():
+    """Troceador reductor con IGBT y diodo acoplados a un disipador: pérdidas → Tj → V_ce0, R_on."""
+    return diagrama("Troceador con modelo electro-térmico", [
+        bloque("v", "fuente_dc", 40, 80, "Bus de 300 V", V=300.0),
+        bloque("q", "igbt", 220, 60, "IGBT"),
+        bloque("dl", "diodo", 380, 200, "Diodo libre", Ron=2e-3, Vf=0.9),
+        bloque("L", "inductor", 420, 60, "L 2 mH", L=2e-3, i0=150.0),
+        bloque("R", "resistor", 600, 60, "Carga 1 Ω", R=1.0),
+        bloque("g", "tierra", 380, 320, "Tierra"),
+        bloque("d", "constante", 40, 220, "Ciclo de trabajo", c=0.5),
+        bloque("pwm", "pwm", 200, 220, "PWM 5 kHz", fc=5000.0, modo="bajada"),
+        bloque("rcq", "resistencia_termica", 220, 420, "R_th cápsula-disipador IGBT", R=0.02),
+        bloque("rcd", "resistencia_termica", 380, 420, "R_th cápsula-disipador diodo", R=0.02),
+        bloque("dis", "capacidad_termica", 560, 420, "Disipador", C=50.0, T0=40.0),
+        bloque("rha", "resistencia_termica", 720, 420, "R_th disipador-ambiente", R=0.3),
+        bloque("amb", "ambiente", 880, 420, "Ambiente 40 °C", T_amb=40.0),
+        bloque("o", "osciloscopio", 880, 200, "Temperaturas de unión y disipador", n=3, cada=20),
+    ], [hilo("v.p", "q.c"), hilo("q.e", "L.p"), hilo("L.n", "R.p"), hilo("R.n", "g.t"), hilo("v.n", "g.t"),
+        hilo("dl.p", "g.t"), hilo("dl.n", "q.e"), hilo("d.y", "pwm.d"), hilo("pwm.g", "q.g"),
+        hilo("q.th", "rcq.p"), hilo("dl.th", "rcd.p"), hilo("rcq.n", "dis.p"), hilo("rcd.n", "dis.p"),
+        hilo("dis.p", "rha.p"), hilo("rha.n", "amb.p"),
+        hilo("q.Tj", "o.u1"), hilo("dl.Tj", "o.u2"), hilo("dis.T", "o.u3")], metodo="rk4", t_fin=0.05, paso=2e-6)
+
+
+def planta_con_bateria():
+    """La planta FV promediada con una batería de 360 V / 50 Ah cargada desde el bus DC a 20 A."""
+    d = planta_promediada()
+    d["nombre"] = "Planta FV con batería en el bus DC"
+    d["sistema"]["bloques"] += [
+        bloque("carg", "cargador_dcdc", 640, 560, "Cargador bidireccional", modo="corriente", L=2e-3, R_L=0.02,
+               eta=0.97, f_sw=20000.0, i_max=60.0, i_min=-60.0),
+        bloque("iref", "constante", 480, 640, "Corriente de carga", c=20.0),
+        bloque("bat", "bateria", 820, 600, "Batería 100s10p", Q=5.0, Ns=100, Np=10, SoC0=0.5),
+        bloque("osc4", "osciloscopio", 1320, 480, "Batería: corriente, SoC y potencia", n=3),
+    ]
+    d["sistema"]["conexiones"] += [
+        hilo("cdc.p", "carg.alto"), hilo("carg.com", "tierra.t"), hilo("carg.bajo", "bat.p"), hilo("bat.n", "tierra.t"),
+        hilo("iref.y", "carg.ref"), hilo("carg.i_L", "osc4.u1"), hilo("bat.SoC", "osc4.u2"), hilo("carg.P_bajo", "osc4.u3"),
+    ]
+    return d
+
+
+def arranque_induccion():
+    """Arranque directo de un motor de inducción que mueve un ventilador a través de un reductor.
+
+    Un engranaje ideal une rígidamente los dos ejes: solo puede haber una inercia. La del rotor
+    (0.02 kg·m²) va referida al eje lento, J = 0.3 + n²·0.02 = 0.38 kg·m², y el motor lleva J = 0.
+    """
+    return diagrama("Arranque de un motor de inducción con ventilador", [
+        bloque("red", "fuente_ac3", 40, 80, "Red 400 V, 50 Hz", VLL=400.0, f=50.0),
+        bloque("med", "medidor3", 220, 80, "Medidor"),
+        bloque("mq", "maquina_induccion", 400, 80, "Motor de inducción 4 polos", J=0.0),
+        bloque("red_eng", "engranaje", 580, 80, "Reductor 2:1", n=2.0),
+        bloque("jv", "inercia", 760, 60, "Inercia del ventilador y del rotor referida", J=0.38),
+        bloque("ven", "par_carga", 760, 200, "Ventilador T = k·ω²", T0=0.5, k=0.006),
+        bloque("sv", "sensor_velocidad", 760, 320, "Velocidad del ventilador"),
+        bloque("o", "osciloscopio", 960, 80, "Velocidades y par", n=3),
+        bloque("oi", "osciloscopio", 960, 260, "Corriente de línea", n=1, cada=2),
+    ], [hilo("red.a", "med.a"), hilo("med.b", "mq.abc"), hilo("mq.eje", "red_eng.p1"), hilo("red_eng.p2", "jv.p"),
+        hilo("jv.p", "ven.p"), hilo("jv.p", "sv.p"),
+        hilo("mq.w", "o.u1"), hilo("sv.w", "o.u2"), hilo("mq.Te", "o.u3"), hilo("med.i_abc", "oi.u1")],
+        metodo="dopri", t_fin=2.0, rtol=1e-5, atol=1e-7)
+
+
 CATALOGO_EJEMPLOS = {
     "planta_promediada": ("Planta FV completa (promediada)", planta_promediada),
     "planta_conmutada": ("Planta FV completa (conmutada)", planta_conmutada),
     "sombreado": ("Sombreado parcial con MPPT", sombreado),
     "rc": ("Circuito RC: respuesta al escalón", rc_serie),
     "lazo": ("Lazo de control con subsistema", lazo_control),
+    "pid_discreto": ("Control PID discreto a 10 kHz", pid_discreto),
+    "troceador_termico": ("Troceador con modelo electro-térmico", troceador_termico),
+    "planta_con_bateria": ("Planta FV con batería en el bus DC", planta_con_bateria),
+    "arranque_induccion": ("Arranque de un motor de inducción con ventilador", arranque_induccion),
 }
 
 
 def obtener(clave):
+    """Devuelve el diagrama del ejemplo `clave` del catálogo."""
     return CATALOGO_EJEMPLOS[clave][1]()
 
 
 def listar():
+    """Devuelve la lista de ejemplos del catálogo como dicts con `clave` y `nombre`."""
     return [{"clave": k, "nombre": v[0]} for k, v in CATALOGO_EJEMPLOS.items()]
 
 
@@ -142,6 +230,7 @@ def json_canonico(diagrama):
 
 
 def escribir(carpeta):
+    """Escribe cada ejemplo del catálogo como `<clave>.json` canónico en `carpeta`, que crea si no existe."""
     os.makedirs(carpeta, exist_ok=True)
     for k in CATALOGO_EJEMPLOS:
         with open(os.path.join(carpeta, k + ".json"), "w", encoding="utf8", newline="\n") as f:

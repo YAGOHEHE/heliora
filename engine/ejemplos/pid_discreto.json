@@ -1,0 +1,211 @@
+{
+  "formato": "heliora-diagrama/1",
+  "nombre": "Control PID discreto a 10 kHz",
+  "sistema": {
+    "bloques": [
+      {
+        "id": "g",
+        "nombre": "Planta 1/(0.05 s + 1)",
+        "params": {
+          "den": "[0.05, 1]",
+          "num": "[1]"
+        },
+        "tipo": "funcion_transferencia",
+        "x": 560,
+        "y": 90
+      },
+      {
+        "id": "lim",
+        "nombre": "Limitador de tasa",
+        "params": {
+          "R_alta": 50.0,
+          "R_baja": -50.0,
+          "Ts": 0.0001
+        },
+        "tipo": "limitador_tasa_discreto",
+        "x": 200,
+        "y": 80
+      },
+      {
+        "id": "mu",
+        "nombre": "Muestreo 10 kHz",
+        "params": {
+          "Ts": 0.0001
+        },
+        "tipo": "muestreo",
+        "x": 880,
+        "y": 200
+      },
+      {
+        "id": "n",
+        "nombre": "Ruido de medida",
+        "params": {
+          "PSD": 1e-08,
+          "Ts": 0.0001,
+          "semilla": 1
+        },
+        "tipo": "ruido",
+        "x": 560,
+        "y": 220
+      },
+      {
+        "id": "o",
+        "nombre": "Consigna, salida y mando",
+        "params": {
+          "cada": 10,
+          "n": 3
+        },
+        "tipo": "osciloscopio",
+        "x": 880,
+        "y": 60
+      },
+      {
+        "id": "pid",
+        "nombre": "PID discreto",
+        "params": {
+          "Kd": 0.02,
+          "Ki": 40.0,
+          "Kp": 2.0,
+          "N": 500.0,
+          "Ts": 0.0001,
+          "c": 0.0,
+          "u_max": 5.0,
+          "u_min": -5.0
+        },
+        "tipo": "pid_discreto",
+        "x": 380,
+        "y": 90
+      },
+      {
+        "id": "r",
+        "nombre": "Consigna",
+        "params": {
+          "t0": 0.02,
+          "y0": 0.0,
+          "y1": 1.0
+        },
+        "tipo": "escalon",
+        "x": 40,
+        "y": 80
+      },
+      {
+        "id": "s",
+        "nombre": "Medida",
+        "params": {
+          "signos": "++"
+        },
+        "tipo": "suma",
+        "x": 720,
+        "y": 200
+      }
+    ],
+    "conexiones": [
+      {
+        "a": [
+          "o",
+          "u2"
+        ],
+        "de": [
+          "g",
+          "y"
+        ]
+      },
+      {
+        "a": [
+          "s",
+          "u1"
+        ],
+        "de": [
+          "g",
+          "y"
+        ]
+      },
+      {
+        "a": [
+          "o",
+          "u1"
+        ],
+        "de": [
+          "lim",
+          "y"
+        ]
+      },
+      {
+        "a": [
+          "pid",
+          "r"
+        ],
+        "de": [
+          "lim",
+          "y"
+        ]
+      },
+      {
+        "a": [
+          "pid",
+          "y"
+        ],
+        "de": [
+          "mu",
+          "y"
+        ]
+      },
+      {
+        "a": [
+          "s",
+          "u2"
+        ],
+        "de": [
+          "n",
+          "y"
+        ]
+      },
+      {
+        "a": [
+          "g",
+          "u"
+        ],
+        "de": [
+          "pid",
+          "u"
+        ]
+      },
+      {
+        "a": [
+          "o",
+          "u3"
+        ],
+        "de": [
+          "pid",
+          "u"
+        ]
+      },
+      {
+        "a": [
+          "lim",
+          "u"
+        ],
+        "de": [
+          "r",
+          "y"
+        ]
+      },
+      {
+        "a": [
+          "mu",
+          "u"
+        ],
+        "de": [
+          "s",
+          "y"
+        ]
+      }
+    ]
+  },
+  "solver": {
+    "atol": 1e-06,
+    "metodo": "dopri",
+    "rtol": 0.0001,
+    "t_fin": 0.3
+  }
+}

@@ -170,7 +170,7 @@ impl Mantenimiento {
 
     pub fn guardar_en(&self, ruta: &std::path::Path) -> Result<(), String> {
         let t = serde_json::to_string_pretty(&self.estado).map_err(|e| e.to_string())?;
-        std::fs::write(ruta, t).map_err(|e| e.to_string())
+        crate::app::escribir_atomico(ruta, t.as_bytes())
     }
 
     pub fn cargar_de(&mut self, ruta: &std::path::Path, motor: &mut Motor) -> Result<(), String> {
@@ -339,9 +339,9 @@ impl Mantenimiento {
             let r = Rect::from_min_size(Pos2::new(rect.left() + cx * celda.x, rect.top() + 22.0 + cy * celda.y), celda).shrink(2.0);
             let f = fecha(self.anio, self.mes, dia);
             let elegido = self.dia_sel.as_deref() == Some(&f);
-            p.rect(r, tema::radio() as f32, if elegido { tema::p().realce } else { tema::p().campo }, egui::Stroke::new(1.0, tema::p().linea), egui::StrokeKind::Inside);
+            p.rect(r, tema::radio() as f32, if elegido { tema::p().realce } else { tema::p().campo }, egui::Stroke::new(1.0_f32, tema::p().linea), egui::StrokeKind::Inside);
             if f == hoy {
-                p.rect_stroke(r, tema::radio() as f32, egui::Stroke::new(1.5, tema::p().acento), egui::StrokeKind::Middle);
+                p.rect_stroke(r, tema::radio() as f32, egui::Stroke::new(1.5_f32, tema::p().acento), egui::StrokeKind::Middle);
             }
             p.text(r.left_top() + Vec2::new(6.0, 4.0), egui::Align2::LEFT_TOP, dia.to_string(), egui::FontId::proportional(12.0), tema::p().texto);
             let del: Vec<&Value> = ordenes.iter().filter(|o| o["fecha"].as_str() == Some(&f)).collect();
@@ -654,7 +654,7 @@ fn campo(ui: &mut egui::Ui, v: &mut Value, k: &str, ancho: f32) {
 
 fn cifra(ui: &mut egui::Ui, t: &str, v: &str, estado: Option<tema::Nivel>) {
     let pal = tema::p();
-    egui::Frame::new().fill(pal.panel).stroke(egui::Stroke::new(1.0, pal.linea)).corner_radius(tema::radio_ventana()).inner_margin(egui::Margin::symmetric(14, 8)).show(ui, |ui| {
+    egui::Frame::new().fill(pal.panel).stroke(egui::Stroke::new(1.0_f32, pal.linea)).corner_radius(tema::radio_ventana()).inner_margin(egui::Margin::symmetric(14, 8)).show(ui, |ui| {
         ui.vertical(|ui| {
             ui.label(egui::RichText::new(v).size(22.0).family(egui::FontFamily::Name("dato".into())).color(pal.texto));
             match estado {
@@ -677,7 +677,7 @@ fn abrir_con_el_sistema(ruta: &str) {
     #[cfg(target_os = "macos")]
     let r = std::process::Command::new("open").arg(ruta).spawn();
     #[cfg(target_os = "windows")]
-    let r = std::process::Command::new("cmd").args(["/C", "start", "", ruta]).spawn();
+    let r = crate::motor::orden("cmd").args(["/C", "start", "", ruta]).spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
     let r = std::process::Command::new("xdg-open").arg(ruta).spawn();
     let _ = r;

@@ -67,6 +67,7 @@ def importar_scada(ruta):
 
 
 def resumen_calidad(d):
+    """Resume filas, inversores, rango de fechas, paso de muestreo, faltantes y columnas del conjunto."""
     paso = d.groupby("inversor")["fecha"].diff().median()
     faltan = {c: int(d[c].isna().sum()) for c in d.columns if d[c].isna().any()}
     return {"filas": int(len(d)), "inversores": int(d["inversor"].nunique()), "desde": str(d["fecha"].min()),
@@ -277,9 +278,9 @@ def detectar_string_caido(d, g_min=300.0, umbral=0.5):
 
 
 def detectar_sobretemperatura(d, limite=85.0, exceso=12.0):
-    """Sobretemperatura de IGBT, por límite absoluto y frente a un modelo térmico:
+    """Sobretemperatura de IGBT, por límite absoluto y frente a un modelo térmico.
 
-    T_esp = T_amb + c0 + c1·P_ac  (ajuste robusto). Exceso diario: mediana(T - T_esp).
+    Modelo: T_esp = T_amb + c0 + c1·P_ac  (ajuste robusto). Exceso diario: mediana(T - T_esp).
     """
     if "temp_igbt_c" not in d:
         return {"eventos": [], "modelo": None}
@@ -475,6 +476,7 @@ def rpn(fila):
 
 
 def amef_por_equipo(estado, tipo=None):
+    """Devuelve los modos de fallo del AMEF con su RPN, filtrados por tipo de equipo y ordenados de mayor a menor RPN."""
     filas = [dict(f, RPN=rpn(f)) for f in estado["amef"] if tipo in (None, "", f["tipo_equipo"])]
     return sorted(filas, key=lambda f: -f["RPN"])
 
@@ -554,16 +556,20 @@ def ordenes_de_alarmas(estado, eventos, hoy=None):
 
 
 def guardar_estado(estado, ruta):
+    """Guarda el estado en JSON de forma atómica, mediante un archivo temporal."""
     tmp = str(ruta) + ".tmp"
-    with open(tmp, "w", encoding="utf8") as f:
+    # Fin de línea LF en todos los sistemas: el archivo se versiona con Git
+    with open(tmp, "w", encoding="utf8", newline="\n") as f:
         json.dump(estado, f, ensure_ascii=False, indent=1)
     os.replace(tmp, ruta)
 
 
 def cargar_estado(ruta):
+    """Carga el estado desde un archivo JSON."""
     with open(ruta, encoding="utf8") as f:
         return json.load(f)
 
 
 def copiar(estado):
+    """Devuelve una copia profunda del estado."""
     return copy.deepcopy(estado)

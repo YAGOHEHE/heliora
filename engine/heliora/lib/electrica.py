@@ -5,12 +5,14 @@ Tensión: v = v_p - v_n. Todos los valores son reales instantáneos.
 """
 from __future__ import annotations
 
+from typing_extensions import override
 import math
 
 import numpy as np
 
 from ..sim.circuito import Elemento
 from ..sim.nucleo import P, registrar
+from .termica import UnionesTermicas, parametros_union
 
 # ---------------------------------------------------------------- referencia
 
@@ -28,18 +30,19 @@ class Tierra(Elemento):
 
 @registrar
 class Resistor(Elemento):
-    """Resistencia.   v = R·i"""
+    """Resistencia.   v = R·i."""
     tipo = "resistor"; nombre = "Resistencia R"; categoria = "Eléctrica · Pasivos"
     parametros = [P("R", "Resistencia", 10.0, "Ω")]
     puertos_e = ["p", "n"]
 
+    @override
     def estampar_fijo(self, S):
         S.g(self.n["p"], self.n["n"], 1.0 / float(self.p["R"]))
 
 
 @registrar
 class Inductor(Elemento):
-    """Inductancia.   L·di/dt = v_p - v_n,   i(0) = i0
+    """Inductancia.   L·di/dt = v_p - v_n,   i(0) = i0.
 
     Es una fuente de corriente de valor igual a su estado.
     """
@@ -47,24 +50,28 @@ class Inductor(Elemento):
     parametros = [P("L", "Inductancia", 1e-3, "H"), P("i0", "Corriente inicial", 0.0, "A")]
     puertos_e = ["p", "n"]
 
+    @override
     def n_estados(self):
         return 1
 
+    @override
     def x0(self):
         return [float(self.p["i0"])]
 
+    @override
     def rhs(self, b, t, x, u):
         i = x[0]
         b[self.n["p"]] -= i
         b[self.n["n"]] += i
 
+    @override
     def derivada_e(self, z, t, x, u):
         return [(z[self.n["p"]] - z[self.n["n"]]) / float(self.p["L"])]
 
 
 @registrar
 class Capacitor(Elemento):
-    """Capacidad.   C·dv/dt = i,   v(0) = v0
+    """Capacidad.   C·dv/dt = i,   v(0) = v0.
 
     Es una fuente de tensión de valor igual a su estado.
     """
@@ -73,18 +80,23 @@ class Capacitor(Elemento):
     puertos_e = ["p", "n"]
     n_ramas = 1
 
+    @override
     def n_estados(self):
         return 1
 
+    @override
     def x0(self):
         return [float(self.p["v0"])]
 
+    @override
     def estampar_fijo(self, S):
         S.rama_tension(self.ramas[0], self.n["p"], self.n["n"])
 
+    @override
     def rhs(self, b, t, x, u):
         b[self.ramas[0]] = x[0]
 
+    @override
     def derivada_e(self, z, t, x, u):
         return [z[self.ramas[0]] / float(self.p["C"])]
 
@@ -103,12 +115,15 @@ class RLC(Elemento):
     n_internos = 2
     n_ramas = 1
 
+    @override
     def n_estados(self):
         return 2
 
+    @override
     def x0(self):
         return [0.0, 0.0]  # i_L, v_C
 
+    @override
     def estampar_fijo(self, S):
         p, n = self.n["p"], self.n["n"]
         if self.p["modo"] == "serie":
@@ -121,6 +136,7 @@ class RLC(Elemento):
             S.g(self.internos[0], -1, 1.0)
             S.g(self.internos[1], -1, 1.0)
 
+    @override
     def rhs(self, b, t, x, u):
         iL, vC = x
         p, n = self.n["p"], self.n["n"]
@@ -133,6 +149,7 @@ class RLC(Elemento):
             b[n] += iL
         b[self.ramas[0]] = vC
 
+    @override
     def derivada_e(self, z, t, x, u):
         p, n = self.n["p"], self.n["n"]
         if self.p["modo"] == "serie":
@@ -151,6 +168,7 @@ class Resistor3(Elemento):
     parametros = [P("R", "Resistencia por fase", 0.1, "Ω")]
     puertos_e3 = ["a", "b"]
 
+    @override
     def estampar_fijo(self, S):
         for f in range(3):
             S.g(self.n["a"][f], self.n["b"][f], 1.0 / float(self.p["R"]))
@@ -170,26 +188,33 @@ class Inductor3(Elemento):
     puertos_e3 = ["a", "b"]
     salidas = ["i_abc"]
 
+    @override
     def preparar(self):
         self.Lt, self.Rt = float(self.p["L"]), float(self.p["R"])
 
     def absorber(self, L, R):
+        """Suma una inductancia L (H) y una resistencia R (Ω) en serie al inductor."""
         self.Lt += L
         self.Rt += R
 
     def i2_abc(self, x):
+        """Devuelve las tres corrientes de fase [i_a, i_b, i_c] (A) a partir de los estados."""
         return np.array([x[0], x[1], -x[0] - x[1]])
 
     def di2(self, z, x):
+        """Devuelve las derivadas de las tres corrientes de fase (A/s)."""
         d = self.derivada_e(z, 0.0, x, None)
         return np.array([d[0], d[1], -d[0] - d[1]])
 
+    @override
     def n_estados(self):
         return 2
 
+    @override
     def x0(self):
         return [0.0, 0.0]
 
+    @override
     def rhs(self, b, t, x, u):
         na, nb = self.n["a"], self.n["b"]
         ia, ib = x
@@ -198,6 +223,7 @@ class Inductor3(Elemento):
         b[na[1]] -= ib; b[nb[1]] += ib
         b[na[2]] -= ic; b[nb[2]] += ic
 
+    @override
     def derivada_e(self, z, t, x, u):
         na, nb = self.n["a"], self.n["b"]
         va = z[na[0]] - z[nb[0]]
@@ -206,6 +232,7 @@ class Inductor3(Elemento):
         m = (va + vb + vc) / 3.0
         return [(va - m - self.Rt * x[0]) / self.Lt, (vb - m - self.Rt * x[1]) / self.Lt]
 
+    @override
     def salida_e(self, z, t, x, u):
         return [np.array([x[0], x[1], -x[0] - x[1]])]
 
@@ -223,12 +250,15 @@ class Capacitor3(Elemento):
     n_internos = 1  # neutro
     n_ramas = 3
 
+    @override
     def n_estados(self):
         return 2
 
+    @override
     def x0(self):
         return [0.0, 0.0]
 
+    @override
     def estampar_fijo(self, S):
         na = self.n["a"]
         N = self.internos[0]
@@ -239,12 +269,14 @@ class Capacitor3(Elemento):
                 # v_x - v_N = v_C + Rd·i_x  (rama con resistencia)
                 S.M[self.ramas[f], self.ramas[f]] -= Rd
 
+    @override
     def rhs(self, b, t, x, u):
         va, vb = x
         b[self.ramas[0]] = va
         b[self.ramas[1]] = vb
         b[self.ramas[2]] = -va - vb
 
+    @override
     def derivada_e(self, z, t, x, u):
         C = float(self.p["C"])
         return [z[self.ramas[0]] / C, z[self.ramas[1]] / C]
@@ -255,35 +287,40 @@ class Capacitor3(Elemento):
 
 @registrar
 class FuenteDC(Elemento):
-    """Fuente de tensión DC.   v_p - v_n = V"""
+    """Fuente de tensión DC.   v_p - v_n = V."""
     tipo = "fuente_dc"; nombre = "Fuente DC"; categoria = "Eléctrica · Fuentes"
     parametros = [P("V", "Tensión", 100.0, "V")]
     puertos_e = ["p", "n"]
     n_ramas = 1
 
+    @override
     def estampar_fijo(self, S):
         S.rama_tension(self.ramas[0], self.n["p"], self.n["n"])
 
+    @override
     def rhs(self, b, t, x, u):
         b[self.ramas[0]] = float(self.p["V"])
 
 
 @registrar
 class FuenteAC(Elemento):
-    """Fuente AC monofásica.   v(t) = √2·V·sin(2π·f·t + φ)   (V eficaz)"""
+    """Fuente AC monofásica.   v(t) = √2·V·sin(2π·f·t + φ)   (V eficaz)."""
     tipo = "fuente_ac"; nombre = "Fuente AC"; categoria = "Eléctrica · Fuentes"
     parametros = [P("V", "Tensión eficaz", 230.0, "V"), P("f", "Frecuencia", 50.0, "Hz"), P("fase", "Fase", 0.0, "°")]
     puertos_e = ["p", "n"]
     n_ramas = 1
 
+    @override
     def preparar(self):
         self.A = math.sqrt(2) * float(self.p["V"])
         self.w = 2 * math.pi * float(self.p["f"])
         self.ph = math.radians(float(self.p["fase"]))
 
+    @override
     def estampar_fijo(self, S):
         S.rama_tension(self.ramas[0], self.n["p"], self.n["n"])
 
+    @override
     def rhs(self, b, t, x, u):
         b[self.ramas[0]] = self.A * math.sin(self.w * t + self.ph)
 
@@ -300,15 +337,18 @@ class FuenteAC3(Elemento):
     puertos_e3 = ["a"]
     n_ramas = 3
 
+    @override
     def preparar(self):
         self.A = math.sqrt(2.0 / 3.0) * float(self.p["VLL"])
         self.w = 2 * math.pi * float(self.p["f"])
         self.ph = math.radians(float(self.p["fase"]))
 
+    @override
     def estampar_fijo(self, S):
         for f in range(3):
             S.rama_tension(self.ramas[f], self.n["a"][f], -1)
 
+    @override
     def rhs(self, b, t, x, u):
         th = self.w * t + self.ph
         for f in range(3):
@@ -322,6 +362,7 @@ class FuenteIDC(Elemento):
     parametros = [P("I", "Corriente", 1.0, "A")]
     puertos_e = ["p", "n"]
 
+    @override
     def rhs(self, b, t, x, u):
         i = float(self.p["I"])
         b[self.n["p"]] -= i
@@ -330,26 +371,29 @@ class FuenteIDC(Elemento):
 
 @registrar
 class FuenteVControlada(Elemento):
-    """Fuente de tensión controlada por señal.   v_p - v_n = u"""
+    """Fuente de tensión controlada por señal.   v_p - v_n = u."""
     tipo = "fuente_v_ctrl"; nombre = "Tensión controlada"; categoria = "Eléctrica · Fuentes"
     entradas = ["v"]
     puertos_e = ["p", "n"]
     n_ramas = 1
 
+    @override
     def estampar_fijo(self, S):
         S.rama_tension(self.ramas[0], self.n["p"], self.n["n"])
 
+    @override
     def rhs(self, b, t, x, u):
         b[self.ramas[0]] = float(u[0])
 
 
 @registrar
 class FuenteIControlada(Elemento):
-    """Fuente de corriente controlada por señal.   i = u"""
+    """Fuente de corriente controlada por señal.   i = u."""
     tipo = "fuente_i_ctrl"; nombre = "Corriente controlada"; categoria = "Eléctrica · Fuentes"
     entradas = ["i"]
     puertos_e = ["p", "n"]
 
+    @override
     def rhs(self, b, t, x, u):
         i = float(u[0])
         b[self.n["p"]] -= i
@@ -374,6 +418,7 @@ class RedInfinita(Elemento):
     puertos_e3 = ["a"]
     salidas = ["i_abc", "v_pcc"]
 
+    @override
     def preparar(self):
         self.A = math.sqrt(2.0 / 3.0) * float(self.p["VLL"])
         self.w = 2 * math.pi * float(self.p["f"])
@@ -402,17 +447,21 @@ class RedInfinita(Elemento):
         A = self.A
         return (A * math.sin(th), A * math.sin(th - 2 * math.pi / 3), A * math.sin(th + 2 * math.pi / 3))
 
+    @override
     def n_estados(self):
         return 0 if self.vecino else 2
 
+    @override
     def x0(self):
         return [] if self.vecino else [0.0, 0.0]
 
+    @override
     def estampar_fijo(self, S):
         if self.vecino:
             for f in range(3):
                 S.rama_tension(self.ramas[f], self.n["a"][f], -1)
 
+    @override
     def rhs(self, b, t, x, u):
         if self.vecino:
             e = self._e(t)
@@ -425,6 +474,7 @@ class RedInfinita(Elemento):
             b[na[1]] -= ib
             b[na[2]] += ia + ib
 
+    @override
     def derivada_e(self, z, t, x, u):
         e = self._e(t)
         na = self.n["a"]
@@ -432,6 +482,7 @@ class RedInfinita(Elemento):
         m = (v[0] + v[1] + v[2]) / 3.0  # neutro virtual del punto de conexión
         return [((v[0] - m) - e[0] - self.Rg * x[0]) / self.Lg, ((v[1] - m) - e[1] - self.Rg * x[1]) / self.Lg]
 
+    @override
     def salida_e(self, z, t, x, u):
         na = self.n["a"]
         if self.vecino:
@@ -454,81 +505,125 @@ class _Interruptor(Elemento):
 
 
 @registrar
-class Diodo(_Interruptor):
+class Diodo(UnionesTermicas, _Interruptor):
     """Diodo ideal con resistencia de conducción.
 
     Conduce:     v = Vf + Ron·i   (mientras i > 0)
     Bloquea:     i = Goff·v       (mientras v < Vf)
+
+    Puerto térmico opcional «th» (cápsula): si se conecta, la pérdida de conducción v·i calienta la
+    unión a través de su red Foster y Vf(Tj) = Vf + a_V·(Tj - T_ref), Ron(Tj) = Ron·(1 + a_R·(Tj - T_ref)).
+    Salidas: i [A] y Tj [°C] (T_ref sin puerto térmico).
     """
     tipo = "diodo"; nombre = "Diodo"; categoria = "Eléctrica · Semiconductores"
     parametros = [P("Ron", "Resistencia de conducción", 1e-3, "Ω"), P("Vf", "Tensión directa", 0.8, "V"),
-                  P("Goff", "Conductancia en bloqueo", 1e-6, "S")]
-    puertos_e = ["p", "n"]
-    salidas = ["i"]
+                  P("Goff", "Conductancia en bloqueo", 1e-6, "S")] + parametros_union("d")
+    puertos_e = ["p", "n", "th"]
+    salidas = ["i", "Tj"]
 
+    @override
     def preparar(self):
         self.on = False
+        self.preparar_uniones(["d"])
+        self.Ron_t, self.Vf_t = float(self.p["Ron"]), float(self.p["Vf"])
 
+    @override
     def reiniciar_e(self):
         self.on = False
+        self.reiniciar_uniones()
+        self.Ron_t, self.Vf_t = float(self.p["Ron"]), float(self.p["Vf"])
 
+    @override
     def clave(self):
         return self.on
 
-    def estampar_estado(self, S):
-        S.g(self.n["p"], self.n["n"], 1.0 / float(self.p["Ron"]) if self.on else float(self.p["Goff"]))
+    @override
+    def estampar_fijo(self, S):
+        self.estampar_uniones(S)
 
+    @override
+    def estampar_estado(self, S):
+        S.g(self.n["p"], self.n["n"], 1.0 / self.Ron_t if self.on else float(self.p["Goff"]))
+
+    @override
     def rhs(self, b, t, x, u):
         if self.on:
-            i0 = float(self.p["Vf"]) / float(self.p["Ron"])
+            i0 = self.Vf_t / self.Ron_t
             b[self.n["p"]] += i0
             b[self.n["n"]] -= i0
+        self.rhs_uniones(b, x)
+
+    @override
+    def derivada_e(self, z, t, x, u):
+        return self.derivada_uniones(z, x)
 
     def corriente(self, z):
+        """Devuelve la corriente del diodo de p a n (A) para las tensiones nodales z."""
         v = z[self.n["p"]] - z[self.n["n"]]
-        return (v - float(self.p["Vf"])) / float(self.p["Ron"]) if self.on else v * float(self.p["Goff"])
+        return (v - self.Vf_t) / self.Ron_t if self.on else v * float(self.p["Goff"])
 
+    @override
     def actualizar(self, z, t, x, u):
         v = z[self.n["p"]] - z[self.n["n"]]
         if self.on and self.corriente(z) < 0.0:
             self.on = False
             return True
-        if not self.on and v > float(self.p["Vf"]):
+        if not self.on and v > self.Vf_t:
             self.on = True
             return True
         return False
 
+    def potencia_conduccion(self, z):
+        """Devuelve la lista con la potencia instantánea de conducción (W)."""
+        return [(z[self.n["p"]] - z[self.n["n"]]) * self.corriente(z) if self.on else 0.0]
+
+    @override
+    def tras_paso(self, z, t, x, u):
+        if not self.termico:
+            return False
+
+        def aplicar(Tj):
+            self.Vf_t, self.Ron_t = self.con_temperatura(float(self.p["Vf"]), float(self.p["Ron"]), Tj[0])
+        return self.revisar_temperaturas(z, aplicar)
+
+    @override
     def cruce_e(self, z, t, x, u):
         # Conduciendo cambia al anularse la corriente; bloqueando, al alcanzar V_f
         if self.on:
             return [self.corriente(z)]
-        return [z[self.n["p"]] - z[self.n["n"]] - float(self.p["Vf"])]
+        return [z[self.n["p"]] - z[self.n["n"]] - self.Vf_t]
 
+    @override
     def salida_e(self, z, t, x, u):
-        return [self.corriente(z)]
+        return [self.corriente(z), float(self.temperaturas(z)[0])]
 
 
 @registrar
 class InterruptorIdeal(_Interruptor):
-    """Interruptor ideal bidireccional.   g >= 0.5: v = Ron·i;   g < 0.5: i = Goff·v"""
+    """Interruptor ideal bidireccional.   g >= 0.5: v = Ron·i;   g < 0.5: i = Goff·v."""
     tipo = "interruptor"; nombre = "Interruptor"; categoria = "Eléctrica · Semiconductores"
     parametros = [P("Ron", "Resistencia de conducción", 1e-3, "Ω"), P("Goff", "Conductancia abierto", 1e-6, "S")]
     puertos_e = ["p", "n"]
     entradas = ["g"]
     entradas_compuerta = ("g",)
 
+    @override
     def preparar(self):
         self.on = False
 
+    @override
     def reiniciar_e(self):
         self.on = False
 
+    @override
     def clave(self):
         return self.on
 
+    @override
     def estampar_estado(self, S):
         S.g(self.n["p"], self.n["n"], 1.0 / float(self.p["Ron"]) if self.on else float(self.p["Goff"]))
 
+    @override
     def actualizar(self, z, t, x, u):
         nuevo = float(u[0]) >= 0.5
         if nuevo != self.on:
@@ -557,9 +652,11 @@ class DispositivoIGBT:
         self.g = False
 
     def conductancia(self):
+        """Devuelve la conductancia (S) del estado actual."""
         return (self.Goff, 1.0 / self.Ron, 1.0 / self.Rd)[self.st]
 
     def inyeccion(self, b):
+        """Suma al vector de términos independientes b la corriente de la tensión interna (A)."""
         if self.st == 1:
             i0 = self.Vce0 / self.Ron
         elif self.st == 2:
@@ -570,6 +667,7 @@ class DispositivoIGBT:
         b[self.e] -= i0
 
     def corriente(self, z):
+        """Devuelve la corriente de colector a emisor (A) para las tensiones nodales z."""
         v = z[self.c] - z[self.e]
         if self.st == 1:
             return (v - self.Vce0) / self.Ron
@@ -578,6 +676,7 @@ class DispositivoIGBT:
         return v * self.Goff
 
     def revisar(self, z):
+        """Actualiza el estado de conducción y devuelve True si ha cambiado."""
         v = z[self.c] - z[self.e]
         i = self.corriente(z)
         st = self.st
@@ -608,46 +707,77 @@ class _ParametrosIGBT:
     ]
 
 
+def aplicar_temperatura_igbt(union, d, Tq, Td):
+    """Fija los parámetros de conducción de un `DispositivoIGBT` a las temperaturas de sus uniones."""
+    p = union.p
+    d.Vce0, d.Ron = union.con_temperatura(float(p["Vce0"]), float(p["Ron"]), Tq)
+    d.Vf, d.Rd = union.con_temperatura(float(p["Vf"]), float(p["Rd"]), Td)
+
+
 @registrar
-class IGBT(_Interruptor, _ParametrosIGBT):
+class IGBT(UnionesTermicas, _Interruptor, _ParametrosIGBT):
     """IGBT con diodo antiparalelo.
 
-    Modelo de conducción de `DispositivoIGBT`. Salidas: corriente i y energías
-    acumuladas E_cond y E_sw [J]; la pérdida media es ΔE/Δt.
+    Modelo de conducción de `DispositivoIGBT`. Salidas: corriente i, energías acumuladas E_cond y
+    E_sw [J] (la pérdida media es ΔE/Δt) y temperaturas de unión Tj (IGBT) y Tj_d (diodo) [°C].
+
+    Puerto térmico opcional «th» (cápsula): si se conecta, cada unión tiene su red Foster unión-
+    cápsula, recibe su energía de pérdidas (conducción v·i del dispositivo que conduce; E_off en el
+    IGBT, E_rr en el diodo) y sus parámetros siguen a su temperatura:
+        V_ce0(Tj) = V_ce0 + a_V·ΔT,  R_on(Tj) = R_on·(1 + a_R·ΔT),  ídem V_f y R_d,
+        E(Tj) = E_ref·(|i|/I_ref)^k_i·(V/V_ref)·(1 + a_E·ΔT),          ΔT = Tj - T_ref.
+    Sin puerto térmico se comporta como antes, a T_ref.
     """
     tipo = "igbt"; nombre = "IGBT + diodo"; categoria = "Eléctrica · Semiconductores"
-    parametros = _ParametrosIGBT.PARAMS
-    puertos_e = ["c", "e"]
+    parametros = _ParametrosIGBT.PARAMS + parametros_union("qd")
+    puertos_e = ["c", "e", "th"]
     entradas = ["g"]
-    salidas = ["i", "E_cond", "E_sw"]
+    salidas = ["i", "E_cond", "E_sw", "Tj", "Tj_d"]
     entradas_compuerta = ("g",)
 
+    @override
     def preparar(self):
         self.d = None
         self.Ec = self.Es = 0.0
         self.t_ant = 0.0
+        self.preparar_uniones(["q", "d"])
 
+    @override
     def reiniciar_e(self):
         p = self.p
         self.d = DispositivoIGBT(self.n["c"], self.n["e"], float(p["Ron"]), float(p["Vce0"]), float(p["Rd"]), float(p["Vf"]))
         self.Ec = self.Es = 0.0
         self.t_ant = 0.0
+        self.reiniciar_uniones()
 
     def _dev(self):
         if self.d is None:
             self.reiniciar_e()
         return self.d
 
+    @override
     def clave(self):
         return self._dev().st
 
+    @override
+    def estampar_fijo(self, S):
+        self.estampar_uniones(S)
+
+    @override
     def estampar_estado(self, S):
         d = self._dev()
         S.g(d.c, d.e, d.conductancia())
 
+    @override
     def rhs(self, b, t, x, u):
         self._dev().inyeccion(b)
+        self.rhs_uniones(b, x)
 
+    @override
+    def derivada_e(self, z, t, x, u):
+        return self.derivada_uniones(z, x)
+
+    @override
     def actualizar(self, z, t, x, u):
         d = self._dev()
         d.g = float(u[0]) >= 0.5
@@ -657,21 +787,40 @@ class IGBT(_Interruptor, _ParametrosIGBT):
         c = d.revisar(z)
         if c:
             p = self.p
-            if st0 == 1 and d.st == 0:
+            if self.termico:
+                # Unión 0: IGBT (E_off); unión 1: diodo (E_rr)
+                for nombre, desde, j in (("Eoff", 1, 0), ("Err", 2, 1)):
+                    if st0 == desde and d.st == 0:
+                        e = float(p[nombre]) * self.factor_energia(j, abs(i0) / float(p["Iref"])) * v0 / float(p["Vref"])
+                        self.Es += e
+                        self.E_union[j] += e
+            elif st0 == 1 and d.st == 0:
                 self.Es += float(p["Eoff"]) * abs(i0) / float(p["Iref"]) * v0 / float(p["Vref"])
             elif st0 == 2 and d.st == 0:
                 self.Es += float(p["Err"]) * abs(i0) / float(p["Iref"]) * v0 / float(p["Vref"])
         return c
 
+    def potencia_conduccion(self, z):
+        """Devuelve las pérdidas de conducción (W) del IGBT y del diodo, en ese orden."""
+        d = self._dev()
+        if not d.st:
+            return (0.0, 0.0)
+        p = (z[d.c] - z[d.e]) * d.corriente(z)
+        return (p, 0.0) if d.st == 1 else (0.0, p)
+
+    @override
     def tras_paso(self, z, t, x, u):
         d = self._dev()
         dt = t - self.t_ant
         self.t_ant = t
         if d.st:
             self.Ec += (z[d.c] - z[d.e]) * d.corriente(z) * dt
+        return self.revisar_temperaturas(z, lambda Tj: aplicar_temperatura_igbt(self, d, Tj[0], Tj[1]))
 
+    @override
     def salida_e(self, z, t, x, u):
-        return [self._dev().corriente(z), self.Ec, self.Es]
+        Tj = self.temperaturas(z)
+        return [self._dev().corriente(z), self.Ec, self.Es, float(Tj[0]), float(Tj[1])]
 
 
 @registrar
@@ -689,19 +838,24 @@ class MOSFET(_Interruptor):
     salidas = ["i"]
     entradas_compuerta = ("g",)
 
+    @override
     def preparar(self):
         self.st = 0  # 0 bloqueo, 1 canal, 2 diodo
 
+    @override
     def reiniciar_e(self):
         self.st = 0
 
+    @override
     def clave(self):
         return self.st
 
+    @override
     def estampar_estado(self, S):
         g = (float(self.p["Goff"]), 1.0 / float(self.p["Ron"]), 1.0 / float(self.p["Rd"]))[self.st]
         S.g(self.n["d"], self.n["s"], g)
 
+    @override
     def rhs(self, b, t, x, u):
         if self.st == 2:
             i0 = -float(self.p["Vf"]) / float(self.p["Rd"])
@@ -709,6 +863,7 @@ class MOSFET(_Interruptor):
             b[self.n["s"]] -= i0
 
     def corriente(self, z):
+        """Devuelve la corriente de drenador a fuente (A) para las tensiones nodales z."""
         v = z[self.n["d"]] - z[self.n["s"]]
         if self.st == 1:
             return v / float(self.p["Ron"])
@@ -716,6 +871,7 @@ class MOSFET(_Interruptor):
             return (v + float(self.p["Vf"])) / float(self.p["Rd"])
         return v * float(self.p["Goff"])
 
+    @override
     def actualizar(self, z, t, x, u):
         g = float(u[0]) >= 0.5
         v = z[self.n["d"]] - z[self.n["s"]]
@@ -731,6 +887,7 @@ class MOSFET(_Interruptor):
             self.st = 2
         return self.st != st
 
+    @override
     def salida_e(self, z, t, x, u):
         return [self.corriente(z)]
 
@@ -753,12 +910,15 @@ class Transformador(Elemento):
     n_internos = 1  # nodo ideal secundario
     n_ramas = 1
 
+    @override
     def n_estados(self):
         return 2
 
+    @override
     def x0(self):
         return [0.0, 0.0]  # i_m, i_2
 
+    @override
     def estampar_fijo(self, S):
         k = self.ramas[0]
         a = float(self.p["a"])
@@ -770,6 +930,7 @@ class Transformador(Elemento):
         M[p1, k] += 1.0; M[n1, k] -= 1.0
         M[x, k] -= a; M[n2, k] += a
 
+    @override
     def rhs(self, b, t, x, u):
         im, i2 = x
         p1, n1 = self.n["p1"], self.n["n1"]
@@ -779,6 +940,7 @@ class Transformador(Elemento):
         b[xx] -= i2
         b[self.n["p2"]] += i2
 
+    @override
     def derivada_e(self, z, t, x, u):
         v1 = z[self.n["p1"]] - z[self.n["n1"]]
         return [v1 / float(self.p["Lm"]),
@@ -790,26 +952,29 @@ class Transformador(Elemento):
 
 @registrar
 class Voltimetro(Elemento):
-    """Voltímetro.   y = v_p - v_n"""
+    """Voltímetro.   y = v_p - v_n."""
     tipo = "voltimetro"; nombre = "Voltímetro"; categoria = "Eléctrica · Medición"
     puertos_e = ["p", "n"]
     salidas = ["v"]
 
+    @override
     def salida_e(self, z, t, x, u):
         return [z[self.n["p"]] - z[self.n["n"]]]
 
 
 @registrar
 class Amperimetro(Elemento):
-    """Amperímetro (rama de tensión cero).   y = i   (de p a n)"""
+    """Amperímetro (rama de tensión cero).   y = i   (de p a n)."""
     tipo = "amperimetro"; nombre = "Amperímetro"; categoria = "Eléctrica · Medición"
     puertos_e = ["p", "n"]
     salidas = ["i"]
     n_ramas = 1
 
+    @override
     def estampar_fijo(self, S):
         S.rama_tension(self.ramas[0], self.n["p"], self.n["n"])
 
+    @override
     def salida_e(self, z, t, x, u):
         return [z[self.ramas[0]]]
 
@@ -825,10 +990,12 @@ class Medidor3(Elemento):
     salidas = ["v_abc", "i_abc"]
     n_ramas = 3
 
+    @override
     def estampar_fijo(self, S):
         for f in range(3):
             S.rama_tension(self.ramas[f], self.n["a"][f], self.n["b"][f])
 
+    @override
     def salida_e(self, z, t, x, u):
         na = self.n["a"]
         v = np.array([z[na[0]], z[na[1]], z[na[2]]])

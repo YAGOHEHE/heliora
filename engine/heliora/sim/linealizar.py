@@ -93,9 +93,35 @@ def _jacobiano(fun, v, n_sal):
 
 
 def linealizar(diagrama, espacio=None, entradas=None, salidas=None, punto=None, cancelar=None):
+    """Modelo lineal (A, B, C, D) de un diagrama continuo en un punto de operación.
+
+    Args:
+        diagrama: diagrama JSON.
+        espacio: variables del espacio de trabajo para evaluar los parámetros.
+        entradas: señales que se perturban («bloque» o «bloque.puerto»); por defecto, la primera fuente.
+        salidas: señales observadas; por defecto, las del primer osciloscopio.
+        punto: punto de operación {"t": ..., "x": [...]}; si falta, se simula y se refina con Newton.
+        cancelar: función que devuelve True para detener la simulación del punto.
+
+    Returns:
+        Diccionario con A, B, C, D, los nombres de estados, entradas y salidas, el punto usado y el
+        modelo compilado (para la procedencia).
+
+    Raises:
+        ErrorDiagrama: si el diagrama tiene bloques de tiempo discreto, si faltan entradas o
+            salidas, o si el modelo sería demasiado grande.
+    """
     entradas = list(entradas or _entradas_por_defecto(diagrama))
     salidas = list(salidas or _salidas_por_defecto(diagrama, entradas))
     m = Modelo(diagrama, espacio)
+    # A, B, C y D solo cubren el estado continuo: el estado de un bloque muestreado quedaría fuera y
+    # el modelo describiría otro sistema. Hasta linealizar su mapa de actualización, se rechaza.
+    if m.discretos:
+        bloques = ", ".join(f"«{m.lista[k].etiqueta}» (Ts = {m.lista[k].Ts:g} s)" for k in m.discretos[:6])
+        raise ErrorDiagrama(
+            f"No se puede linealizar un diagrama con tiempo discreto: {bloques}. Su estado muestreado no entra "
+            "en el modelo continuo (A, B, C, D), que describiría otro sistema. Sustituye esos bloques por sus "
+            "equivalentes continuos para linealizar.")
     cfg = dict(diagrama.get("solver", {}))
     punto = dict(punto or {})
     # 1. Punto de operación
@@ -166,7 +192,7 @@ def linealizar(diagrama, espacio=None, entradas=None, salidas=None, punto=None, 
     m.forzadas = {}
     estados = [f"{m.nombre_estado(i)} [{i}]" for i in range(n)]
     return {"A": A, "B": B, "C": C, "D": D, "estados": estados, "entradas": entradas, "salidas": salidas,
-            "punto": {"t": t, "x": x, "u": u0, "y": y0, "metodo": metodo_punto, "residuo_f": residuo}}
+            "punto": {"t": t, "x": x, "u": u0, "y": y0, "metodo": metodo_punto, "residuo_f": residuo}, "modelo": m}
 
 
 def funcion_transferencia(lin, entrada=0, salida=0):

@@ -78,10 +78,12 @@ class ErrorSolver(RuntimeError):
 
 
 def paso_euler(f, t, x, h):
+    """Avanza un paso h de Euler explícito y devuelve x(t + h)."""
     return x + h * f(t, x)
 
 
 def paso_rk4(f, t, x, h):
+    """Avanza un paso h de Runge-Kutta clásico de orden 4 y devuelve x(t + h)."""
     k1 = f(t, x)
     k2 = f(t + 0.5 * h, x + 0.5 * h * k1)
     k3 = f(t + 0.5 * h, x + 0.5 * h * k2)
@@ -188,7 +190,10 @@ class _Eventos:
 
 
 def _paso_inicial(f0, x, rtol, umbral, hmax, intervalo):
-    """Primer paso a partir de la pendiente inicial:  h = 0.8·rtol^(1/5) / ||f0/max(|x|, umbral)||inf"""
+    """Calcula el primer paso a partir de la pendiente inicial.
+
+    h = 0.8·rtol^(1/5) / ||f0/max(|x|, umbral)||inf
+    """
     h = min(hmax, intervalo)
     if f0.size == 0:
         return h
@@ -288,7 +293,28 @@ def _bucle_dopri(f, t, tf, x, rtol, atol, hmax, hmin, h_ini, mayor, limite, canc
     return x, pasos, rechazos
 
 
+def _validar(t0, tf, paso=None, rtol=None, atol=None, paso_max=None, fijo=False):
+    """Comprueba el intervalo, el paso y las tolerancias antes de integrar.
+
+    Raises:
+        ValueError: si el intervalo no es finito o está invertido, si un solver de paso fijo no
+            tiene un paso finito y positivo, o si alguna tolerancia o el paso máximo no son válidos.
+    """
+    if not (math.isfinite(t0) and math.isfinite(tf)) or tf < t0:
+        raise ValueError(f"Intervalo de integración no válido: [{t0:g}, {tf:g}]")
+    if fijo and not (paso is not None and math.isfinite(paso) and paso > 0):
+        raise ValueError(f"Los solvers de paso fijo necesitan un paso finito y positivo (se dio {paso!r})")
+    if rtol is not None and not (math.isfinite(rtol) and rtol > 0):
+        raise ValueError(f"La tolerancia relativa debe ser positiva (se dio {rtol!r})")
+    if atol is not None and not (math.isfinite(atol) and atol >= 0):
+        raise ValueError(f"La tolerancia absoluta no puede ser negativa (se dio {atol!r})")
+    if paso_max is not None and not paso_max > 0:
+        raise ValueError(f"El paso máximo debe ser positivo (se dio {paso_max!r})")
+
+
 def _bucle_fijo(paso, f, t, tf, x, h, mayor, cancelar, informe=None):
+    if tf <= t:
+        return x, 0, 0
     n = max(1, int(np.ceil((tf - t) / h - 1e-9)))
     t0 = t
     for i in range(n):
@@ -297,11 +323,12 @@ def _bucle_fijo(paso, f, t, tf, x, h, mayor, cancelar, informe=None):
                 raise Cancelado()
             if informe is not None:
                 informe(i / n)
-            if not np.all(np.isfinite(x)):
-                raise ErrorSolver(f"La solución dejó de ser finita en t={t:.6g}. Reduce el paso.")
         hp = min(h, tf - t)
         x = paso(f, t, x, hp)
         t = t0 + (i + 1) * h if i + 1 < n else tf
+        # Se comprueba antes de registrar el estado: un valor no finito nunca llega a los resultados
+        if not np.all(np.isfinite(x)):
+            raise ErrorSolver(f"La solución dejó de ser finita en t={t:.6g}. Reduce el paso.")
         if mayor:
             mayor(t, x)
     return x, n, 0
@@ -368,6 +395,8 @@ def integrar_modelo(modelo, metodo="dopri", t0=0.0, tf=1.0, paso=None, rtol=RTOL
                     atol=ATOL_DEFECTO, paso_max=None, paso_min=0.0, paso_ini=None,
                     cancelar=None, informe=None):
     """Integra un modelo de bloques; el modelo guarda sus señales en sus sumideros."""
+    fijo = metodo in ("euler", "rk4")
+    _validar(t0, tf, paso, None if fijo else rtol, None if fijo else atol, paso_max, fijo)
     span = tf - t0
     hmax = paso_max if paso_max else max(FRACCION_PASO_MAX * span, 16 * np.spacing(abs(tf)))
     x = modelo.iniciar(t0)
@@ -376,9 +405,7 @@ def integrar_modelo(modelo, metodo="dopri", t0=0.0, tf=1.0, paso=None, rtol=RTOL
     limite = modelo.proximo_evento
     cruces = modelo.cruces if modelo.hay_cruces else None
     stats = {}
-    if metodo in ("euler", "rk4"):
-        if not paso:
-            raise ValueError("Los solvers de paso fijo necesitan un paso")
+    if fijo:
         p = paso_euler if metodo == "euler" else paso_rk4
         x, n, r = _bucle_fijo(p, f, t0, tf, x, paso, mayor, cancelar, informe)
     elif metodo == "dopri":
@@ -393,11 +420,14 @@ def integrar_modelo(modelo, metodo="dopri", t0=0.0, tf=1.0, paso=None, rtol=RTOL
 
 def integrar(f, intervalo, x0, metodo="dopri", paso=None, rtol=RTOL_DEFECTO, atol=ATOL_DEFECTO,
              paso_max=None):
-    """Integra f(t, x) y devuelve (t, x) con una fila por paso. Ejemplo:
+    """Integra f(t, x) y devuelve (t, x) con una fila por paso.
 
+    Ejemplo:
         t, x = integrar(lambda t, x: -x, (0, 5), [1.0], metodo="rk4", paso=0.01)
     """
     t0, tf = float(intervalo[0]), float(intervalo[1])
+    fijo = metodo in ("euler", "rk4")
+    _validar(t0, tf, paso, None if fijo else rtol, None if fijo else atol, paso_max, fijo)
     x0 = np.atleast_1d(np.asarray(x0, dtype=float))
     ts, xs = [t0], [x0.copy()]
 

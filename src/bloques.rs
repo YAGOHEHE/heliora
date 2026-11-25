@@ -395,7 +395,7 @@ impl Editor {
         let mut cats: Vec<String> = f.iter().map(|x| x.categoria.clone()).collect();
         cats.sort();
         cats.dedup();
-        let prio = ["Fuentes", "Matemática", "Continuo", "Discontinuidades", "Señales", "Sumideros", "Subsistemas", "Eléctrica · Pasivos", "Eléctrica · Fuentes", "Eléctrica · Semiconductores", "Eléctrica · Medición", "Potencia · Convertidores", "Potencia · Filtros", "Potencia · Modulación", "Potencia · Control", "Potencia · Medición", "Fotovoltaica"];
+        let prio = ["Fuentes", "Matemática", "Continuo", "Discreto", "Discontinuidades", "Señales", "Sumideros", "Subsistemas", "Eléctrica · Pasivos", "Eléctrica · Fuentes", "Eléctrica · Semiconductores", "Eléctrica · Medición", "Potencia · Convertidores", "Potencia · Filtros", "Potencia · Modulación", "Potencia · Control", "Potencia · Medición", "Fotovoltaica", "Almacenamiento", "Máquinas", "Mecánica", "Térmica"];
         let mut orden: Vec<String> = prio.iter().filter(|p| cats.iter().any(|c| c == *p)).map(|s| s.to_string()).collect();
         for c in cats {
             if !orden.contains(&c) {
@@ -781,7 +781,7 @@ impl Editor {
     /// extremos y sangría fija, para que un cambio pequeño dé un diff de Git pequeño.
     pub fn guardar_en(&self, ruta: &std::path::Path) -> Result<(), String> {
         let t = json_canonico(&self.diagrama)?;
-        std::fs::write(ruta, t).map_err(|e| e.to_string())
+        crate::app::escribir_atomico(ruta, t.as_bytes())
     }
 
     pub fn abrir_de(&mut self, ruta: &std::path::Path) -> Result<(), String> {
@@ -1262,7 +1262,7 @@ impl Editor {
         let paso = 20.0 * z;
         if tema::modo() == tema::Modo::Claro && paso * 5.0 > 12.0 {
             let mayor = paso * 5.0;
-            let trazo = Stroke::new(1.0, tema::p().linea);
+            let trazo = Stroke::new(1.0_f32, tema::p().linea);
             let mut x = area.left() + (origen.x - area.left()).rem_euclid(mayor);
             while x < area.right() {
                 p.line_segment([Pos2::new(x, area.top()), Pos2::new(x, area.bottom())], trazo);
@@ -1384,12 +1384,12 @@ impl Editor {
             let cabeza = Rect::from_min_size(rect.min, Vec2::new(rect.width(), 18.0 * z));
             p.rect_filled(cabeza, egui::CornerRadius { nw: radio as u8, ne: radio as u8, sw: 0, se: 0 }, pal.realce);
             p.rect_filled(Rect::from_min_size(rect.min, Vec2::new(rect.width(), 2.0 * z.max(0.5))), egui::CornerRadius { nw: radio as u8, ne: radio as u8, sw: 0, se: 0 }, color);
-            p.line_segment([cabeza.left_bottom(), cabeza.right_bottom()], Stroke::new(1.0, pal.linea));
-            p.rect_stroke(*rect, radio, Stroke::new(1.0, if falla { pal.falla } else { pal.linea_fuerte }), egui::StrokeKind::Inside);
+            p.line_segment([cabeza.left_bottom(), cabeza.right_bottom()], Stroke::new(1.0_f32, pal.linea));
+            p.rect_stroke(*rect, radio, Stroke::new(1.0_f32, if falla { pal.falla } else { pal.linea_fuerte }), egui::StrokeKind::Inside);
             if sel {
                 // Selección: contorno de 1,5 px a 4 px del nodo y cuatro tiradores de 6 px
                 let fuera = rect.expand(4.0);
-                p.rect_stroke(fuera, radio, Stroke::new(1.5, pal.acento), egui::StrokeKind::Middle);
+                p.rect_stroke(fuera, radio, Stroke::new(1.5_f32, pal.acento), egui::StrokeKind::Middle);
                 for esquina in [fuera.left_top(), fuera.right_top(), fuera.left_bottom(), fuera.right_bottom()] {
                     p.rect_filled(Rect::from_center_size(esquina, Vec2::splat(6.0)), 0.0, pal.acento);
                 }
@@ -1415,7 +1415,7 @@ impl Editor {
                     }
                     Clase::E3 => {
                         p.rect_filled(Rect::from_center_size(*pp, Vec2::new(t * 1.6, t * 2.2)), 0.0, color_p);
-                        p.line_segment([*pp + Vec2::new(-t * 0.8, 0.0), *pp + Vec2::new(t * 0.8, 0.0)], Stroke::new(1.0, pal.campo));
+                        p.line_segment([*pp + Vec2::new(-t * 0.8, 0.0), *pp + Vec2::new(t * 0.8, 0.0)], Stroke::new(1.0_f32, pal.campo));
                     }
                     Clase::Entrada => {
                         p.add(Shape::convex_polygon(vec![*pp + Vec2::new(-t * 0.5, -t), *pp + Vec2::new(t, 0.0), *pp + Vec2::new(-t * 0.5, t)], color_p, Stroke::NONE));
@@ -1448,7 +1448,7 @@ impl Editor {
         let bloque_en = |pp: Pos2| -> Option<usize> { (0..ids.len()).rev().find(|&i| geom[i].0.contains(pp)) };
         if let Some(pp) = puntero.filter(|q| area.contains(*q)) {
             if let Some((_, _, cl)) = puerto_en(pp) {
-                p.circle_stroke(pp, 7.0, Stroke::new(1.5, color_cable(cl)));
+                p.circle_stroke(pp, 7.0, Stroke::new(1.5_f32, color_cable(cl)));
             }
         }
         // Etiqueta de lazo algebraico, arriba a la izquierda del lienzo
@@ -1457,7 +1457,7 @@ impl Editor {
             let texto = format!("LAZO ALGEBRAICO · {n}");
             let gal = ui.painter().layout_no_wrap(texto, tema::fuente_semi(11.0), pal.falla);
             let caja = Rect::from_min_size(Pos2::new(area.left() + 10.0, y_et), gal.size() + Vec2::new(26.0, 10.0));
-            p.rect(caja, radio, pal.falla_fondo, Stroke::new(1.0, pal.falla), egui::StrokeKind::Inside);
+            p.rect(caja, radio, pal.falla_fondo, Stroke::new(1.0_f32, pal.falla), egui::StrokeKind::Inside);
             tema::cuadrado(&p, Pos2::new(caja.left() + 10.0, caja.center().y), pal.falla);
             p.galley(Pos2::new(caja.left() + 19.0, caja.top() + 5.0), gal, pal.falla);
             y_et += caja.height() + 6.0;
@@ -1545,7 +1545,7 @@ impl Editor {
             Arrastre::Seleccion(a) if resp.dragged() => {
                 if let Some(pp) = resp.interact_pointer_pos() {
                     let r2 = Rect::from_two_pos(*a, pp);
-                    p.rect(r2, 2.0, tema::p().acento.gamma_multiply(0.08), Stroke::new(1.0, tema::p().acento), egui::StrokeKind::Middle);
+                    p.rect(r2, 2.0, tema::p().acento.gamma_multiply(0.08), Stroke::new(1.0_f32, tema::p().acento), egui::StrokeKind::Middle);
                     self.sel.clear();
                     for (i, bid) in ids.iter().enumerate() {
                         if r2.intersects(geom[i].0) {
@@ -1615,7 +1615,7 @@ impl Editor {
             if let Some(pp) = puntero {
                 let capa = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("fantasma")));
                 let r = Rect::from_center_size(pp, Vec2::new(ANCHO, 46.0) * self.zoom);
-                capa.rect(r, tema::radio() as f32, tema::p().campo, Stroke::new(1.5, tema::p().acento), egui::StrokeKind::Middle);
+                capa.rect(r, tema::radio() as f32, tema::p().campo, Stroke::new(1.5_f32, tema::p().acento), egui::StrokeKind::Middle);
                 capa.text(r.center(), Align2::CENTER_CENTER, fichas.get(&tipo).map(|f| f.nombre.as_str()).unwrap_or(&tipo), FontId::proportional(12.0), tema::p().texto);
             }
             if ui.input(|i| i.pointer.any_released()) {

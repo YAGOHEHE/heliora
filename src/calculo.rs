@@ -23,6 +23,9 @@ pub struct Guion {
     pub motor: bool,
 }
 
+/// Tabla que se muestra de una variable: nombre, columnas, filas y número total de filas.
+type Tabla = (String, Vec<String>, Vec<Vec<String>>, usize);
+
 pub struct Calculo {
     historia: Vec<Linea>,
     entrada: String,
@@ -36,7 +39,7 @@ pub struct Calculo {
     id_ver: Option<(u64, String)>,
     id_leer: Option<(u64, String, usize)>,
     id_guardar: Option<u64>,
-    tabla: Option<(String, Vec<String>, Vec<Vec<String>>, usize)>,
+    tabla: Option<Tabla>,
     enfocar: bool,
     bajar: bool,
     pub aviso: String,

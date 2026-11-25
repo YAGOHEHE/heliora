@@ -6,7 +6,17 @@ on:
 
 jobs:
   motor-y-ventana:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Intérprete del entorno privado: bin/ en macOS y Linux, Scripts/ en Windows
+      PY: ${{ matrix.os == 'windows-latest' && '.venv/Scripts/python' || '.venv/bin/python' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -15,12 +25,16 @@ jobs:
       - name: Entorno del motor
         run: |
           python -m venv .venv
-          .venv/bin/python -m pip install -q -r engine/requirements.txt
+          $PY -m pip install -q -r engine/requirements.txt
       - name: Validación por fases
         working-directory: engine
-        run: ../.venv/bin/python -W ignore validar_todo.py
+        run: ../$PY -W ignore validar_todo.py
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - name: Compilar sin avisos
         run: RUSTFLAGS="-D warnings" cargo build
+      - name: Clippy sin avisos
+        run: cargo clippy -- -D warnings
       - name: Pruebas de la ventana y del puente con el motor
         run: cargo test

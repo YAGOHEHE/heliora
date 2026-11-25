@@ -513,6 +513,269 @@
    "group": "linealización",
    "value": 26843545,
    "source": "libmwsimulink.dylib, sl::jacobian::modelNeedsUseFullPerturbation 0x764fe8 (constante 0x1999999); en Heliora, límite de coeficientes del modelo lineal (linealizar.py, MAX_ENTRADAS_JACOBIANO)"
+  },
+  {
+   "name": "PID: coeficiente de filtro de derivada N por defecto",
+   "group": "modelos físicos",
+   "value": 10.0,
+   "unit": "rad/s",
+   "source": "encargo, Anexo D.2"
+  },
+  {
+   "name": "PID: tiempo de seguimiento automático",
+   "group": "modelos físicos",
+   "unit": "s",
+   "source": "√(Kd/Ki) = √(Ti·Td), regla de Åström y Hägglund (cita no verificada)"
+  },
+  {
+   "name": "limitador de tasa continuo: ganancia de seguimiento k",
+   "group": "modelos físicos",
+   "value": 10000.0,
+   "unit": "1/s",
+   "estimated": true
+  },
+  {
+   "name": "tolerancia de un instante de muestreo",
+   "group": "modelos físicos",
+   "value": 1e-09,
+   "unit": "Ts",
+   "estimated": true
+  },
+  {
+   "name": "R_thJC del IGBT",
+   "group": "modelos físicos",
+   "value": 0.045,
+   "unit": "K/W",
+   "source": "encargo, Anexo A.5",
+   "estimated": true
+  },
+  {
+   "name": "R_thJC del diodo",
+   "group": "modelos físicos",
+   "value": 0.09,
+   "unit": "K/W",
+   "source": "encargo, Anexo A.5",
+   "estimated": true
+  },
+  {
+   "name": "τ Foster unión-cápsula",
+   "group": "modelos físicos",
+   "value": [
+    0.0005,
+    0.005,
+    0.05,
+    0.5
+   ],
+   "unit": "s",
+   "source": "encargo, Anexo A.5",
+   "estimated": true
+  },
+  {
+   "name": "reparto de R_thJC entre los pares Foster",
+   "group": "modelos físicos",
+   "value": [
+    0.1,
+    0.3,
+    0.4,
+    0.2
+   ],
+   "estimated": true
+  },
+  {
+   "name": "R_thCH cápsula-disipador",
+   "group": "modelos físicos",
+   "value": 0.02,
+   "unit": "K/W",
+   "source": "encargo, Anexo A.5",
+   "estimated": true
+  },
+  {
+   "name": "temperatura ambiente por defecto",
+   "group": "modelos físicos",
+   "value": 40.0,
+   "unit": "°C",
+   "source": "encargo, Anexo A.5"
+  },
+  {
+   "name": "Tj_max (aviso)",
+   "group": "modelos físicos",
+   "value": 150.0,
+   "unit": "°C",
+   "source": "límite de hoja, encargo, Anexo A.5"
+  },
+  {
+   "name": "coeficiente de temperatura de V_ce0 y V_f",
+   "group": "modelos físicos",
+   "value": -0.002,
+   "unit": "V/K",
+   "source": "encargo, Anexo A.5",
+   "estimated": true
+  },
+  {
+   "name": "coeficiente de temperatura de R_on y R_d",
+   "group": "modelos físicos",
+   "value": 0.006,
+   "unit": "1/K",
+   "source": "encargo, Anexo A.5",
+   "estimated": true
+  },
+  {
+   "name": "coeficiente de temperatura de las energías de conmutación",
+   "group": "modelos físicos",
+   "value": 0.003,
+   "unit": "1/K",
+   "source": "encargo, Anexo A.5",
+   "estimated": true
+  },
+  {
+   "name": "retardo de entrega del calor τ_e",
+   "group": "modelos físicos",
+   "value": 0.0001,
+   "unit": "s",
+   "estimated": true
+  },
+  {
+   "name": "salto de Tj que reajusta R_on y V",
+   "group": "modelos físicos",
+   "value": 0.1,
+   "unit": "K",
+   "estimated": true
+  },
+  {
+   "name": "batería: capacidad por celda",
+   "group": "modelos físicos",
+   "value": 5.0,
+   "unit": "Ah",
+   "estimated": true
+  },
+  {
+   "name": "batería: OCV(SoC) por celda, SoC 0 a 1 en pasos de 0.1",
+   "group": "modelos físicos",
+   "value": [
+    3.0,
+    3.45,
+    3.55,
+    3.62,
+    3.67,
+    3.72,
+    3.79,
+    3.87,
+    3.96,
+    4.07,
+    4.2
+   ],
+   "unit": "V",
+   "source": "encargo, Anexo B.1 (forma)",
+   "estimated": true
+  },
+  {
+   "name": "batería: R0",
+   "group": "modelos físicos",
+   "value": 0.03,
+   "unit": "Ω",
+   "source": "encargo, Anexo B.1",
+   "estimated": true
+  },
+  {
+   "name": "batería: R1",
+   "group": "modelos físicos",
+   "value": 0.02,
+   "unit": "Ω",
+   "source": "encargo, Anexo B.1",
+   "estimated": true
+  },
+  {
+   "name": "batería: C1",
+   "group": "modelos físicos",
+   "value": 2000.0,
+   "unit": "F",
+   "source": "encargo, Anexo B.1",
+   "estimated": true
+  },
+  {
+   "name": "batería: eficiencia culómbica",
+   "group": "modelos físicos",
+   "value": 0.99,
+   "source": "encargo, Anexo B.1",
+   "estimated": true
+  },
+  {
+   "name": "batería: v_min / v_max por celda",
+   "group": "modelos físicos",
+   "value": [
+    2.5,
+    4.2
+   ],
+   "unit": "V",
+   "source": "de hoja, encargo, Anexo B.1"
+  },
+  {
+   "name": "supercondensador: C / R_esr / R_fuga",
+   "group": "modelos físicos",
+   "value": [
+    100.0,
+    0.01,
+    10000.0
+   ],
+   "unit": "F / Ω / Ω",
+   "estimated": true
+  },
+  {
+   "name": "cargador: ancho de banda del lazo de corriente",
+   "group": "modelos físicos",
+   "value": 0.1,
+   "unit": "f_sw",
+   "estimated": true
+  },
+  {
+   "name": "cargador: rendimiento",
+   "group": "modelos físicos",
+   "value": 0.97,
+   "source": "encargo, Anexo B.3",
+   "estimated": true
+  },
+  {
+   "name": "PMSM: R_s, L_d = L_q, λ_pm, p, J, B",
+   "group": "modelos físicos",
+   "value": [
+    0.5,
+    0.004,
+    0.1,
+    4,
+    0.001,
+    0.0001
+   ],
+   "unit": "Ω, H, Wb, -, kg·m², N·m·s",
+   "source": "encargo, Anexo C.2",
+   "estimated": true
+  },
+  {
+   "name": "máquina de continua: R_a, L_a, K, J, B",
+   "group": "modelos físicos",
+   "value": [
+    1.0,
+    0.01,
+    0.5,
+    0.01,
+    0.001
+   ],
+   "unit": "Ω, H, V·s/rad, kg·m², N·m·s",
+   "estimated": true
+  },
+  {
+   "name": "inducción: R_s, R_r, L_ls = L_lr, L_m, p, J, B",
+   "group": "modelos físicos",
+   "value": [
+    1.5,
+    1.2,
+    0.006,
+    0.18,
+    2,
+    0.02,
+    0.002
+   ],
+   "unit": "Ω, Ω, H, H, -, kg·m², N·m·s",
+   "estimated": true
   }
  ]
 }

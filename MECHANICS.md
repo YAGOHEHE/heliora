@@ -188,6 +188,93 @@ El THD usa 50 armónicos porque una fuente conmutada tiene contenido alto: con 6
 | Diagramas en JSON canónico | claves ordenadas, bloques por id, conexiones por extremos, sangría de 2 espacios | Un cambio de parámetro da una línea de diff en Git |
 | Identidad visual | «Instrumento» (oscuro) y «Laboratorio» (claro), IBM Plex Sans y Mono (licencia OFL) | Diseño propio entregado por la persona |
 
+## Modelos físicos: bloques de señal y tiempo discreto (Fase 1 del encargo)
+
+Ecuaciones escritas desde la literatura citada en cada bloque (`engine/heliora/lib/senal.py`); no proceden del
+programa instalado. Los valores marcados **estimado** son elecciones de ingeniería, no medidas.
+
+**Citas no verificadas.** Las referencias bibliográficas de esta sección y de las siguientes (libros y notas de
+aplicación) se dan por autor, título y editorial; la edición y el apartado exactos no se han comprobado contra el
+texto. Las ecuaciones sí están comprobadas: cada una tiene una prueba analítica en `engine/heliora/validacion/`.
+
+| Valor | En Heliora | Fuente o motivo |
+|---|---|---|
+| PID: forma | paralela, filtro de derivada Kd·N·s/(s + N), pesos de consigna b y c, anti-windup por retrocálculo | Åström y Hägglund, *Advanced PID Control*, ISA, 2006 (no verificada) |
+| PID: N por defecto | 10 rad/s | valor pedido en el encargo (Anexo D.2) |
+| PID: Tt automático | √(Kd/Ki) = √(Ti·Td); sin derivada, Kp/Ki = Ti | regla de Åström y Hägglund (no verificada). **Distinto del encargo**, que proponía Kd/Ki: esa magnitud tiene unidades de s², no es un tiempo |
+| PID discreto | integral por Euler hacia delante, filtro de derivada por Euler hacia atrás | Åström y Wittenmark, *Computer-Controlled Systems*, 1997 (no verificada). Medido: a 10 kHz difiere del continuo un 0.40 % de la consigna (criterio: 1 %) |
+| Limitador de tasa continuo: k | 1e4 1/s | **Estimado**: constante de tiempo de seguimiento de 0.1 ms; editable |
+| Tolerancia de un instante de muestreo | 1e-9·Ts | **Estimado**: cubre el redondeo de t + (t_k − t) y de la suma de pasos fijos |
+| Paso fijo que no divide a Ts | el muestreo se aplica en el primer paso posterior y se avisa | encargo, Anexo D.3 |
+| Ruido de banda limitada | muestra retenida durante Tc con desviación √(PSD/Tc); uniforme en ±√3·σ | forma clásica del ruido blanco de banda limitada; varianza medida dentro del 1 % |
+| `combinar_bus` / `seleccionar_bus` | **no construidos** | `mux` y `demux` ya cubren el caso posicional; un bus con nombres exigiría un tipo de señal no numérico que el motor (lazos, osciloscopio, linealización) no maneja. El encargo permite no construirlos en ese caso |
+| `saturacion_tasa` | no existe aparte: es `limitador_tasa` | el encargo los unifica (Anexo D.2) |
+
+## Modelos físicos: dominio térmico y acoplamiento electro-térmico (Fase 2 del encargo)
+
+`engine/heliora/lib/termica.py`. Analogía térmica-eléctrica resuelta en la misma MNA; temperaturas absolutas en
+°C (la referencia de la red es 0 °C). Valores por defecto del módulo de ejemplo de 1200 V / 600 A (tipo
+FZ600R12KE3), **todos estimados** salvo que se diga otra cosa: sustitúyelos por los de la hoja de datos.
+
+| Valor | En Heliora | Fuente o motivo |
+|---|---|---|
+| R_thJC del IGBT | 0.045 K/W, repartida en 4 pares Foster: 0.0045 / 0.0135 / 0.018 / 0.009 | **estimado** (encargo, Anexo A.5); el reparto 10/30/40/20 % es **estimado** |
+| R_thJC del diodo | 0.090 K/W, mismo reparto: 0.009 / 0.027 / 0.036 / 0.018 | **estimado** (Anexo A.5) |
+| τ Foster unión-cápsula | 0.5 / 5 / 50 / 500 ms | **estimado** (Anexo A.5) |
+| R_thCH (cápsula-disipador) | 0.02 K/W en los ejemplos | **estimado** (Anexo A.5) |
+| T_amb | 40 °C | por defecto editable (Anexo A.5) |
+| T_ref de los datos eléctricos | 125 °C | coherente con V_ce0 = 0.8 V ajustada a 125 °C (sección Semiconductores) |
+| a_V (V_ce0 y V_f) | −2 mV/K | **estimado** (Anexo A.5) |
+| a_R (R_on y R_d) | +0.6 %/K | **estimado** (Anexo A.5) |
+| a_E (energías de conmutación) | +0.3 %/K | **estimado** (Anexo A.5) |
+| k_i (exponente de corriente de las energías) | 1 (lineal, como el modelo previo) | Anexo A.3 |
+| Tj_max (aviso) | 150 °C | límite de hoja (Anexo A.5) |
+| Retardo de entrega del calor τ_e | 0.1 ms | **estimado**: 5 veces menor que la τ Foster más corta; la energía se conserva entera |
+| Salto de Tj que reajusta R_on y V | 0.1 K | **estimado**: el error de pérdidas que introduce es del orden de 0.01 W en el ejemplo |
+| Unión por dispositivo | cada IGBT y cada diodo tienen su red Foster; la cápsula es el puerto «th» del bloque | Anexo A.3; en el inversor, 12 uniones con cápsula común |
+| Foster unión-cápsula en serie con red externa | se acepta, como recomienda el encargo | **Limitación conocida**: el régimen es exacto, pero el flujo en la cápsula iguala al de la unión en cada instante y las capacidades Foster en serie con el disipador crean modos lentos (unos 12 s con los valores por defecto) |
+| Fuentes | analogía y redes Foster/Cauer: Infineon AN2008-03 y Semikron, *Application Manual Power Semiconductors*; pérdidas: Mohan, Undeland y Robbins, *Power Electronics*, Wiley | citas no verificadas (edición y apartado) |
+
+## Modelos físicos: almacenamiento (Fase 3 del encargo)
+
+`engine/heliora/lib/almacenamiento.py`. Convención: i > 0 en descarga. Valores por celda Li-ion NMC, **todos
+estimados** (orden de magnitud): sustitúyelos por una caracterización real.
+
+| Valor | En Heliora | Fuente o motivo |
+|---|---|---|
+| Modelo de batería | Thevenin: N_s·OCV(SoC) − i·R0 − v1 − v2, ramas RC, recuento de carga | Plett, *Battery Management Systems, Vol. 1*, Artech House (cita no verificada) |
+| Capacidad por celda | 5 Ah | **estimado** (el encargo no la fija) |
+| OCV(SoC) | 3.00 / 3.45 / 3.55 / 3.62 / 3.67 / 3.72 / 3.79 / 3.87 / 3.96 / 4.07 / 4.20 V en SoC 0 … 1 | **estimado**: forma típica NMC, monótona de 3.0 a 4.2 V (Anexo B.1) |
+| R0 | 30 mΩ | **estimado** (Anexo B.1) |
+| R1, C1 | 20 mΩ, 2000 F (τ = 40 s) | **estimado** (Anexo B.1) |
+| Segunda rama RC | desactivada por defecto (R2 = 0) | Anexo B.1 la deja opcional |
+| η culómbica | 0.99, solo en carga | **estimado** (Anexo B.1) |
+| v_min / v_max | 2.5 V / 4.2 V por celda | de hoja (Anexo B.1) |
+| i_max | 50 A por celda | **estimado** |
+| Límites | dan un aviso; el modelo no corta la corriente | decisión: el corte es tarea del BMS, que se puede modelar con bloques de señal |
+| Temperatura y envejecimiento | fuera de alcance | Anexo B.1 lo deja como extensión |
+| Supercondensador | C·dv_C/dt = −i − v_C/R_fuga, v = v_C − i·R_esr; 100 F, 10 mΩ, 10 kΩ | ecuaciones del Anexo B.2 con el signo de la convención de descarga; valores **estimados** |
+| Cargador: control de corriente | PI con prealimentación de v_bajo; ω_c = 2π·f_sw/10, Kp = L·ω_c, Ki = Kp·ω_c/5 | **estimado**: ajuste por cancelación de polo, ancho de banda una décima de f_sw |
+| Cargador: lazo de tensión | PI con retrocálculo, Tt = Kp_v/Ki_v; Kp_v = 1 A/V, Ki_v = 10 A/(V·s) | **estimado**. La integración condicional hacía oscilar a BDF en el límite de corriente |
+| Cargador: rendimiento | i_alto = d·i_L/η (alto → bajo) o d·i_L·η (bajo → alto); η = 0.97 | Anexo B.3; medido en las pruebas: el balance cierra con error 2e-5 (criterio 1 %) |
+| Condensador del cargador | C = 0 por defecto (sin él) | con una batería en bornes, R0·C sería un modo de microsegundos que obliga a pasos diminutos |
+
+## Modelos físicos: dominio mecánico y máquinas (Fase 4 del encargo)
+
+`engine/heliora/lib/mecanica.py` y `engine/heliora/lib/maquinas.py`. Analogía par ↔ corriente, ω ↔ tensión; la
+bancada (ω = 0) es la referencia. Ecuaciones de máquinas de Krause, Wasynczuk y Sudhoff, *Analysis of Electric
+Machinery and Drive Systems*, IEEE Press / Wiley (cita no verificada).
+
+| Valor | En Heliora | Fuente o motivo |
+|---|---|---|
+| PMSM | R_s 0.5 Ω, L_d = L_q 4 mH, λ_pm 0.1 Wb, p 4, J 1e-3 kg·m², B 1e-4 N·m·s | **estimado** (Anexo C.2) |
+| Máquina de continua | R_a 1 Ω, L_a 10 mH, K_e = K_t 0.5 V·s/rad, J 0.01 kg·m², B 1e-3 N·m·s | **estimado** |
+| Inducción (jaula, ~4 kW, 400 V, 4 polos) | R_s 1.5 Ω, R_r 1.2 Ω, L_ls = L_lr 6 mH, L_m 0.18 H, p 2, J 0.02 kg·m², B 2e-3 N·m·s | **estimado**, valores redondos propios |
+| Inducción: formulación | cuarto orden en flujos, ejes estacionarios αβ (no necesita ángulo) | Anexo C.3 deja libre el marco |
+| Inercia del rotor | dentro de la máquina si J > 0; con J = 0 la velocidad la fija la red mecánica externa | decisión: permite fuentes de velocidad en el eje (pruebas de cortocircuito y de par a deslizamiento fijo) |
+| Dos inercias unidas por un engranaje ideal | **no se admite**: la red da un mensaje claro y pide sumar las inercias (con n²) | limitación de reducir la red a EDOs (estado duplicado); es uno de los motivos del diseño DAE de la Fase 5 |
+| Comprobación | PMSM: K_t = 1.5·p·λ exacta, par de cortocircuito a 1e-9; inducción: par a deslizamiento impuesto y T_max de Kloss a 1e-8 del circuito equivalente; deslizamiento con carga a 1e-8 | pruebas de `pruebas_maquinas.py` |
+
 ## Lo que no se pudo saber
 
 - Cómo se ve y se comporta la ventana original: no se ejecutó el programa, y la identidad de Heliora es propia a propósito.

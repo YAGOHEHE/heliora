@@ -41,6 +41,7 @@ def _lista(a):
 
 
 def serie(x, y, nombre="", tipo="linea", color=None):
+    """Construye una serie para una gráfica 2D, reducida a un máximo de puntos, con `x` e `y` en listas JSON."""
     x, y = reducir(x, y)
     d = {"x": _lista(x), "y": _lista(y), "nombre": nombre, "tipo": tipo}
     if color:
@@ -49,11 +50,13 @@ def serie(x, y, nombre="", tipo="linea", color=None):
 
 
 def figura(titulo="", xlabel="", ylabel="", series=None, lineas_h=None, log_x=False, log_y=False):
+    """Construye una figura 2D con su título, etiquetas de ejes, series, líneas horizontales y ejes logarítmicos opcionales."""
     return {"clase": "2d", "titulo": titulo, "xlabel": xlabel, "ylabel": ylabel, "series": series or [],
             "lineas_h": lineas_h or [], "log_x": log_x, "log_y": log_y}
 
 
 def figura3d(titulo="", X=None, Y=None, Z=None, xlabel="x", ylabel="y", zlabel="z", tipo="superficie"):
+    """Construye una figura 3D, de tipo `superficie` (malla submuestreada) o línea, con coordenadas en listas JSON."""
     X, Y, Z = np.asarray(X, dtype=float), np.asarray(Y, dtype=float), np.asarray(Z, dtype=float)
     if tipo == "superficie":
         if X.ndim == 1:
@@ -80,7 +83,7 @@ class Graficas:
         return self.actual
 
     def plot(self, x, y=None, nombre="", titulo=None, xlabel=None, ylabel=None, nueva=None, tipo="linea"):
-        """plot(y) o plot(x, y). Con nueva=False se dibuja sobre la figura anterior."""
+        """Dibuja `y` (o `y` frente a `x`); con `nueva=False` lo hace sobre la figura anterior."""
         if y is None:
             y = np.asarray(x, dtype=float)
             if y.ndim == 2:
@@ -100,37 +103,45 @@ class Graficas:
         return f
 
     def scatter(self, x, y, nombre="", **kw):
+        """Dibuja `x` frente a `y` como puntos."""
         return self.plot(x, y, nombre, tipo="puntos", **kw)
 
     def bar(self, x, y, nombre="", **kw):
+        """Dibuja `x` frente a `y` como barras."""
         return self.plot(x, y, nombre, tipo="barras", **kw)
 
     def hist(self, x, cubetas=30, nombre="", **kw):
+        """Dibuja el histograma de los valores finitos de `x` con `cubetas` cubetas."""
         x = np.asarray(x, dtype=float)
         h, e = np.histogram(x[np.isfinite(x)], bins=int(cubetas))
         return self.plot(0.5 * (e[:-1] + e[1:]), h, nombre, tipo="barras", **kw)
 
     def surf(self, X, Y, Z, titulo=""):
+        """Añade una figura de superficie 3D con la malla `X`, `Y`, `Z` y la devuelve."""
         f = figura3d(titulo, X, Y, Z)
         self.figuras.append(f)
         self.actual = f
         return f
 
     def plot3(self, x, y, z, titulo=""):
+        """Añade una figura de línea 3D con las coordenadas `x`, `y`, `z` y la devuelve."""
         f = figura3d(titulo, x, y, z, tipo="linea3d")
         self.figuras.append(f)
         self.actual = f
         return f
 
     def titulo(self, t):
+        """Fija el título de la figura actual, si existe."""
         if self.actual:
             self.actual["titulo"] = t
 
     def xlabel(self, t):
+        """Fija la etiqueta del eje x de la figura actual, si existe."""
         if self.actual:
             self.actual["xlabel"] = t
 
     def ylabel(self, t):
+        """Fija la etiqueta del eje y de la figura actual, si existe."""
         if self.actual:
             self.actual["ylabel"] = t
 
@@ -147,6 +158,7 @@ class Espacio:
         self.reiniciar()
 
     def reiniciar(self):
+        """Recrea el espacio de nombres de la consola con solo las funciones y librerías base."""
         import scipy
         from scipy import integrate, interpolate, linalg, optimize, signal, stats
 
@@ -177,7 +189,8 @@ class Espacio:
         if str(ruta).lower().endswith(".parquet"):
             d.to_parquet(ruta)
         else:
-            d.to_csv(ruta, index=False)
+            # LF en todos los sistemas, como pide el .gitattributes del proyecto
+            d.to_csv(ruta, index=False, lineterminator="\n")
         return ruta
 
     def _ejecutar(self, codigo, interactivo=True):
@@ -211,12 +224,15 @@ class Espacio:
         return {"salida": texto, "resultado": repr_res, "error": error, "figuras": self.g.figuras, "variables": self.variables()}
 
     def evaluar(self, codigo):
+        """Ejecuta el código en modo interactivo y devuelve el valor de la última expresión."""
         return self._ejecutar(codigo, True)
 
     def ejecutar_script(self, codigo):
+        """Ejecuta el código completo sin evaluar la última expresión."""
         return self._ejecutar(codigo, False)
 
     def variables(self):
+        """Devuelve la descripción de las variables del usuario, ordenadas por nombre."""
         filas = []
         for k, v in list(self.ns.items()):
             if k in self.base or k.startswith("_") or callable(v) or isinstance(v, type) or type(v).__name__ == "module":
@@ -225,6 +241,7 @@ class Espacio:
         return sorted(filas, key=lambda f: f["nombre"].lower())
 
     def ver(self, nombre, limite=500):
+        """Devuelve las columnas y filas (hasta `limite`) de la variable `nombre` para mostrarla en tabla."""
         v = self.ns[nombre]
         if isinstance(v, pd.Series):
             v = v.to_frame(v.name or "valor")
@@ -252,6 +269,7 @@ def _celda(x):
 
 
 def describir_var(k, v):
+    """Devuelve el nombre, tipo, forma y resumen de la variable `k` de valor `v`."""
     if isinstance(v, pd.DataFrame):
         return {"nombre": k, "tipo": "tabla", "forma": f"{v.shape[0]} × {v.shape[1]}", "resumen": ", ".join(str(c) for c in v.columns[:6]),
                 "columnas": [str(c) for c in v.columns], "numericas": [str(c) for c in v.select_dtypes("number").columns]}

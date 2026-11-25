@@ -200,7 +200,7 @@ pub fn miles(x: f64) -> String {
     let t = n.abs().to_string();
     let mut o = String::new();
     for (i, ch) in t.chars().enumerate() {
-        if i > 0 && (t.len() - i) % 3 == 0 {
+        if i > 0 && (t.len() - i).is_multiple_of(3) {
             o.push('\u{202f}');
         }
         o.push(ch);
@@ -361,7 +361,7 @@ impl Fig2D {
         let [x0, x1, y0, y1] = vista;
         let px = |x: f64| area.left() + ((x - x0) / (x1 - x0)) as f32 * area.width();
         let py = |y: f64| area.bottom() - ((y - y0) / (y1 - y0)) as f32 * area.height();
-        let rejilla = Stroke::new(1.0, pal.linea.gamma_multiply(0.55));
+        let rejilla = Stroke::new(1.0_f32, pal.linea.gamma_multiply(0.55));
         let fuente = tema::fuente_mono(10.5);
         // El número de marcas depende del espacio disponible
         let marcas_x = ((area.width() / 90.0) as usize).clamp(3, 10);
@@ -383,7 +383,7 @@ impl Fig2D {
             let e = if self.log_y { 10f64.powf(t) } else { t / fy };
             p.text(Pos2::new(area.left() - 5.0, y), Align2::RIGHT_CENTER, numero(e), fuente.clone(), pal.texto_3);
         }
-        p.rect_stroke(area, 0.0, Stroke::new(1.0, pal.linea_fuerte), egui::StrokeKind::Middle);
+        p.rect_stroke(area, 0.0, Stroke::new(1.0_f32, pal.linea_fuerte), egui::StrokeKind::Middle);
         let xlabel = etiqueta_con_prefijo(&self.xlabel, fx, prx);
         let ylabel = etiqueta_con_prefijo(&self.ylabel, fy, pry);
         if !xlabel.is_empty() {
@@ -398,7 +398,7 @@ impl Fig2D {
         // Líneas de referencia: discontinuas en TEXTO_3 (los colores de estado no se usan aquí)
         for &h in &self.lineas_h {
             let y = py(self.ty(h));
-            pa.extend(Shape::dashed_line(&[Pos2::new(area.left(), y), Pos2::new(area.right(), y)], Stroke::new(1.0, pal.texto_3), 6.0, 4.0));
+            pa.extend(Shape::dashed_line(&[Pos2::new(area.left(), y), Pos2::new(area.right(), y)], Stroke::new(1.0_f32, pal.texto_3), 6.0, 4.0));
         }
         for (i, s) in self.series.iter().enumerate() {
             if !s.visible {
@@ -412,11 +412,11 @@ impl Fig2D {
                         if a.is_finite() && b.is_finite() {
                             tramo.push(Pos2::new(px(self.tx(a)), py(self.ty(b))));
                         } else if !tramo.is_empty() {
-                            pa.add(Shape::line(std::mem::take(&mut tramo), Stroke::new(1.5, c)));
+                            pa.add(Shape::line(std::mem::take(&mut tramo), Stroke::new(1.5_f32, c)));
                         }
                     }
                     if tramo.len() > 1 {
-                        pa.add(Shape::line(tramo, Stroke::new(1.5, c)));
+                        pa.add(Shape::line(tramo, Stroke::new(1.5_f32, c)));
                     }
                 }
                 TipoSerie::Puntos => {
@@ -449,12 +449,12 @@ impl Fig2D {
             let mut y = area.top() + 6.0;
             let ancho_max = self.series.iter().map(|s| s.nombre.chars().count()).max().unwrap_or(5) as f32 * 6.6 + 22.0;
             let fondo = Rect::from_min_size(Pos2::new(area.right() - ancho_max - 6.0, y - 2.0), Vec2::new(ancho_max, self.series.len().min(12) as f32 * 15.0 + 4.0));
-            p.rect(fondo, tema::radio() as f32, pal.campo, Stroke::new(1.0, pal.linea), egui::StrokeKind::Inside);
+            p.rect(fondo, tema::radio() as f32, pal.campo, Stroke::new(1.0_f32, pal.linea), egui::StrokeKind::Inside);
             for (i, s) in self.series.iter().take(12).enumerate() {
                 let c = s.color.unwrap_or(tema::p().series[i % tema::p().series.len()]);
                 let c = if s.visible { c } else { tema::p().linea };
                 let fila = Rect::from_min_size(Pos2::new(fondo.left(), y), Vec2::new(ancho_max, 15.0));
-                p.line_segment([Pos2::new(fondo.left() + 4.0, y + 7.0), Pos2::new(fondo.left() + 18.0, y + 7.0)], Stroke::new(2.0, c));
+                p.line_segment([Pos2::new(fondo.left() + 4.0, y + 7.0), Pos2::new(fondo.left() + 18.0, y + 7.0)], Stroke::new(2.0_f32, c));
                 let nombre = if s.nombre.is_empty() { format!("serie {}", i + 1) } else { s.nombre.clone() };
                 p.text(Pos2::new(fondo.left() + 22.0, y + 7.0), Align2::LEFT_CENTER, nombre, FontId::proportional(11.0), if s.visible { tema::p().texto } else { tema::p().texto_2 });
                 if resp.clicked() {
@@ -477,7 +477,7 @@ impl Fig2D {
                 let yv = y1 - ((pp.y - area.top()) / area.height()) as f64 * (y1 - y0);
                 let dx = if self.log_x { 10f64.powf(xv) } else { xv };
                 let dy = if self.log_y { 10f64.powf(yv) } else { yv };
-                p.line_segment([Pos2::new(pp.x, area.top()), Pos2::new(pp.x, area.bottom())], Stroke::new(1.0, pal.linea_fuerte));
+                p.line_segment([Pos2::new(pp.x, area.top()), Pos2::new(pp.x, area.bottom())], Stroke::new(1.0_f32, pal.linea_fuerte));
                 // Lectura en un recuadro CAMPO: el tiempo (x) y el valor de cada serie visible en ese x
                 let mut lineas = vec![(format!("{} = {}", if self.xlabel.to_lowercase().starts_with("tiempo") { "t" } else { "x" }, numero(dx)), pal.texto)];
                 let mut con_serie = false;
@@ -495,7 +495,7 @@ impl Fig2D {
                 let f = tema::fuente_mono(11.0);
                 let ancho = lineas.iter().map(|(t, _)| ui.fonts_mut(|fo| fo.layout_no_wrap(t.clone(), f.clone(), pal.texto).size().x)).fold(0.0f32, f32::max);
                 let caja = Rect::from_min_size(area.left_top() + Vec2::new(6.0, 6.0), Vec2::new(ancho + 14.0, lineas.len() as f32 * 15.0 + 8.0));
-                p.rect(caja, tema::radio() as f32, pal.campo, Stroke::new(1.0, pal.linea), egui::StrokeKind::Inside);
+                p.rect(caja, tema::radio() as f32, pal.campo, Stroke::new(1.0_f32, pal.linea), egui::StrokeKind::Inside);
                 for (k, (t, c)) in lineas.into_iter().enumerate() {
                     p.text(caja.left_top() + Vec2::new(7.0, 4.0 + k as f32 * 15.0), Align2::LEFT_TOP, t, f.clone(), c);
                 }
@@ -676,7 +676,7 @@ impl Fig3D {
         for (a, b) in aristas {
             let (pa, _) = self.proyectar(centro, s, a);
             let (pb, _) = self.proyectar(centro, s, b);
-            p.line_segment([pa, pb], Stroke::new(1.0, tema::p().linea));
+            p.line_segment([pa, pb], Stroke::new(1.0_f32, tema::p().linea));
         }
         let eti = |q: [f32; 3], t: String, p: &egui::Painter, f: &Fig3D| {
             let (pp, _) = f.proyectar(centro, s, q);
@@ -692,7 +692,7 @@ impl Fig3D {
                 let pts: Vec<Pos2> = (0..x.len().min(y.len()).min(z.len()))
                     .map(|i| self.proyectar(centro, s, [norm(x[i], rx), norm(y[i], ry), norm(z[i], rz)]).0)
                     .collect();
-                p.add(Shape::line(pts, Stroke::new(1.6, tema::p().acento)));
+                p.add(Shape::line(pts, Stroke::new(1.6_f32, tema::p().acento)));
             }
         } else {
             let mut caras = self.caras(rx, ry, rz);
@@ -709,7 +709,7 @@ impl Fig3D {
                 m.add_triangle(0, 1, 2);
                 m.add_triangle(0, 2, 3);
                 p.add(Shape::mesh(m));
-                p.add(Shape::closed_line(puntos, Stroke::new(0.5, tema::p().linea)));
+                p.add(Shape::closed_line(puntos, Stroke::new(0.5_f32, tema::p().linea)));
             }
         }
         if let Some(Accion::Png(_)) = accion {

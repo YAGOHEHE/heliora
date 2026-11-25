@@ -6,3 +6,4 @@ statsmodels
 pvlib
 pyarrow
 joblib
+typing_extensions

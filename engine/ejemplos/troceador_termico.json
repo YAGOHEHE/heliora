@@ -1,0 +1,336 @@
+{
+  "formato": "heliora-diagrama/1",
+  "nombre": "Troceador con modelo electro-térmico",
+  "sistema": {
+    "bloques": [
+      {
+        "id": "L",
+        "nombre": "L 2 mH",
+        "params": {
+          "L": 0.002,
+          "i0": 150.0
+        },
+        "tipo": "inductor",
+        "x": 420,
+        "y": 60
+      },
+      {
+        "id": "R",
+        "nombre": "Carga 1 Ω",
+        "params": {
+          "R": 1.0
+        },
+        "tipo": "resistor",
+        "x": 600,
+        "y": 60
+      },
+      {
+        "id": "amb",
+        "nombre": "Ambiente 40 °C",
+        "params": {
+          "T_amb": 40.0
+        },
+        "tipo": "ambiente",
+        "x": 880,
+        "y": 420
+      },
+      {
+        "id": "d",
+        "nombre": "Ciclo de trabajo",
+        "params": {
+          "c": 0.5
+        },
+        "tipo": "constante",
+        "x": 40,
+        "y": 220
+      },
+      {
+        "id": "dis",
+        "nombre": "Disipador",
+        "params": {
+          "C": 50.0,
+          "T0": 40.0
+        },
+        "tipo": "capacidad_termica",
+        "x": 560,
+        "y": 420
+      },
+      {
+        "id": "dl",
+        "nombre": "Diodo libre",
+        "params": {
+          "Ron": 0.002,
+          "Vf": 0.9
+        },
+        "tipo": "diodo",
+        "x": 380,
+        "y": 200
+      },
+      {
+        "id": "g",
+        "nombre": "Tierra",
+        "params": {},
+        "tipo": "tierra",
+        "x": 380,
+        "y": 320
+      },
+      {
+        "id": "o",
+        "nombre": "Temperaturas de unión y disipador",
+        "params": {
+          "cada": 20,
+          "n": 3
+        },
+        "tipo": "osciloscopio",
+        "x": 880,
+        "y": 200
+      },
+      {
+        "id": "pwm",
+        "nombre": "PWM 5 kHz",
+        "params": {
+          "fc": 5000.0,
+          "modo": "bajada"
+        },
+        "tipo": "pwm",
+        "x": 200,
+        "y": 220
+      },
+      {
+        "id": "q",
+        "nombre": "IGBT",
+        "params": {},
+        "tipo": "igbt",
+        "x": 220,
+        "y": 60
+      },
+      {
+        "id": "rcd",
+        "nombre": "R_th cápsula-disipador diodo",
+        "params": {
+          "R": 0.02
+        },
+        "tipo": "resistencia_termica",
+        "x": 380,
+        "y": 420
+      },
+      {
+        "id": "rcq",
+        "nombre": "R_th cápsula-disipador IGBT",
+        "params": {
+          "R": 0.02
+        },
+        "tipo": "resistencia_termica",
+        "x": 220,
+        "y": 420
+      },
+      {
+        "id": "rha",
+        "nombre": "R_th disipador-ambiente",
+        "params": {
+          "R": 0.3
+        },
+        "tipo": "resistencia_termica",
+        "x": 720,
+        "y": 420
+      },
+      {
+        "id": "v",
+        "nombre": "Bus de 300 V",
+        "params": {
+          "V": 300.0
+        },
+        "tipo": "fuente_dc",
+        "x": 40,
+        "y": 80
+      }
+    ],
+    "conexiones": [
+      {
+        "a": [
+          "R",
+          "p"
+        ],
+        "de": [
+          "L",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "g",
+          "t"
+        ],
+        "de": [
+          "R",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "pwm",
+          "d"
+        ],
+        "de": [
+          "d",
+          "y"
+        ]
+      },
+      {
+        "a": [
+          "o",
+          "u3"
+        ],
+        "de": [
+          "dis",
+          "T"
+        ]
+      },
+      {
+        "a": [
+          "rha",
+          "p"
+        ],
+        "de": [
+          "dis",
+          "p"
+        ]
+      },
+      {
+        "a": [
+          "o",
+          "u2"
+        ],
+        "de": [
+          "dl",
+          "Tj"
+        ]
+      },
+      {
+        "a": [
+          "q",
+          "e"
+        ],
+        "de": [
+          "dl",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "g",
+          "t"
+        ],
+        "de": [
+          "dl",
+          "p"
+        ]
+      },
+      {
+        "a": [
+          "rcd",
+          "p"
+        ],
+        "de": [
+          "dl",
+          "th"
+        ]
+      },
+      {
+        "a": [
+          "q",
+          "g"
+        ],
+        "de": [
+          "pwm",
+          "g"
+        ]
+      },
+      {
+        "a": [
+          "o",
+          "u1"
+        ],
+        "de": [
+          "q",
+          "Tj"
+        ]
+      },
+      {
+        "a": [
+          "L",
+          "p"
+        ],
+        "de": [
+          "q",
+          "e"
+        ]
+      },
+      {
+        "a": [
+          "rcq",
+          "p"
+        ],
+        "de": [
+          "q",
+          "th"
+        ]
+      },
+      {
+        "a": [
+          "dis",
+          "p"
+        ],
+        "de": [
+          "rcd",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "dis",
+          "p"
+        ],
+        "de": [
+          "rcq",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "amb",
+          "p"
+        ],
+        "de": [
+          "rha",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "g",
+          "t"
+        ],
+        "de": [
+          "v",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "q",
+          "c"
+        ],
+        "de": [
+          "v",
+          "p"
+        ]
+      }
+    ]
+  },
+  "solver": {
+    "metodo": "rk4",
+    "paso": 2e-06,
+    "t_fin": 0.05
+  }
+}

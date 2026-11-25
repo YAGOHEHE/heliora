@@ -13,7 +13,7 @@ import time
 
 import numpy as np
 
-from .nucleo import REGISTRO, evaluar_numero
+from .nucleo import REGISTRO, BloqueDiscreto, evaluar_numero
 from . import bloques_genericos  # noqa: F401 (registra los bloques)
 from .bloques_genericos import AEspacio, Osciloscopio
 from .lazos import SinSolucion, componentes_fuertes, resolver as resolver_no_lineal
@@ -23,13 +23,13 @@ FORMATO = "heliora-diagrama/1"
 
 
 class ErrorDiagrama(ValueError):
-    pass
+    """El diagrama es inválido o no se puede construir el modelo."""
 
 
 def cargar_librerias():
     """Importa las librerías para que registren sus bloques."""
     import importlib
-    for nombre in ("electrica", "potencia", "fotovoltaica"):
+    for nombre in ("termica", "electrica", "potencia", "fotovoltaica", "senal", "almacenamiento", "mecanica", "maquinas"):
         try:
             importlib.import_module(f"..lib.{nombre}", __package__)
         except ModuleNotFoundError as e:
@@ -304,6 +304,14 @@ class Modelo:
         self.con_estado = [k for k, (a, b) in enumerate(self.tramos) if b > a]
         self.cruzables = [k for k, b in enumerate(self.lista) if b.tiene_cruce()]
         self.hay_cruces = bool(self.cruzables)
+        # Bloques muestreados en el orden en que deben fijar su salida en un mismo instante:
+        # primero los que no dependen de su entrada (su salida es su estado), después el resto
+        # según el orden topológico, para que cada uno lea lo que acaban de fijar los anteriores.
+        plano = []
+        for k in orden:
+            plano.extend(k.orden if k.__class__ is _Lazo else [k])
+        self.discretos = sorted((k for k in plano if isinstance(self.lista[k], BloqueDiscreto)),
+                                key=lambda k: (bool(self.lista[k].directo), plano.index(k)))
 
     def nombre_estado(self, i):
         """Bloque al que pertenece el estado i (para decir cuál limita el paso)."""
@@ -342,6 +350,12 @@ class Modelo:
         return [0.0 if f is None else Y[f[0]][f[1]] for f in self.fuentes[k]]
 
     def salidas(self, t, x):
+        """Evalúa en orden las salidas de todos los bloques y las guarda en la tabla de señales `self.Y`.
+
+        Args:
+            t: tiempo de simulación, en s.
+            x: vector de estados del modelo completo.
+        """
         Y, lista, tramos = self.Y, self.lista, self.tramos
         r = self.red_idx
         if r >= 0:
@@ -393,6 +407,7 @@ class Modelo:
         return d
 
     def f(self, t, x):
+        """Calcula dx/dt del modelo completo, tras evaluar las salidas en (t, x)."""
         self.evaluaciones += 1
         self.salidas(t, x)
         dx = np.empty_like(x)
@@ -402,6 +417,7 @@ class Modelo:
         return dx
 
     def iniciar(self, t0=0.0):
+        """Reinicia los bloques y devuelve el vector de estados inicial, con las salidas evaluadas en t0."""
         for b in self.lista:
             b.reiniciar()
         x = self.x_ini.copy()
@@ -423,6 +439,8 @@ class Modelo:
         if self._de_evento(t, x):
             cambio = True
             self.salidas(t, x)
+        if self.discretos and self._tics(t, x):
+            cambio = True
         for k, b in enumerate(self.lista):
             if b.sumidero or b.de_evento:
                 continue
@@ -440,6 +458,40 @@ class Modelo:
             if b.sumidero:
                 b.paso_mayor(t, None, self._u(k), None)
         return cambio
+
+    def _tics(self, t, x):
+        """Atiende los bloques muestreados cuyo instante es t. True si cambió alguna salida.
+
+        Primero cada bloque fija su salida (`tic`), en orden, y las señales se recalculan tras
+        cada cambio; después todos avanzan su estado (`actualizar_tic`) con las entradas ya
+        definitivas de ese instante.
+        """
+        toca = [k for k in self.discretos if self.lista[k].toca_tic(t)]
+        if not toca:
+            return False
+        cambio = False
+        for k in toca:
+            if self.lista[k].tic(t, self._u(k)):
+                cambio = True
+                self.salidas(t, x)
+        for k in toca:
+            self.lista[k].actualizar_tic(t, self._u(k))
+        return cambio
+
+    def avisos_muestreo(self, paso):
+        """Avisos de los bloques muestreados cuyos instantes no coinciden con el paso fijo."""
+        avisos = []
+        for k in self.discretos:
+            b = self.lista[k]
+            if paso:
+                fuera = [v for v in (b.Ts / paso, b.offset / paso) if abs(v - round(v)) > 1e-6]
+                if fuera:
+                    avisos.append(f"«{b.etiqueta}»: Ts = {b.Ts:g} s u offset no son múltiplos del paso fijo "
+                                  f"({paso:g} s); cada muestreo se aplica en el primer paso posterior.")
+            if b.tics_saltados:
+                avisos.append(f"«{b.etiqueta}»: se saltaron {b.tics_saltados} instantes de muestreo porque "
+                              f"el paso es mayor que Ts = {b.Ts:g} s.")
+        return avisos
 
     def _de_evento(self, t, x):
         cambio = False
@@ -467,6 +519,7 @@ class Modelo:
         return nombres
 
     def proximo_evento(self, t):
+        """Devuelve el menor `proximo_evento(t)` entre los bloques, en s; `math.inf` si ninguno tiene."""
         m = math.inf
         for b in self.lista:
             e = b.proximo_evento(t)
@@ -528,6 +581,7 @@ def simular(diagrama, espacio=None, cancelar=None, config=None, informe=None):
             res["senales"].append({"bloque": b.id, "etiqueta": b.etiqueta, "t": t, "trazas": trazas,
                                    "exportado": isinstance(b, AEspacio), "nombres": m.nombres_entradas(b)})
     res["avisos"] = list(m.red.avisos) if m.red else []
+    res["avisos"] += m.avisos_muestreo(_num(cfg.get("paso")) if not variable else None)
     # Bloques de cada lazo (sin la red, que reúne a todos los elementos eléctricos)
     res["lazos"] = [[m.lista[k].id for k in lazo.comp if m.lista[k] is not m.red] for lazo in m.lazos]
     for lazo in m.lazos:
@@ -549,12 +603,16 @@ def bloque(ident, tipo, x=0, y=0, nombre=None, sistema=None, **params):
 
 
 def hilo(de, a):
-    """Conexión: hilo("r.p", "c.p") une el puerto p del bloque r con el puerto p del bloque c."""
+    """Devuelve la conexión entre dos puertos, dados como "bloque.puerto".
+
+    Ejemplo: hilo("r.p", "c.p") une el puerto p del bloque r con el puerto p del bloque c.
+    """
     b1, p1 = de.rsplit(".", 1)
     b2, p2 = a.rsplit(".", 1)
     return {"de": [b1, p1], "a": [b2, p2]}
 
 
 def diagrama(nombre, bloques, conexiones, **solver):
+    """Compone un diagrama en el formato `FORMATO` con los ajustes de solver indicados."""
     return {"formato": FORMATO, "nombre": nombre, "solver": solver,
             "sistema": {"bloques": bloques, "conexiones": conexiones}}

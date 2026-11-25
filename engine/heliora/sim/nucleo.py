@@ -18,9 +18,15 @@ Métodos que puede definir:
     paso_mayor(t, x, u, y)   actualización discreta al final de cada paso aceptado;
                              devuelve True si hubo un salto en la salida
     proximo_evento(t)        siguiente instante en el que el solver debe caer
+
+Los bloques de tiempo discreto heredan de `BloqueDiscreto`: declaran un periodo de muestreo `Ts`
+y un desfase `offset`, y en cada instante k·Ts + offset el modelo llama a `tic(t, u)` (fija la
+salida retenida) y después a `actualizar_tic(t, u)` (avanza el estado). Entre instantes la salida
+es el valor retenido.
 """
 from __future__ import annotations
 
+from typing_extensions import override
 import ast
 import math
 import re
@@ -44,6 +50,7 @@ class P:
 
 
 def registrar(cls):
+    """Registra la clase de bloque en `REGISTRO` bajo su atributo `tipo` y la devuelve."""
     REGISTRO[cls.tipo] = cls
     return cls
 
@@ -148,6 +155,15 @@ class Bloque:
 
     @classmethod
     def definicion_parametros(cls, crudos=None):
+        """Devuelve la lista de parámetros `P` del bloque.
+
+        Args:
+            crudos: valores sin evaluar de los parámetros, tal como llegan del diagrama. Los
+                bloques cuya lista de parámetros depende de otro parámetro lo redefinen y lo leen.
+
+        Returns:
+            Lista de `P`; por defecto, el atributo de clase `parametros`.
+        """
         return cls.parametros
 
     @classmethod
@@ -157,28 +173,66 @@ class Bloque:
                 "e": list(cls.puertos_e), "e3": list(cls.puertos_e3)}
 
     def preparar(self):
-        pass
+        """Deriva atributos de cálculo a partir de `self.p`; el constructor lo llama una vez, al final."""
 
     def n_estados(self):
+        """Devuelve el número de estados continuos del bloque."""
         return 0
 
     def x0(self):
+        """Devuelve la lista con el valor inicial de cada estado, de longitud `n_estados()`."""
         return []
 
     def salida(self, t, x, u):
+        """Calcula las salidas del bloque.
+
+        Args:
+            t: tiempo de simulación, en s.
+            x: estados del bloque, de longitud `n_estados()`; `None` en los bloques sumidero.
+            u: valores de las entradas, en el orden de `entradas`; `None` si `directo` es False.
+
+        Returns:
+            Lista con un valor por salida, en el orden de `salidas`.
+        """
         return []
 
     def derivada(self, t, x, u):
+        """Calcula la derivada temporal de los estados.
+
+        Args:
+            t: tiempo de simulación, en s.
+            x: estados del bloque, de longitud `n_estados()`.
+            u: valores de las entradas, en el orden de `entradas`.
+
+        Returns:
+            Lista de dx/dt, de longitud `n_estados()`.
+        """
         return []
 
     def paso_mayor(self, t, x, u, y):
+        """Actualiza el estado discreto del bloque; el modelo lo llama al final de cada paso aceptado.
+
+        Args:
+            t: tiempo al final del paso, en s.
+            x: estados del bloque; `None` en los sumideros y en la segunda llamada tras un cambio.
+            u: valores de las entradas, en el orden de `entradas`.
+            y: salidas vigentes del bloque; `None` en las llamadas con `x` igual a `None`.
+
+        Returns:
+            True si hubo un salto en la salida, de modo que el modelo recalcula las señales.
+        """
         return False
 
     def proximo_evento(self, t):
+        """Devuelve el siguiente instante, en s, en el que el solver debe caer; `math.inf` si no hay.
+
+        Args:
+            t: tiempo actual de simulación, en s.
+        """
         return math.inf
 
     def reiniciar(self):
-        pass
+        """Devuelve el estado interno del bloque a su valor inicial; el modelo lo llama al iniciar."""
 
     # Cruces por cero (solo con solvers de paso variable). Un bloque con discontinuidad define
     # cruce(t, x, u) -> lista de señales, y mantiene su modo hasta paso_mayor si usar_zc es True.
@@ -187,7 +241,19 @@ class Bloque:
     de_evento = False   # su paso_mayor solo cambia de modo y se puede repetir sin efectos
 
     def tiene_cruce(self):
+        """Indica si el bloque define señales de cruce por cero."""
         return self.cruce is not None
+
+    # Tiempo discreto: Ts > 0 marca un bloque muestreado (ver BloqueDiscreto).
+    Ts = 0.0
+    offset = 0.0
+
+    def tic(self, t, u):
+        """Fija la salida retenida en un instante de muestreo; devuelve True si cambió."""
+        return False
+
+    def actualizar_tic(self, t, u):
+        """Avanza el estado discreto tras fijar las salidas de todos los bloques del instante."""
 
     @classmethod
     def describir(cls):
@@ -210,3 +276,63 @@ class Bloque:
             "puertos_dinamicos": cls.puertos_dinamicos,
             "archivo": src, "linea": linea, "color": cls.color,
         }
+
+
+# Margen relativo (en periodos de muestreo) con el que un instante se da por alcanzado: cubre el
+# redondeo de t + (t_evento - t) del solver y la suma acumulada de los pasos fijos.
+TOL_TIC = 1e-9
+
+
+class BloqueDiscreto(Bloque):
+    """Base de los bloques muestreados con periodo `Ts` y desfase `offset`.
+
+    Los instantes de muestreo son t_k = offset + k·Ts. El modelo los publica en `proximo_evento`,
+    de modo que los solvers de paso variable caen exactamente en ellos; con paso fijo se atienden
+    en el primer paso igual o posterior. Las subclases guardan la salida retenida en `self.y`.
+    """
+
+    PARAMS_TS = [P("Ts", "Periodo de muestreo", 1e-3, "s"), P("offset", "Desfase", 0.0, "s")]
+
+    @override
+    def preparar(self):
+        self.Ts = float(self.p["Ts"])
+        self.offset = float(self.p["offset"])
+        if not self.Ts > 0.0:
+            raise ValueError(f"Bloque «{self.etiqueta}»: el periodo de muestreo debe ser positivo")
+        self.preparar_discreto()
+        self.reiniciar()
+
+    def preparar_discreto(self):
+        """Lee los parámetros propios del bloque (se llama una vez, antes de reiniciar)."""
+
+    @override
+    def reiniciar(self):
+        self._n = -1
+        self.tics_saltados = 0
+        self.reiniciar_discreto()
+
+    def reiniciar_discreto(self):
+        """Devuelve la salida retenida y el estado a sus valores iniciales."""
+
+    def toca_tic(self, t):
+        """True si en t se alcanza un instante de muestreo aún no atendido (y lo da por atendido)."""
+        if t + TOL_TIC * self.Ts < self.offset + (self._n + 1) * self.Ts:
+            return False
+        n = math.floor((t - self.offset) / self.Ts + TOL_TIC)
+        self.tics_saltados += max(0, n - self._n - 1)
+        self._n = n
+        return True
+
+    @override
+    def proximo_evento(self, t):
+        return self.offset + (self._n + 1) * self.Ts
+
+    @override
+    def salida(self, t, x, u):
+        return [self.y]
+
+    def _retener(self, valor):
+        """Fija la salida retenida; True si cambió."""
+        previo = self.y
+        self.y = valor
+        return not np.array_equal(np.asarray(previo), np.asarray(valor))

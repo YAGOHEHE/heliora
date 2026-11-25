@@ -7,6 +7,7 @@ Con v_a = V·cos θ se obtiene v_d = V, v_q = 0. Potencias: P = 1.5·(v_d·i_d +
 """
 from __future__ import annotations
 
+from typing_extensions import override
 import math
 from collections import deque
 
@@ -14,7 +15,8 @@ import numpy as np
 
 from ..sim.circuito import Elemento
 from ..sim.nucleo import Bloque, P, registrar
-from .electrica import DispositivoIGBT, _ParametrosIGBT
+from .electrica import DispositivoIGBT, _ParametrosIGBT, aplicar_temperatura_igbt
+from .termica import UnionesTermicas, parametros_union
 
 RAIZ3 = math.sqrt(3.0)
 DOS_TERCIOS_PI = 2.0 * math.pi / 3.0
@@ -23,20 +25,24 @@ DOS_TERCIOS_PI = 2.0 * math.pi / 3.0
 
 
 def clarke(abc):
+    """Transforma las magnitudes trifásicas abc a las componentes (α, β) de Clarke."""
     a, b, c = abc
     return (2.0 / 3.0) * (a - 0.5 * b - 0.5 * c), (b - c) / RAIZ3
 
 
 def clarke_inv(alfa, beta):
+    """Transforma las componentes (α, β) de Clarke a magnitudes trifásicas abc."""
     return np.array([alfa, -0.5 * alfa + 0.5 * RAIZ3 * beta, -0.5 * alfa - 0.5 * RAIZ3 * beta])
 
 
 def park(alfa, beta, th):
+    """Transforma (α, β) al marco giratorio (d, q) para el ángulo th (rad)."""
     c, s = math.cos(th), math.sin(th)
     return alfa * c + beta * s, -alfa * s + beta * c
 
 
 def park_inv(d, q, th):
+    """Transforma (d, q) al marco estacionario (α, β) para el ángulo th (rad)."""
     c, s = math.cos(th), math.sin(th)
     return d * c - q * s, d * s + q * c
 
@@ -191,12 +197,15 @@ class BoostPromediado(Elemento):
     entradas = ["d"]
     salidas = ["i_L"]
 
+    @override
     def n_estados(self):
         return 1
 
+    @override
     def x0(self):
         return [float(self.p["i0"])]
 
+    @override
     def rhs(self, b, t, x, u):
         i = x[0]
         d = min(1.0, max(0.0, float(u[0])))
@@ -204,11 +213,13 @@ class BoostPromediado(Elemento):
         b[self.n["com"]] += d * i
         b[self.n["out"]] += (1.0 - d) * i
 
+    @override
     def derivada_e(self, z, t, x, u):
         d = min(1.0, max(0.0, float(u[0])))
         c = z[self.n["com"]]
         return [((z[self.n["in"]] - c) - (1.0 - d) * (z[self.n["out"]] - c) - float(self.p["R"]) * x[0]) / float(self.p["L"])]
 
+    @override
     def salida_e(self, z, t, x, u):
         return [x[0]]
 
@@ -235,27 +246,34 @@ class BoostConmutado(Elemento):
     con_estado_discreto = True
     n_internos = 1
 
+    @override
     def preparar(self):
         self.t_on = False
         self.d_on = False
 
+    @override
     def reiniciar_e(self):
         self.preparar()
 
+    @override
     def n_estados(self):
         return 1
 
+    @override
     def x0(self):
         return [float(self.p["i0"])]
 
+    @override
     def clave(self):
         return (self.t_on, self.d_on)
 
+    @override
     def estampar_estado(self, S):
         m = self.internos[0]
         S.g(m, self.n["com"], 1.0 / float(self.p["Ron"]) if self.t_on else 1e-6)
         S.g(m, self.n["out"], 1.0 / float(self.p["Rd"]) if self.d_on else 1e-6)
 
+    @override
     def rhs(self, b, t, x, u):
         i = x[0]
         m = self.internos[0]
@@ -266,12 +284,14 @@ class BoostConmutado(Elemento):
             b[m] += i0
             b[self.n["out"]] -= i0
 
+    @override
     def derivada_e(self, z, t, x, u):
         if not self.t_on and not self.d_on:
             # Conducción discontinua: ambos abiertos, la corriente residual se extingue
             return [-x[0] / self.TAU_DCM]
         return [(z[self.n["in"]] - z[self.internos[0]] - float(self.p["R"]) * x[0]) / float(self.p["L"])]
 
+    @override
     def actualizar(self, z, t, x, u):
         g = float(u[0]) >= 0.5
         cambio = g != self.t_on
@@ -288,10 +308,12 @@ class BoostConmutado(Elemento):
             cambio = True
         return cambio
 
+    @override
     def cruce_e(self, z, t, x, u):
         # El diodo se abre cuando la corriente de la bobina se anula
         return [float(x[0])] if self.d_on else [1.0]
 
+    @override
     def salida_e(self, z, t, x, u):
         return [x[0]]
 
@@ -363,6 +385,9 @@ class _Ramas(Elemento, _ParametrosIGBT):
         vbus = abs(z[self.dcp] - z[self.dcn])
         escala_v = vbus / float(p["Vref"])
         Iref = float(p["Iref"])
+        if getattr(self, "termico", False):
+            self._perdidas_por_union(z, dt, escala_v, Iref)
+            return
         for k, d in enumerate(self.dev):
             i = d.corriente(z)
             if d.st:
@@ -378,40 +403,111 @@ class _Ramas(Elemento, _ParametrosIGBT):
                 self.st_ant[k] = d.st
             self.i_ant[k] = i
 
+    def _perdidas_por_union(self, z, dt, escala_v, Iref):
+        """Acumula las mismas pérdidas y apunta además las de conmutación en su unión.
+
+        La unión 2k corresponde al IGBT del dispositivo k y la 2k+1 a su diodo. El solver
+        integra la conducción (`potencia_conduccion`).
+        """
+        p = self.p
+        for k, d in enumerate(self.dev):
+            i = d.corriente(z)
+            if d.st:
+                self.Ec += (z[d.c] - z[d.e]) * i * dt
+            st0 = self.st_ant[k]
+            if st0 != d.st:
+                if d.st == 1:
+                    nombre, j, ic = "Eon", 2 * k, i
+                elif st0 == 1:
+                    nombre, j, ic = "Eoff", 2 * k, self.i_ant[k]
+                elif st0 == 2:
+                    nombre, j, ic = "Err", 2 * k + 1, self.i_ant[k]
+                else:
+                    nombre = None
+                if nombre:
+                    e = float(p[nombre]) * self.factor_energia(j, abs(ic) / Iref) * escala_v
+                    self.Es += e
+                    self.E_union[j] += e
+                self.st_ant[k] = d.st
+            self.i_ant[k] = i
+
 
 @registrar
-class InversorConmutado(_Ramas):
+class InversorConmutado(UnionesTermicas, _Ramas):
     """Inversor trifásico de dos niveles, conmutado.
 
     Cada rama: dos IGBT con diodo antiparalelo. Entrada s = [s_a, s_b, s_c] (1 arriba, 0
-    abajo), con tiempo muerto opcional. Salidas de energía de conducción y conmutación [J].
+    abajo), con tiempo muerto opcional. Salidas de energía de conducción y conmutación [J] y
+    temperaturas de unión Tj_q (6 IGBT) y Tj_d (6 diodos) [°C], en el orden a+, a-, b+, b-, c+, c-.
+
+    Puerto térmico opcional «th» (cápsula común del módulo): si se conecta, cada IGBT y cada diodo
+    tienen su propia unión con su red Foster, reciben sus propias pérdidas (conducción v·i;
+    E_on y E_off en el IGBT, E_rr en el diodo) y sus parámetros siguen a su temperatura, como en
+    el bloque `igbt`. Sin puerto térmico se comporta como antes, a T_ref.
     """
     tipo = "inversor_conm"; nombre = "Inversor conmutado"; categoria = "Potencia · Convertidores"
-    parametros = _ParametrosIGBT.PARAMS + [P("t_muerto", "Tiempo muerto", 0.0, "s")]
-    puertos_e = ["dc_p", "dc_n"]
+    parametros = _ParametrosIGBT.PARAMS + [P("t_muerto", "Tiempo muerto", 0.0, "s")] + parametros_union("qd")
+    puertos_e = ["dc_p", "dc_n", "th"]
     puertos_e3 = ["ac"]
     entradas = ["s"]
     entradas_vector = {"s": 3}
-    salidas = ["E_cond", "E_sw"]
+    salidas = ["E_cond", "E_sw", "Tj_q", "Tj_d"]
 
+    @override
     def preparar(self):
         self.dev = None
+        self.preparar_uniones(["q", "d"] * 6)
 
+    @override
     def reiniciar_e(self):
         self._crear(self.n["ac"], self.n["dc_p"], self.n["dc_n"])
+        self.reiniciar_uniones()
 
+    @override
     def clave(self):
         if self.dev is None:
             self.reiniciar_e()
         return _Ramas.clave(self)
 
+    @override
+    def estampar_fijo(self, S):
+        self.estampar_uniones(S)
+
+    @override
+    def rhs(self, b, t, x, u):
+        _Ramas.rhs(self, b, t, x, u)
+        self.rhs_uniones(b, x)
+
+    @override
+    def derivada_e(self, z, t, x, u):
+        return self.derivada_uniones(z, x)
+
+    def potencia_conduccion(self, z):
+        """Devuelve la lista plana de pérdidas de conducción (W), IGBT y diodo de cada dispositivo."""
+        p = []
+        for d in self.dev:
+            v = (z[d.c] - z[d.e]) * d.corriente(z) if d.st else 0.0
+            p += (v, 0.0) if d.st == 1 else (0.0, v)
+        return p
+
+    @override
+    def tras_paso(self, z, t, x, u):
+        _Ramas.tras_paso(self, z, t, x, u)
+
+        def aplicar(Tj):
+            for k, d in enumerate(self.dev):
+                aplicar_temperatura_igbt(self, d, Tj[2 * k], Tj[2 * k + 1])
+        return self.revisar_temperaturas(z, aplicar)
+
+    @override
     def salida_e(self, z, t, x, u):
-        return [self.Ec, self.Es]
+        Tj = self.temperaturas(z)
+        return [self.Ec, self.Es, Tj[0::2].copy(), Tj[1::2].copy()]
 
 
 @registrar
 class PuenteHConmutado(_Ramas):
-    """Puente H conmutado (dos ramas con IGBT y diodo).   v_ab = (s_a - s_b)·V_bus"""
+    """Puente H conmutado (dos ramas con IGBT y diodo).   v_ab = (s_a - s_b)·V_bus."""
     tipo = "puente_h_conm"; nombre = "Puente H conmutado"; categoria = "Potencia · Convertidores"
     parametros = _ParametrosIGBT.PARAMS + [P("t_muerto", "Tiempo muerto", 0.0, "s")]
     puertos_e = ["dc_p", "dc_n", "a", "b"]
@@ -419,12 +515,15 @@ class PuenteHConmutado(_Ramas):
     entradas_compuerta = ("s_a", "s_b")
     salidas = ["E_cond", "E_sw"]
 
+    @override
     def preparar(self):
         self.dev = None
 
+    @override
     def reiniciar_e(self):
         self._crear((self.n["a"], self.n["b"]), self.n["dc_p"], self.n["dc_n"])
 
+    @override
     def clave(self):
         if self.dev is None:
             self.reiniciar_e()
@@ -433,19 +532,21 @@ class PuenteHConmutado(_Ramas):
     def _ordenes(self, u):
         return [u[0], u[1]]
 
+    @override
     def salida_e(self, z, t, x, u):
         return [self.Ec, self.Es]
 
 
 @registrar
 class PuenteHPromediado(Elemento):
-    """Puente H promediado.   v_a = d_a·V_bus,  v_b = d_b·V_bus;  i_bus = d_a·i_a + d_b·i_b"""
+    """Puente H promediado.   v_a = d_a·V_bus,  v_b = d_b·V_bus;  i_bus = d_a·i_a + d_b·i_b."""
     tipo = "puente_h_prom"; nombre = "Puente H promediado"; categoria = "Potencia · Convertidores"
     puertos_e = ["dc_p", "dc_n", "a", "b"]
     entradas = ["d_a", "d_b"]
     dinamico = True
     n_ramas = 2
 
+    @override
     def estampar_din(self, M, b, z, t, x, u):
         dp, dn = self.n["dc_p"], self.n["dc_n"]
         for k, puerto in enumerate(("a", "b")):
@@ -479,6 +580,7 @@ class InversorPromediado(Elemento, _ParametrosIGBT):
     dinamico = True
     n_ramas = 3
 
+    @override
     def estampar_din(self, M, b, z, t, x, u):
         dp, dn = self.n["dc_p"], self.n["dc_n"]
         d = np.clip(np.ravel(u[0]), 0.0, 1.0) if not np.isscalar(u[0]) else np.zeros(3) + 0.5
@@ -513,6 +615,7 @@ class InversorPromediado(Elemento, _ParametrosIGBT):
             ps += esc * ai
         return pc, ps
 
+    @override
     def salida_e(self, z, t, x, u):
         d = np.clip(np.ravel(u[0]), 0.0, 1.0) if not np.isscalar(u[0]) else np.zeros(3) + 0.5
         return list(self._perdidas(z, d))
@@ -532,25 +635,30 @@ class _Trifasico3Hilos(Elemento):
 
 @registrar
 class FiltroL(_Trifasico3Hilos):
-    """Filtro L trifásico.   L·di/dt = v_a - v_b - R·i   (3 hilos; estados i_a, i_b)"""
+    """Filtro L trifásico.   L·di/dt = v_a - v_b - R·i   (3 hilos; estados i_a, i_b)."""
     tipo = "filtro_l"; nombre = "Filtro L"; categoria = "Potencia · Filtros"
     parametros = [P("L", "Inductancia", 1e-3, "H"), P("R", "Resistencia serie", 0.01, "Ω")]
     puertos_e3 = ["a", "b"]
     salidas = ["i_abc"]
 
+    @override
     def preparar(self):
         self.Lt, self.Rt = float(self.p["L"]), float(self.p["R"])
 
     def absorber(self, L, R):
+        """Suma una inductancia L (H) y una resistencia R (Ω) en serie al filtro."""
         self.Lt += L
         self.Rt += R
 
+    @override
     def n_estados(self):
         return 2
 
+    @override
     def x0(self):
         return [0.0, 0.0]
 
+    @override
     def rhs(self, b, t, x, u):
         na, nb = self.n["a"], self.n["b"]
         i = (x[0], x[1], -x[0] - x[1])
@@ -559,16 +667,20 @@ class FiltroL(_Trifasico3Hilos):
             b[nb[f]] += i[f]
 
     def i2_abc(self, x):
+        """Devuelve las tres corrientes de fase [i_a, i_b, i_c] (A) a partir de los estados."""
         return np.array([x[0], x[1], -x[0] - x[1]])
 
     def di2(self, z, x):
+        """Devuelve las derivadas de las tres corrientes de fase (A/s)."""
         v = self.fases(z, self.n["a"]) - self.fases(z, self.n["b"])
         d = (v[:2] - self.Rt * x[:2]) / self.Lt
         return np.array([d[0], d[1], -d[0] - d[1]])
 
+    @override
     def derivada_e(self, z, t, x, u):
         return self.di2(z, x)[:2]
 
+    @override
     def salida_e(self, z, t, x, u):
         return [self.i2_abc(x)]
 
@@ -587,17 +699,21 @@ class FiltroLC(_Trifasico3Hilos):
     n_ramas = 3
     n_internos = 1
 
+    @override
     def n_estados(self):
         return 4
 
+    @override
     def x0(self):
         return [0.0] * 4
 
+    @override
     def estampar_fijo(self, S):
         N = self.internos[0]
         for f in range(3):
             S.rama_tension(self.ramas[f], self.n["b"][f], N)
 
+    @override
     def rhs(self, b, t, x, u):
         i = (x[0], x[1], -x[0] - x[1])
         v = (x[2], x[3], -x[2] - x[3])
@@ -606,12 +722,14 @@ class FiltroLC(_Trifasico3Hilos):
             b[self.n["b"][f]] += i[f]
             b[self.ramas[f]] = v[f]
 
+    @override
     def derivada_e(self, z, t, x, u):
         va = self.fases(z, self.n["a"])
         L, R, C = float(self.p["L"]), float(self.p["R"]), float(self.p["C"])
         return [(va[0] - x[2] - R * x[0]) / L, (va[1] - x[3] - R * x[1]) / L,
                 z[self.ramas[0]] / C, z[self.ramas[1]] / C]
 
+    @override
     def salida_e(self, z, t, x, u):
         return [np.array([x[0], x[1], -x[0] - x[1]]), np.array([x[2], x[3], -x[2] - x[3]])]
 
@@ -636,6 +754,7 @@ class FiltroLCL(_Trifasico3Hilos):
     puertos_e3 = ["a", "b"]
     salidas = ["i1_abc", "i2_abc", "v_c"]
 
+    @override
     def preparar(self):
         p = self.p
         self.L1, self.R1 = float(p["L1"]), float(p["R1"])
@@ -644,15 +763,19 @@ class FiltroLCL(_Trifasico3Hilos):
         self.L2o, self.R2o = self.L2, self.R2
 
     def absorber(self, L, R):
+        """Suma una inductancia L (H) y una resistencia R (Ω) en serie al lado de red."""
         self.L2 = self.L2o + L
         self.R2 = self.R2o + R
 
+    @override
     def n_estados(self):
         return 6
 
+    @override
     def x0(self):
         return [0.0] * 6
 
+    @override
     def rhs(self, b, t, x, u):
         i1 = (x[0], x[1], -x[0] - x[1])
         i2 = (x[2], x[3], -x[2] - x[3])
@@ -661,14 +784,17 @@ class FiltroLCL(_Trifasico3Hilos):
             b[self.n["b"][f]] += i2[f]
 
     def i2_abc(self, x):
+        """Devuelve las tres corrientes de fase del lado de red (A) a partir de los estados."""
         return np.array([x[2], x[3], -x[2] - x[3]])
 
     def di2(self, z, x):
+        """Devuelve las derivadas de las tres corrientes de fase del lado de red (A/s)."""
         vb = self.fases(z, self.n["b"])
         vn = x[4:6] + self.Rd * (x[0:2] - x[2:4])
         d = (vn - vb[:2] - self.R2 * x[2:4]) / self.L2
         return np.array([d[0], d[1], -d[0] - d[1]])
 
+    @override
     def derivada_e(self, z, t, x, u):
         va = self.fases(z, self.n["a"])
         vb = self.fases(z, self.n["b"])
@@ -678,6 +804,7 @@ class FiltroLCL(_Trifasico3Hilos):
                                (vn - vb[:2] - self.R2 * i2) / self.L2,
                                (i1 - i2) / self.C))
 
+    @override
     def salida_e(self, z, t, x, u):
         return [np.array([x[0], x[1], -x[0] - x[1]]), np.array([x[2], x[3], -x[2] - x[3]]),
                 np.array([x[4], x[5], -x[4] - x[5]])]
@@ -696,12 +823,15 @@ class Transformador3(_Trifasico3Hilos):
     puertos_e3 = ["p", "s"]
     salidas = ["i2_abc"]
 
+    @override
     def n_estados(self):
         return 4
 
+    @override
     def x0(self):
         return [0.0] * 4
 
+    @override
     def rhs(self, b, t, x, u):
         a = float(self.p["a"])
         i2 = (x[0], x[1], -x[0] - x[1])
@@ -710,12 +840,14 @@ class Transformador3(_Trifasico3Hilos):
             b[self.n["p"][f]] -= i2[f] / a + im[f]
             b[self.n["s"][f]] += i2[f]
 
+    @override
     def derivada_e(self, z, t, x, u):
         p = self.p
         a, L, R, Lm = float(p["a"]), float(p["L"]), float(p["R"]), float(p["Lm"])
         v1, v2 = self.fases(z, self.n["p"]), self.fases(z, self.n["s"])
         return [(v1[0] / a - v2[0] - R * x[0]) / L, (v1[1] / a - v2[1] - R * x[1]) / L, v1[0] / Lm, v1[1] / Lm]
 
+    @override
     def salida_e(self, z, t, x, u):
         return [np.array([x[0], x[1], -x[0] - x[1]])]
 
@@ -724,8 +856,11 @@ class Transformador3(_Trifasico3Hilos):
 
 
 class _Modulador(Bloque):
-    """Con paso variable el modulador calcula sus flancos y el solver cae exactamente en ellos,
-    de modo que el ciclo de trabajo no depende del paso. Con paso fijo compara en cada muestra."""
+    """Base de los moduladores con generación de flancos.
+
+    Con paso variable el modulador calcula sus flancos y el solver cae exactamente en ellos,
+    de modo que el ciclo de trabajo no depende del paso. Con paso fijo compara en cada muestra.
+    """
     ramas_n = 1
     de_evento = True
 
@@ -770,7 +905,7 @@ _P_RES = P("res", "Resolución del ciclo de trabajo", 1e4, "",
 
 @registrar
 class PWM(_Modulador):
-    """PWM.   Con T = 1/fc y D = d recortado a [1/res, 1 - 1/res], en cada periodo:
+    """PWM.   Con T = 1/fc y D = d recortado a [1/res, 1 - 1/res], en cada periodo:.
 
         centrado  g = 1 entre T·(1-D)/2 y T·(1+D)/2
         bajada    g = 1 entre 0 y T·D
@@ -792,6 +927,7 @@ class PWM(_Modulador):
     def _ciclos(self, u):
         return [float(u[0])]
 
+    @override
     def salida(self, t, x, u):
         if self.usar_zc:
             return [float(self._latidos()[0])]
@@ -851,11 +987,12 @@ class SVPWM(_Modulador3):
 
 @registrar
 class FuenteModuladora(Bloque):
-    """Moduladora trifásica de referencia.   m_x = M·sin(2π·f·t + φ - k·120°)"""
+    """Moduladora trifásica de referencia.   m_x = M·sin(2π·f·t + φ - k·120°)."""
     tipo = "moduladora3"; nombre = "Moduladora trifásica"; categoria = "Potencia · Modulación"; color = "fuente"
     parametros = [P("M", "Índice de modulación", 0.8), P("f", "Frecuencia", 50.0, "Hz"), P("fase", "Fase", 0.0, "°")]
     salidas = ["m"]; directo = False
 
+    @override
     def salida(self, t, x, u):
         th = 2 * math.pi * float(self.p["f"]) * t + math.radians(float(self.p["fase"]))
         M = float(self.p["M"])
@@ -867,40 +1004,44 @@ class FuenteModuladora(Bloque):
 
 @registrar
 class Clarke(Bloque):
-    """Transformada de Clarke.   α = (2/3)(a - b/2 - c/2);   β = (b - c)/√3"""
+    """Transformada de Clarke.   α = (2/3)(a - b/2 - c/2);   β = (b - c)/√3."""
     tipo = "clarke"; nombre = "Clarke abc→αβ"; categoria = "Potencia · Control"
     entradas = ["abc"]; salidas = ["alfa", "beta"]
 
+    @override
     def salida(self, t, x, u):
         return list(clarke(np.ravel(u[0]))) if not np.isscalar(u[0]) else [0.0, 0.0]
 
 
 @registrar
 class ClarkeInv(Bloque):
-    """Clarke inversa.   a = α;  b = -α/2 + (√3/2)·β;  c = -α/2 - (√3/2)·β"""
+    """Clarke inversa.   a = α;  b = -α/2 + (√3/2)·β;  c = -α/2 - (√3/2)·β."""
     tipo = "clarke_inv"; nombre = "Clarke αβ→abc"; categoria = "Potencia · Control"
     entradas = ["alfa", "beta"]; salidas = ["abc"]
 
+    @override
     def salida(self, t, x, u):
         return [clarke_inv(float(u[0]), float(u[1]))]
 
 
 @registrar
 class Park(Bloque):
-    """Transformada de Park.   d = α·cos θ + β·sin θ;   q = -α·sin θ + β·cos θ"""
+    """Transformada de Park.   d = α·cos θ + β·sin θ;   q = -α·sin θ + β·cos θ."""
     tipo = "park"; nombre = "Park αβ→dq"; categoria = "Potencia · Control"
     entradas = ["alfa", "beta", "theta"]; salidas = ["d", "q"]
 
+    @override
     def salida(self, t, x, u):
         return list(park(float(u[0]), float(u[1]), float(u[2])))
 
 
 @registrar
 class ParkInv(Bloque):
-    """Park inversa.   α = d·cos θ - q·sin θ;   β = d·sin θ + q·cos θ"""
+    """Park inversa.   α = d·cos θ - q·sin θ;   β = d·sin θ + q·cos θ."""
     tipo = "park_inv"; nombre = "Park dq→αβ"; categoria = "Potencia · Control"
     entradas = ["d", "q", "theta"]; salidas = ["alfa", "beta"]
 
+    @override
     def salida(self, t, x, u):
         return list(park_inv(float(u[0]), float(u[1]), float(u[2])))
 
@@ -922,13 +1063,16 @@ class SRFPLL(Bloque):
     entradas = ["v_abc"]; salidas = ["theta", "omega", "v_d", "v_q"]
     directo = False
 
+    @override
     def preparar(self):
         self.w0 = 2 * math.pi * float(self.p["f0"])
         self.Vn = float(self.p["Vn"])
 
+    @override
     def n_estados(self):
         return 2
 
+    @override
     def x0(self):
         return [float(self.p["th0"]), 0.0]
 
@@ -937,10 +1081,12 @@ class SRFPLL(Bloque):
         al, be = clarke(v)
         return park(al, be, x[0])
 
+    @override
     def salida(self, t, x, u):
         # La salida θ es un estado: no depende directamente de la entrada
         return [float(x[0]), self.w0 + float(x[1]), 0.0, 0.0]
 
+    @override
     def derivada(self, t, x, u):
         _, vq = self._vdq(x, u)
         e = vq / self.Vn
@@ -958,16 +1104,20 @@ class PIAntiWindup(Bloque):
                   P("y_max", "Salida máxima", "inf"), P("Kaw", "Ganancia anti-windup", 10.0), P("I0", "Integral inicial", 0.0)]
     entradas = ["e"]; salidas = ["y"]
 
+    @override
     def n_estados(self):
         return 1
 
+    @override
     def x0(self):
         return [float(self.p["I0"])]
 
+    @override
     def salida(self, t, x, u):
         v = float(self.p["Kp"]) * float(u[0]) + x[0]
         return [min(float(self.p["y_max"]), max(float(self.p["y_min"]), v))]
 
+    @override
     def derivada(self, t, x, u):
         e = float(u[0])
         v = float(self.p["Kp"]) * e + x[0]
@@ -992,12 +1142,15 @@ class ControlCorrienteDQ(Bloque):
     entradas = ["id_ref", "iq_ref", "i_abc", "v_abc", "theta", "vbus"]
     salidas = ["m_abc", "i_d", "i_q"]
 
+    @override
     def preparar(self):
         self.w = 2 * math.pi * float(self.p["f0"])
 
+    @override
     def n_estados(self):
         return 2
 
+    @override
     def x0(self):
         return [0.0, 0.0]
 
@@ -1018,11 +1171,13 @@ class ControlCorrienteDQ(Bloque):
         esc = lim / mod if mod > lim else 1.0
         return id_, iq, ed, eq, vd_s, vq_s, vd_s * esc, vq_s * esc, vb
 
+    @override
     def salida(self, t, x, u):
         id_, iq, _, _, _, _, vd, vq, vb = self._calcular(x, u)
         al, be = park_inv(vd, vq, float(u[4]))
         return [clarke_inv(al, be) / (0.5 * vb), id_, iq]
 
+    @override
     def derivada(self, t, x, u):
         _, _, ed, eq, vd_s, vq_s, vd, vq, _ = self._calcular(x, u)
         Ki, Kaw = float(self.p["Ki"]), float(self.p["Kaw"])
@@ -1044,16 +1199,20 @@ class ControlBusDC(Bloque):
                   P("Kaw", "Ganancia anti-windup", 5.0), P("I0", "Integral inicial", 0.0)]
     entradas = ["vbus"]; salidas = ["id_ref"]
 
+    @override
     def n_estados(self):
         return 1
 
+    @override
     def x0(self):
         return [float(self.p["I0"])]
 
+    @override
     def salida(self, t, x, u):
         v = float(self.p["Kp"]) * (float(u[0]) - float(self.p["Vref"])) + x[0]
         return [min(float(self.p["Imax"]), max(float(self.p["Imin"]), v))]
 
+    @override
     def derivada(self, t, x, u):
         e = float(u[0]) - float(self.p["Vref"])
         v = float(self.p["Kp"]) * e + x[0]
@@ -1094,16 +1253,20 @@ class RMS(_Ventana):
     parametros = [P("f0", "Frecuencia fundamental", 50.0, "Hz")]
     entradas = ["u"]; salidas = ["y"]
 
+    @override
     def preparar(self):
         self._reset()
         self.v = 0.0
 
+    @override
     def reiniciar(self):
         self.preparar()
 
+    @override
     def salida(self, t, x, u):
         return [self.v]
 
+    @override
     def paso_mayor(self, t, x, u, y):
         T = 1.0 / float(self.p["f0"])
         self._agregar(t, float(u[0]) ** 2, T)
@@ -1123,18 +1286,22 @@ class PotenciaPQ(Bloque):
     entradas = ["v_abc", "i_abc"]; salidas = ["P", "Q", "FP"]
     directo = False
 
+    @override
     def preparar(self):
         self.vent = (_Ventana.__new__(_Ventana), _Ventana.__new__(_Ventana))
         for v in self.vent:
             v._reset()
         self.val = [0.0, 0.0, 0.0]
 
+    @override
     def reiniciar(self):
         self.preparar()
 
+    @override
     def salida(self, t, x, u):
         return self.val
 
+    @override
     def paso_mayor(self, t, x, u, y):
         if np.isscalar(u[0]) or np.isscalar(u[1]):
             return False
@@ -1162,18 +1329,22 @@ class THD(Bloque):
     entradas = ["u"]; salidas = ["thd_pct", "fundamental"]
     directo = False
 
+    @override
     def preparar(self):
         self.tt = []
         self.uu = []
         self.val = [0.0, 0.0]
         self.t_fin = int(self.p["periodos"]) / float(self.p["f0"])
 
+    @override
     def reiniciar(self):
         self.preparar()
 
+    @override
     def salida(self, t, x, u):
         return self.val
 
+    @override
     def paso_mayor(self, t, x, u, y):
         self.tt.append(t)
         self.uu.append(float(u[0]))

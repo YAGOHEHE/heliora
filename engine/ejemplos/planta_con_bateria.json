@@ -1,0 +1,768 @@
+{
+  "formato": "heliora-diagrama/1",
+  "nombre": "Planta FV con batería en el bus DC",
+  "sistema": {
+    "bloques": [
+      {
+        "id": "G",
+        "nombre": "Irradiancia",
+        "params": {
+          "t0": 0.5,
+          "y0": 1000.0,
+          "y1": 700.0
+        },
+        "tipo": "escalon",
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "T",
+        "nombre": "Temperatura de celda",
+        "params": {
+          "c": 40.0
+        },
+        "tipo": "constante",
+        "x": 0,
+        "y": 100
+      },
+      {
+        "id": "bat",
+        "nombre": "Batería 100s10p",
+        "params": {
+          "Np": 10,
+          "Ns": 100,
+          "Q": 5.0,
+          "SoC0": 0.5
+        },
+        "tipo": "bateria",
+        "x": 820,
+        "y": 600
+      },
+      {
+        "id": "boost",
+        "nombre": "Boost",
+        "params": {
+          "L": 0.001,
+          "R": 0.01,
+          "i0": 170.0
+        },
+        "tipo": "boost_prom",
+        "x": 588,
+        "y": 20
+      },
+      {
+        "id": "bus",
+        "nombre": "Control bus DC",
+        "params": {
+          "I0": 115.0,
+          "Imax": 250.0,
+          "Imin": -30.0,
+          "Ki": 25.0,
+          "Kp": 2.0,
+          "Vref": 750.0
+        },
+        "tipo": "control_bus",
+        "x": 784,
+        "y": 380
+      },
+      {
+        "id": "carg",
+        "nombre": "Cargador bidireccional",
+        "params": {
+          "L": 0.002,
+          "R_L": 0.02,
+          "eta": 0.97,
+          "f_sw": 20000.0,
+          "i_max": 60.0,
+          "i_min": -60.0,
+          "modo": "corriente"
+        },
+        "tipo": "cargador_dcdc",
+        "x": 640,
+        "y": 560
+      },
+      {
+        "id": "cdc",
+        "nombre": "Bus DC",
+        "params": {
+          "C": 0.008,
+          "v0": 750.0
+        },
+        "tipo": "capacitor",
+        "x": 784,
+        "y": 150
+      },
+      {
+        "id": "cpv",
+        "nombre": "C entrada",
+        "params": {
+          "C": 0.002,
+          "v0": 420.0
+        },
+        "tipo": "capacitor",
+        "x": 392,
+        "y": 150
+      },
+      {
+        "id": "ctrl",
+        "nombre": "Control dq",
+        "params": {
+          "Ki": 100.0,
+          "Kp": 1.9,
+          "L": 0.00065
+        },
+        "tipo": "control_dq",
+        "x": 980,
+        "y": 340
+      },
+      {
+        "id": "inv",
+        "nombre": "Inversor",
+        "params": {
+          "fsw": 5000.0
+        },
+        "tipo": "inversor_prom",
+        "x": 980,
+        "y": 20
+      },
+      {
+        "id": "iq",
+        "nombre": "i_q*",
+        "params": {
+          "c": 0.0
+        },
+        "tipo": "constante",
+        "x": 784,
+        "y": 480
+      },
+      {
+        "id": "iref",
+        "nombre": "Corriente de carga",
+        "params": {
+          "c": 20.0
+        },
+        "tipo": "constante",
+        "x": 480,
+        "y": 640
+      },
+      {
+        "id": "lcl",
+        "nombre": "Filtro LCL",
+        "params": {
+          "C": 5e-05,
+          "L1": 0.0005,
+          "L2": 0.0001,
+          "R1": 0.01,
+          "R2": 0.005,
+          "Rd": 0.5
+        },
+        "tipo": "filtro_lcl",
+        "x": 1176,
+        "y": 20
+      },
+      {
+        "id": "mod",
+        "nombre": "SVPWM",
+        "params": {
+          "fc": 5000.0
+        },
+        "tipo": "svpwm",
+        "x": 980,
+        "y": 190
+      },
+      {
+        "id": "mppt",
+        "nombre": "MPPT",
+        "params": {
+          "Ts": 0.005,
+          "d0": 0.44,
+          "dd": 0.002,
+          "metodo": "Perturbar y observar"
+        },
+        "tipo": "mppt",
+        "x": 392,
+        "y": 300
+      },
+      {
+        "id": "osc1",
+        "nombre": "Potencias",
+        "params": {
+          "n": 3
+        },
+        "tipo": "osciloscopio",
+        "x": 1568,
+        "y": 0
+      },
+      {
+        "id": "osc2",
+        "nombre": "Bus y entrada",
+        "params": {
+          "n": 3
+        },
+        "tipo": "osciloscopio",
+        "x": 1568,
+        "y": 160
+      },
+      {
+        "id": "osc3",
+        "nombre": "Corrientes",
+        "params": {
+          "cada": 2,
+          "n": 3
+        },
+        "tipo": "osciloscopio",
+        "x": 1568,
+        "y": 320
+      },
+      {
+        "id": "osc4",
+        "nombre": "Batería: corriente, SoC y potencia",
+        "params": {
+          "n": 3
+        },
+        "tipo": "osciloscopio",
+        "x": 1320,
+        "y": 480
+      },
+      {
+        "id": "pll",
+        "nombre": "PLL",
+        "params": {
+          "f0": 50.0
+        },
+        "tipo": "srf_pll",
+        "x": 1372,
+        "y": 190
+      },
+      {
+        "id": "pq",
+        "nombre": "P, Q, FP",
+        "params": {
+          "f0": 50.0
+        },
+        "tipo": "potencia_pq",
+        "x": 1372,
+        "y": 350
+      },
+      {
+        "id": "pv",
+        "nombre": "Arreglo FV",
+        "params": {
+          "Np": 20,
+          "Ns": 12,
+          "modulo": "CS1H-330MS (330 W, 66 celdas)"
+        },
+        "tipo": "arreglo_fv",
+        "x": 196,
+        "y": 20
+      },
+      {
+        "id": "red",
+        "nombre": "Red",
+        "params": {
+          "L": 5e-05,
+          "R": 0.01,
+          "VLL": 400.0
+        },
+        "tipo": "red_infinita",
+        "x": 1372,
+        "y": 20
+      },
+      {
+        "id": "tierra",
+        "nombre": "Tierra",
+        "params": {},
+        "tipo": "tierra",
+        "x": 588,
+        "y": 170
+      },
+      {
+        "id": "vb",
+        "nombre": "V bus",
+        "params": {},
+        "tipo": "voltimetro",
+        "x": 784,
+        "y": 270
+      }
+    ],
+    "conexiones": [
+      {
+        "a": [
+          "pv",
+          "G"
+        ],
+        "de": [
+          "G",
+          "y"
+        ]
+      },
+      {
+        "a": [
+          "pv",
+          "T"
+        ],
+        "de": [
+          "T",
+          "y"
+        ]
+      },
+      {
+        "a": [
+          "osc4",
+          "u2"
+        ],
+        "de": [
+          "bat",
+          "SoC"
+        ]
+      },
+      {
+        "a": [
+          "tierra",
+          "t"
+        ],
+        "de": [
+          "bat",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "tierra",
+          "t"
+        ],
+        "de": [
+          "boost",
+          "com"
+        ]
+      },
+      {
+        "a": [
+          "mppt",
+          "i"
+        ],
+        "de": [
+          "boost",
+          "i_L"
+        ]
+      },
+      {
+        "a": [
+          "cdc",
+          "p"
+        ],
+        "de": [
+          "boost",
+          "out"
+        ]
+      },
+      {
+        "a": [
+          "inv",
+          "dc_p"
+        ],
+        "de": [
+          "boost",
+          "out"
+        ]
+      },
+      {
+        "a": [
+          "ctrl",
+          "id_ref"
+        ],
+        "de": [
+          "bus",
+          "id_ref"
+        ]
+      },
+      {
+        "a": [
+          "osc4",
+          "u3"
+        ],
+        "de": [
+          "carg",
+          "P_bajo"
+        ]
+      },
+      {
+        "a": [
+          "bat",
+          "p"
+        ],
+        "de": [
+          "carg",
+          "bajo"
+        ]
+      },
+      {
+        "a": [
+          "tierra",
+          "t"
+        ],
+        "de": [
+          "carg",
+          "com"
+        ]
+      },
+      {
+        "a": [
+          "osc4",
+          "u1"
+        ],
+        "de": [
+          "carg",
+          "i_L"
+        ]
+      },
+      {
+        "a": [
+          "inv",
+          "dc_n"
+        ],
+        "de": [
+          "cdc",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "tierra",
+          "t"
+        ],
+        "de": [
+          "cdc",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "vb",
+          "n"
+        ],
+        "de": [
+          "cdc",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "carg",
+          "alto"
+        ],
+        "de": [
+          "cdc",
+          "p"
+        ]
+      },
+      {
+        "a": [
+          "vb",
+          "p"
+        ],
+        "de": [
+          "cdc",
+          "p"
+        ]
+      },
+      {
+        "a": [
+          "tierra",
+          "t"
+        ],
+        "de": [
+          "cpv",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "boost",
+          "in"
+        ],
+        "de": [
+          "cpv",
+          "p"
+        ]
+      },
+      {
+        "a": [
+          "osc3",
+          "u1"
+        ],
+        "de": [
+          "ctrl",
+          "i_d"
+        ]
+      },
+      {
+        "a": [
+          "osc3",
+          "u2"
+        ],
+        "de": [
+          "ctrl",
+          "i_q"
+        ]
+      },
+      {
+        "a": [
+          "mod",
+          "m"
+        ],
+        "de": [
+          "ctrl",
+          "m_abc"
+        ]
+      },
+      {
+        "a": [
+          "lcl",
+          "a"
+        ],
+        "de": [
+          "inv",
+          "ac"
+        ]
+      },
+      {
+        "a": [
+          "ctrl",
+          "iq_ref"
+        ],
+        "de": [
+          "iq",
+          "y"
+        ]
+      },
+      {
+        "a": [
+          "carg",
+          "ref"
+        ],
+        "de": [
+          "iref",
+          "y"
+        ]
+      },
+      {
+        "a": [
+          "red",
+          "a"
+        ],
+        "de": [
+          "lcl",
+          "b"
+        ]
+      },
+      {
+        "a": [
+          "ctrl",
+          "i_abc"
+        ],
+        "de": [
+          "lcl",
+          "i2_abc"
+        ]
+      },
+      {
+        "a": [
+          "osc3",
+          "u3"
+        ],
+        "de": [
+          "lcl",
+          "i2_abc"
+        ]
+      },
+      {
+        "a": [
+          "inv",
+          "d"
+        ],
+        "de": [
+          "mod",
+          "d"
+        ]
+      },
+      {
+        "a": [
+          "boost",
+          "d"
+        ],
+        "de": [
+          "mppt",
+          "d"
+        ]
+      },
+      {
+        "a": [
+          "ctrl",
+          "theta"
+        ],
+        "de": [
+          "pll",
+          "theta"
+        ]
+      },
+      {
+        "a": [
+          "osc2",
+          "u3"
+        ],
+        "de": [
+          "pq",
+          "FP"
+        ]
+      },
+      {
+        "a": [
+          "osc1",
+          "u2"
+        ],
+        "de": [
+          "pq",
+          "P"
+        ]
+      },
+      {
+        "a": [
+          "osc1",
+          "u3"
+        ],
+        "de": [
+          "pq",
+          "Q"
+        ]
+      },
+      {
+        "a": [
+          "tierra",
+          "t"
+        ],
+        "de": [
+          "pv",
+          "n"
+        ]
+      },
+      {
+        "a": [
+          "cpv",
+          "p"
+        ],
+        "de": [
+          "pv",
+          "p"
+        ]
+      },
+      {
+        "a": [
+          "osc1",
+          "u1"
+        ],
+        "de": [
+          "pv",
+          "pot"
+        ]
+      },
+      {
+        "a": [
+          "mppt",
+          "v"
+        ],
+        "de": [
+          "pv",
+          "v"
+        ]
+      },
+      {
+        "a": [
+          "osc2",
+          "u2"
+        ],
+        "de": [
+          "pv",
+          "v"
+        ]
+      },
+      {
+        "a": [
+          "pq",
+          "i_abc"
+        ],
+        "de": [
+          "red",
+          "i_abc"
+        ]
+      },
+      {
+        "a": [
+          "ctrl",
+          "v_abc"
+        ],
+        "de": [
+          "red",
+          "v_pcc"
+        ]
+      },
+      {
+        "a": [
+          "pll",
+          "v_abc"
+        ],
+        "de": [
+          "red",
+          "v_pcc"
+        ]
+      },
+      {
+        "a": [
+          "pq",
+          "v_abc"
+        ],
+        "de": [
+          "red",
+          "v_pcc"
+        ]
+      },
+      {
+        "a": [
+          "bus",
+          "vbus"
+        ],
+        "de": [
+          "vb",
+          "v"
+        ]
+      },
+      {
+        "a": [
+          "ctrl",
+          "vbus"
+        ],
+        "de": [
+          "vb",
+          "v"
+        ]
+      },
+      {
+        "a": [
+          "osc2",
+          "u1"
+        ],
+        "de": [
+          "vb",
+          "v"
+        ]
+      }
+    ]
+  },
+  "solver": {
+    "atol": 1e-06,
+    "metodo": "rk4",
+    "paso": 5e-05,
+    "rtol": 0.001,
+    "t_fin": 1.0
+  }
+}

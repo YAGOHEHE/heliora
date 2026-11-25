@@ -49,6 +49,36 @@ impl Compartido {
     }
 }
 
+/// Escribe un archivo entero o no lo toca: primero en un temporal al lado y después lo renombra
+/// sobre el destino (en Windows, `rename` reemplaza el archivo existente).
+pub fn escribir_atomico(ruta: &std::path::Path, contenido: &[u8]) -> Result<(), String> {
+    let mut tmp = ruta.as_os_str().to_owned();
+    tmp.push(".tmp~");
+    let tmp = PathBuf::from(tmp);
+    let r = std::fs::write(&tmp, contenido).and_then(|_| std::fs::rename(&tmp, ruta));
+    if let Err(e) = r {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("{}: {e}", ruta.display()));
+    }
+    Ok(())
+}
+
+/// Aviso final del guardado: «guardado» solo si no hubo ningún problema.
+fn resumen_guardado(carpeta: &std::path::Path, problemas: &[String]) -> String {
+    if problemas.is_empty() {
+        format!("Proyecto guardado en {}", carpeta.display())
+    } else {
+        format!("El proyecto NO se guardó completo ({} problemas): {}", problemas.len(), problemas.join("; "))
+    }
+}
+
+/// Guardado en curso: las escrituras locales ya hechas esperan a que el motor guarde los datos.
+struct Guardado {
+    id: u64,
+    carpeta: PathBuf,
+    problemas: Vec<String>,
+}
+
 /// Atributos de Git para la carpeta de un proyecto (los mismos que el `.gitattributes` de la app).
 const GITATTRIBUTES_PROYECTO: &str = "# Proyecto de Heliora\n*.json text eol=lf diff\n*.py text eol=lf diff=python\n*.csv text eol=lf\n*.md text eol=lf\n*.parquet binary\n*.png binary\n*.pdf binary\n";
 
@@ -85,6 +115,7 @@ pub struct App {
     id_ejemplos: Option<u64>,
     iniciado: bool,
     carpeta: Option<PathBuf>,
+    guardado: Option<Guardado>,
     aviso: String,
     instalando: Option<Receiver<String>>,
     estado_inst: String,
@@ -140,6 +171,7 @@ impl App {
             id_ejemplos: None,
             iniciado: false,
             carpeta: None,
+            guardado: None,
             aviso: String::new(),
             instalando: None,
             estado_inst: String::new(),
@@ -192,6 +224,13 @@ impl App {
     }
 
     fn despachar(&mut self, id: u64, ok: bool, v: &Value, err: &str) {
+        if let Some(mut g) = self.guardado.take_if(|g| g.id == id) {
+            if !ok {
+                g.problemas.push(format!("datos del espacio de trabajo: {err}"));
+            }
+            self.aviso = resumen_guardado(&g.carpeta, &g.problemas);
+            return;
+        }
         if Some(id) == self.id_catalogo {
             self.id_catalogo = None;
             if ok {
@@ -261,7 +300,7 @@ impl App {
     fn barra_superior(&mut self, ctx: &egui::Context) {
         let pal = tema::p();
         egui::TopBottomPanel::top("superior")
-            .frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(12, 6)).stroke(egui::Stroke::new(1.0, pal.linea)))
+            .frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(12, 6)).stroke(egui::Stroke::new(1.0_f32, pal.linea)))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::hover());
@@ -339,30 +378,36 @@ impl App {
             self.carpeta = rfd::FileDialog::new().set_title("Carpeta para el proyecto").pick_folder();
         }
         let Some(c) = self.carpeta.clone() else { return };
-        let _ = std::fs::create_dir_all(c.join("diagramas"));
-        let _ = std::fs::create_dir_all(c.join("scripts"));
-        // Cada proyecto es una carpeta lista para Git: diagramas JSON como texto, datos binarios aparte
-        if !c.join(".gitattributes").exists() {
-            let _ = std::fs::write(c.join(".gitattributes"), GITATTRIBUTES_PROYECTO);
-        }
         let mut problemas = vec![];
-        if let Err(e) = self.editor.guardar_en(&c.join("diagramas").join("principal.json")) {
-            problemas.push(e);
+        for d in ["diagramas", "scripts"] {
+            if let Err(e) = std::fs::create_dir_all(c.join(d)) {
+                problemas.push(format!("{}: {e}", c.join(d).display()));
+            }
         }
-        if !self.mantenimiento.estado.is_null() {
-            if let Err(e) = self.mantenimiento.guardar_en(&c.join("mantenimiento.json")) {
+        let mut anotar = |r: Result<(), String>| {
+            if let Err(e) = r {
                 problemas.push(e);
             }
+        };
+        // Cada proyecto es una carpeta lista para Git: diagramas JSON como texto, datos binarios aparte
+        if !c.join(".gitattributes").exists() {
+            anotar(escribir_atomico(&c.join(".gitattributes"), GITATTRIBUTES_PROYECTO.as_bytes()));
+        }
+        anotar(self.editor.guardar_en(&c.join("diagramas").join("principal.json")));
+        if !self.mantenimiento.estado.is_null() {
+            anotar(self.mantenimiento.guardar_en(&c.join("mantenimiento.json")));
         }
         for g in &self.calculo.guiones {
             if !g.motor {
-                let _ = std::fs::write(c.join("scripts").join(&g.nombre), &g.texto);
+                anotar(escribir_atomico(&c.join("scripts").join(&g.nombre), g.texto.as_bytes()));
             }
         }
-        self.motor.llamar("guardar_espacio", json!({"carpeta": c.join("datos").display().to_string()}));
         let doc = json!({"formato": "heliora-proyecto/1", "diagrama": "diagramas/principal.json", "mantenimiento": "mantenimiento.json", "datos": "datos", "scripts": "scripts"});
-        let _ = std::fs::write(c.join("proyecto.json"), serde_json::to_string_pretty(&doc).unwrap_or_default());
-        self.aviso = if problemas.is_empty() { format!("Proyecto guardado en {}", c.display()) } else { problemas.join("; ") };
+        anotar(serde_json::to_string_pretty(&doc).map_err(|e| e.to_string()).and_then(|t| escribir_atomico(&c.join("proyecto.json"), t.as_bytes())));
+        // El aviso final espera a la respuesta del motor, que guarda los datos del espacio de trabajo
+        let id = self.motor.llamar("guardar_espacio", json!({"carpeta": c.join("datos").display().to_string()}));
+        self.guardado = Some(Guardado { id, carpeta: c, problemas });
+        self.aviso = "Guardando el proyecto: esperando a que el motor guarde los datos...".into();
     }
 
     fn barra_modulos(&mut self, ctx: &egui::Context) {
@@ -370,7 +415,7 @@ impl App {
         egui::SidePanel::left("rail")
             .exact_width(78.0)
             .resizable(false)
-            .frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(4, 8)).stroke(egui::Stroke::new(1.0, pal.linea)))
+            .frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(4, 8)).stroke(egui::Stroke::new(1.0_f32, pal.linea)))
             .show(ctx, |ui| {
                 for (m, nombre) in tema::MODULOS {
                     let activo = self.modulo == m;
@@ -428,7 +473,7 @@ impl App {
                         let n = fila_i * cols + k + 1;
                         let (r, resp) = ui.allocate_exact_size(Vec2::new(w, 126.0), Sense::click());
                         let hover = resp.hovered();
-                        ui.painter().rect(r, tema::radio_ventana() as f32, if hover { pal.campo } else { pal.panel }, egui::Stroke::new(1.0, if hover { pal.linea_fuerte } else { pal.linea }), egui::StrokeKind::Inside);
+                        ui.painter().rect(r, tema::radio_ventana() as f32, if hover { pal.campo } else { pal.panel }, egui::Stroke::new(1.0_f32, if hover { pal.linea_fuerte } else { pal.linea }), egui::StrokeKind::Inside);
                         let ic = Rect::from_min_size(r.min + Vec2::new(14.0, 14.0), Vec2::splat(22.0));
                         tema::icono(ui.painter(), ic, *m, pal.acento);
                         ui.painter().text(Pos2::new(r.right() - 14.0, r.top() + 25.0), egui::Align2::RIGHT_CENTER, format!("{n:02}"), tema::fuente_mono(11.0), pal.texto_3);
@@ -715,5 +760,38 @@ impl eframe::App for App {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.motor.detener();
+    }
+}
+
+#[cfg(test)]
+mod pruebas {
+    use super::*;
+
+    #[test]
+    fn la_escritura_atomica_reemplaza_y_no_deja_temporales() {
+        let dir = std::env::temp_dir().join(format!("heliora_atomico_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ruta = dir.join("proyecto.json");
+        escribir_atomico(&ruta, b"uno").unwrap();
+        escribir_atomico(&ruta, b"dos").unwrap();
+        assert_eq!(std::fs::read(&ruta).unwrap(), b"dos");
+        assert!(!dir.join("proyecto.json.tmp~").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn un_guardado_con_una_escritura_fallida_no_se_anuncia_como_guardado() {
+        // Una «carpeta» que en realidad es un archivo: ninguna escritura dentro puede funcionar
+        let dir = std::env::temp_dir().join(format!("heliora_bloqueo_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bloqueo = dir.join("no_es_carpeta");
+        std::fs::write(&bloqueo, b"x").unwrap();
+        let r = escribir_atomico(&bloqueo.join("scripts.py"), b"print(1)");
+        assert!(r.is_err());
+        let problemas = vec![r.unwrap_err()];
+        let aviso = resumen_guardado(&dir, &problemas);
+        assert!(aviso.contains("NO se guardó") && aviso.contains("scripts.py"), "{aviso}");
+        assert!(resumen_guardado(&dir, &[]).starts_with("Proyecto guardado"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

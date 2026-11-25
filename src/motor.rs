@@ -7,18 +7,23 @@
 //! - Si el motor se cierra solo, se vuelve a abrir con espera creciente (como mucho
 //!   `MAX_REINICIOS` veces por minuto). Las peticiones que no cambian nada se reenvían; las de la
 //!   consola reciben un error, porque repetirlas en un espacio de trabajo vacío no tiene sentido.
+//!   Una simulación reenviada lleva `_reenviado`, y el motor la rechaza si usa variables del espacio.
+//! - El hilo de la ventana no escribe en la tubería: encola cada petición (cola acotada) y un hilo
+//!   aparte la escribe. Si la cola está llena o la escritura falla, la petición recibe un error.
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub const ESPERA_CANCELAR: Duration = Duration::from_secs(3);
 pub const MAX_REINICIOS: usize = 3;
 pub const VENTANA_REINICIOS: Duration = Duration::from_secs(60);
+/// Peticiones que pueden esperar a ser escritas en la tubería del motor.
+pub const CAPACIDAD_ENVIO: usize = 256;
 
 /// Peticiones que se pueden repetir sin efectos: no dependen de variables de la consola.
 const REPETIBLES: &[&str] = &[
@@ -37,11 +42,25 @@ pub enum Mensaje {
     Reiniciado(String),
 }
 
+/// Lo que llega de los hilos del proceso: un mensaje del motor o un envío que no se pudo escribir.
+enum Evento {
+    Mensaje(Mensaje),
+    EnvioFallido(u64, String),
+}
+
+/// Encola una línea para el hilo escritor sin bloquear: falla si la cola está llena o cerrada.
+fn encolar(envio: &SyncSender<(u64, String)>, id: u64, linea: String) -> Result<(), String> {
+    envio.try_send((id, linea)).map_err(|e| match e {
+        TrySendError::Full(_) => "La cola de envío al motor de cálculo está llena: el motor no está leyendo peticiones.".to_string(),
+        TrySendError::Disconnected(_) => "El motor de cálculo no está en marcha.".to_string(),
+    })
+}
+
 pub struct Motor {
     hijo: Option<Child>,
-    entrada: Option<ChildStdin>,
-    rx: Receiver<(u64, Mensaje)>,
-    tx: Sender<(u64, Mensaje)>,
+    envio: Option<SyncSender<(u64, String)>>,
+    rx: Receiver<(u64, Evento)>,
+    tx: Sender<(u64, Evento)>,
     siguiente: u64,
     pub registro: Arc<Mutex<String>>,
     pub listo: bool,
@@ -97,7 +116,22 @@ pub fn interprete(motor: &Path) -> PathBuf {
             return c;
         }
     }
-    PathBuf::from("python3")
+    // En Windows, «python3» suele ser el acceso directo a la Microsoft Store, no un intérprete
+    PathBuf::from(if cfg!(windows) { "python" } else { "python3" })
+}
+
+/// Orden para un proceso auxiliar. En Windows se lanza sin ventana de consola: la aplicación es
+/// gráfica y cada proceso de consola abriría una propia.
+pub fn orden(programa: impl AsRef<std::ffi::OsStr>) -> Command {
+    #[allow(unused_mut)]
+    let mut c = Command::new(programa);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        c.creation_flags(CREATE_NO_WINDOW);
+    }
+    c
 }
 
 impl Motor {
@@ -106,7 +140,7 @@ impl Motor {
         let carpeta = carpeta_motor();
         let mut m = Motor {
             hijo: None,
-            entrada: None,
+            envio: None,
             rx,
             tx,
             siguiente: 1,
@@ -132,11 +166,13 @@ impl Motor {
         self.generacion += 1;
         let gen = self.generacion;
         let py = interprete(&self.carpeta);
-        let hijo = Command::new(&py)
+        let hijo = orden(&py)
             .args(["-u", "-m", "heliora.servidor"])
             .current_dir(&self.carpeta)
             .env("PYTHONPATH", &self.carpeta)
             .env("PYTHONDONTWRITEBYTECODE", "1")
+            // El protocolo y los archivos van en UTF-8 aunque el sistema use otra página de códigos (cp1252 en Windows)
+            .env("PYTHONUTF8", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -148,33 +184,45 @@ impl Motor {
                 return;
             }
         };
-        self.entrada = hijo.stdin.take();
+        let mut entrada = hijo.stdin.take().expect("entrada del motor");
         let salida = hijo.stdout.take().expect("salida del motor");
         let err = hijo.stderr.take().expect("errores del motor");
         self.hijo = Some(hijo);
+        // Escritor: la escritura y el flush, que pueden bloquear si Python deja de leer, ocurren aquí
+        let (envio, cola) = sync_channel::<(u64, String)>(CAPACIDAD_ENVIO);
+        self.envio = Some(envio);
         let tx = self.tx.clone();
         std::thread::spawn(move || {
+            while let Ok((id, linea)) = cola.recv() {
+                if let Err(e) = writeln!(entrada, "{linea}").and_then(|_| entrada.flush()) {
+                    let _ = tx.send((gen, Evento::EnvioFallido(id, format!("No se pudo enviar la petición al motor de cálculo: {e}"))));
+                }
+            }
+        });
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let enviar = |m: Mensaje| tx.send((gen, Evento::Mensaje(m)));
             for linea in BufReader::new(salida).lines() {
                 let Ok(linea) = linea else { break };
                 let Ok(v) = serde_json::from_str::<Value>(&linea) else { continue };
                 if let Some(ev) = v.get("evento").and_then(|e| e.as_str()) {
                     if ev == "listo" {
-                        let _ = tx.send((gen, Mensaje::Listo));
+                        let _ = enviar(Mensaje::Listo);
                     }
                     continue;
                 }
                 let id = v.get("id").and_then(|i| i.as_u64()).unwrap_or(0);
                 if let Some(a) = v.get("avance").and_then(|a| a.as_f64()) {
                     let texto = v.get("mensaje").and_then(|m| m.as_str()).unwrap_or("").to_string();
-                    let _ = tx.send((gen, Mensaje::Avance { id, fraccion: a as f32, texto }));
+                    let _ = enviar(Mensaje::Avance { id, fraccion: a as f32, texto });
                     continue;
                 }
                 let ok = v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false);
                 let error = v.get("error").and_then(|e| e.as_str()).unwrap_or("").to_string();
                 let valor = v.get("resultado").cloned().unwrap_or(Value::Null);
-                let _ = tx.send((gen, Mensaje::Respuesta { id, ok, valor, error }));
+                let _ = enviar(Mensaje::Respuesta { id, ok, valor, error });
             }
-            let _ = tx.send((gen, Mensaje::Terminado("El motor de cálculo se cerró.".into())));
+            let _ = enviar(Mensaje::Terminado("El motor de cálculo se cerró.".into()));
         });
         let reg = self.registro.clone();
         std::thread::spawn(move || {
@@ -196,12 +244,14 @@ impl Motor {
         });
     }
 
+    /// Encola la petición para el hilo escritor. Si no hay proceso, el reinicio la reenviará o la
+    /// fallará; si la cola está llena, la petición falla en el acto con un error explícito.
     fn escribir(&mut self, id: u64, metodo: &str, params: &Value) {
-        let pet = json!({"id": id, "metodo": metodo, "params": params});
-        if let Some(e) = self.entrada.as_mut() {
-            if writeln!(e, "{pet}").and_then(|_| e.flush()).is_err() {
-                // El proceso se cerró; el aviso de Terminado llegará por el canal
-            }
+        let pet = json!({"id": id, "metodo": metodo, "params": params}).to_string();
+        let Some(envio) = self.envio.as_ref() else { return };
+        if let Err(error) = encolar(envio, id, pet) {
+            self.en_vuelo.remove(&id);
+            self.salientes.push(Mensaje::Respuesta { id, ok: false, valor: Value::Null, error });
         }
     }
 
@@ -237,8 +287,14 @@ impl Motor {
 
     fn fallar_en_vuelo(&mut self, texto: &str, reintentar: bool) {
         let todas = std::mem::take(&mut self.en_vuelo);
-        for (id, (metodo, params)) in todas {
+        for (id, (metodo, mut params)) in todas {
             if reintentar && REPETIBLES.contains(&metodo.as_str()) {
+                if metodo == "simular" {
+                    // El espacio de trabajo se perdió: el motor rechaza la simulación si dependía de él
+                    if let Some(o) = params.as_object_mut() {
+                        o.insert("_reenviado".into(), Value::Bool(true));
+                    }
+                }
                 self.reenviar.push((id, metodo.clone(), params.clone()));
                 self.en_vuelo.insert(id, (metodo, params));
             } else {
@@ -248,7 +304,7 @@ impl Motor {
     }
 
     fn matar(&mut self) {
-        self.entrada = None;
+        self.envio = None;
         if let Some(mut h) = self.hijo.take() {
             let _ = h.kill();
             let _ = h.wait();
@@ -278,10 +334,24 @@ impl Motor {
                 self.arrancar();
             }
         }
-        while let Ok((gen, m)) = self.rx.try_recv() {
+        while let Ok((gen, ev)) = self.rx.try_recv() {
             if gen != self.generacion {
                 continue;
             }
+            let m = match ev {
+                Evento::Mensaje(m) => m,
+                Evento::EnvioFallido(id, error) => {
+                    // Una petición repetible la reenvía el reinicio que sigue al cierre de la tubería
+                    match self.en_vuelo.get(&id) {
+                        Some((metodo, _)) if REPETIBLES.contains(&metodo.as_str()) => continue,
+                        Some(_) => {
+                            self.en_vuelo.remove(&id);
+                            Mensaje::Respuesta { id, ok: false, valor: Value::Null, error }
+                        }
+                        None => continue,
+                    }
+                }
+            };
             match &m {
                 Mensaje::Listo => {
                     self.listo = true;
@@ -295,7 +365,7 @@ impl Motor {
                 Mensaje::Terminado(t) => {
                     self.listo = false;
                     self.hijo = None;
-                    self.entrada = None;
+                    self.envio = None;
                     let reg = self.registro.lock().map(|r| r.clone()).unwrap_or_default();
                     let cola: String = reg.lines().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
                     let texto = if cola.is_empty() { t.clone() } else { format!("{t}\n{cola}") };
@@ -362,9 +432,15 @@ pub fn instalar_motor(motor: &Path, avisar: Sender<String>) {
     std::thread::spawn(move || {
         let venv = base.join(".venv");
         let ok = (|| -> Result<(), String> {
+            // En Windows el instalador de python.org deja el lanzador «py» y «python»; en macOS y Linux, «python3.x»
+            let candidatos: &[(&str, &[&str])] = if cfg!(windows) {
+                &[("py", &["-3.12"]), ("py", &["-3.11"]), ("py", &["-3"]), ("python", &[])]
+            } else {
+                &[("python3.12", &[]), ("python3.11", &[]), ("python3", &[])]
+            };
             let mut crear = None;
-            for py in ["python3.12", "python3.11", "python3"] {
-                let r = Command::new(py).args(["-m", "venv"]).arg(&venv).status();
+            for (py, previos) in candidatos {
+                let r = orden(py).args(*previos).args(["-m", "venv"]).arg(&venv).status();
                 if let Ok(s) = r {
                     if s.success() {
                         crear = Some(py);
@@ -377,7 +453,7 @@ pub fn instalar_motor(motor: &Path, avisar: Sender<String>) {
             }
             let _ = avisar.send("Instalando NumPy, SciPy, pandas, scikit-learn, statsmodels y pvlib...".into());
             let pip = interprete_venv(&venv);
-            let s = Command::new(&pip)
+            let s = orden(&pip)
                 .args(["-m", "pip", "install", "-q", "-r"])
                 .arg(&req)
                 .status()
@@ -473,6 +549,37 @@ mod pruebas {
         let c = m.llamar("evaluar", json!({"codigo": "1 + 1"}));
         let (_, valor, _) = respuesta(&mut m, c, Duration::from_secs(10)).expect("el motor nuevo responde");
         assert_eq!(valor["resultado"].as_str(), Some("2"));
+    }
+
+    #[test]
+    fn una_cola_de_envio_llena_falla_sin_bloquear() {
+        // Nadie lee la cola, como un motor que dejó de leer su entrada
+        let (envio, _cola) = sync_channel::<(u64, String)>(1);
+        assert!(encolar(&envio, 1, "a".into()).is_ok());
+        let t0 = Instant::now();
+        let r = encolar(&envio, 2, "b".into());
+        assert!(t0.elapsed() < Duration::from_millis(100));
+        assert!(r.unwrap_err().contains("llena"));
+    }
+
+    #[test]
+    fn una_simulacion_que_usa_el_espacio_no_se_repite_tras_un_reinicio() {
+        let mut m = Motor::iniciar();
+        listo(&mut m);
+        let a = m.llamar("evaluar", json!({"codigo": "ganancia_puente = 2.0"}));
+        assert!(respuesta(&mut m, a, Duration::from_secs(20)).is_some());
+        // Simulación larga que lee «ganancia_puente» del espacio de trabajo
+        let d = json!({"formato": "heliora-diagrama/1", "nombre": "larga", "solver": {"metodo": "rk4", "paso": 1e-6, "t_fin": 100.0},
+            "sistema": {"bloques": [
+                {"id": "c", "tipo": "constante", "params": {"c": "ganancia_puente"}},
+                {"id": "i", "tipo": "integrador", "params": {}},
+                {"id": "o", "tipo": "osciloscopio", "params": {"n": 1, "cada": 100000}}],
+              "conexiones": [{"de": ["c", "y"], "a": ["i", "u"]}, {"de": ["i", "y"], "a": ["o", "u1"]}]}});
+        let s = m.llamar("simular", json!({"diagrama": d}));
+        std::thread::sleep(Duration::from_millis(500));
+        m.matar_para_prueba();
+        let (ok, _, error) = respuesta(&mut m, s, Duration::from_secs(90)).expect("la simulación recibe una respuesta tras el reinicio");
+        assert!(!ok && error.contains("reinició") && error.contains("ganancia_puente"), "{error}");
     }
 
     #[test]

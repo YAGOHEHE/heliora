@@ -1,0 +1,205 @@
+{
+  "formato": "heliora-diagrama/1",
+  "nombre": "Arranque de un motor de inducción con ventilador",
+  "sistema": {
+    "bloques": [
+      {
+        "id": "jv",
+        "nombre": "Inercia del ventilador y del rotor referida",
+        "params": {
+          "J": 0.38
+        },
+        "tipo": "inercia",
+        "x": 760,
+        "y": 60
+      },
+      {
+        "id": "med",
+        "nombre": "Medidor",
+        "params": {},
+        "tipo": "medidor3",
+        "x": 220,
+        "y": 80
+      },
+      {
+        "id": "mq",
+        "nombre": "Motor de inducción 4 polos",
+        "params": {
+          "J": 0.0
+        },
+        "tipo": "maquina_induccion",
+        "x": 400,
+        "y": 80
+      },
+      {
+        "id": "o",
+        "nombre": "Velocidades y par",
+        "params": {
+          "n": 3
+        },
+        "tipo": "osciloscopio",
+        "x": 960,
+        "y": 80
+      },
+      {
+        "id": "oi",
+        "nombre": "Corriente de línea",
+        "params": {
+          "cada": 2,
+          "n": 1
+        },
+        "tipo": "osciloscopio",
+        "x": 960,
+        "y": 260
+      },
+      {
+        "id": "red",
+        "nombre": "Red 400 V, 50 Hz",
+        "params": {
+          "VLL": 400.0,
+          "f": 50.0
+        },
+        "tipo": "fuente_ac3",
+        "x": 40,
+        "y": 80
+      },
+      {
+        "id": "red_eng",
+        "nombre": "Reductor 2:1",
+        "params": {
+          "n": 2.0
+        },
+        "tipo": "engranaje",
+        "x": 580,
+        "y": 80
+      },
+      {
+        "id": "sv",
+        "nombre": "Velocidad del ventilador",
+        "params": {},
+        "tipo": "sensor_velocidad",
+        "x": 760,
+        "y": 320
+      },
+      {
+        "id": "ven",
+        "nombre": "Ventilador T = k·ω²",
+        "params": {
+          "T0": 0.5,
+          "k": 0.006
+        },
+        "tipo": "par_carga",
+        "x": 760,
+        "y": 200
+      }
+    ],
+    "conexiones": [
+      {
+        "a": [
+          "sv",
+          "p"
+        ],
+        "de": [
+          "jv",
+          "p"
+        ]
+      },
+      {
+        "a": [
+          "ven",
+          "p"
+        ],
+        "de": [
+          "jv",
+          "p"
+        ]
+      },
+      {
+        "a": [
+          "mq",
+          "abc"
+        ],
+        "de": [
+          "med",
+          "b"
+        ]
+      },
+      {
+        "a": [
+          "oi",
+          "u1"
+        ],
+        "de": [
+          "med",
+          "i_abc"
+        ]
+      },
+      {
+        "a": [
+          "o",
+          "u3"
+        ],
+        "de": [
+          "mq",
+          "Te"
+        ]
+      },
+      {
+        "a": [
+          "red_eng",
+          "p1"
+        ],
+        "de": [
+          "mq",
+          "eje"
+        ]
+      },
+      {
+        "a": [
+          "o",
+          "u1"
+        ],
+        "de": [
+          "mq",
+          "w"
+        ]
+      },
+      {
+        "a": [
+          "med",
+          "a"
+        ],
+        "de": [
+          "red",
+          "a"
+        ]
+      },
+      {
+        "a": [
+          "jv",
+          "p"
+        ],
+        "de": [
+          "red_eng",
+          "p2"
+        ]
+      },
+      {
+        "a": [
+          "o",
+          "u2"
+        ],
+        "de": [
+          "sv",
+          "w"
+        ]
+      }
+    ]
+  },
+  "solver": {
+    "atol": 1e-07,
+    "metodo": "dopri",
+    "rtol": 1e-05,
+    "t_fin": 2.0
+  }
+}

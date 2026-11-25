@@ -4,6 +4,8 @@ import time
 
 from heliora.validacion import banco
 
+# El resumen usa ✔ y ✘; en Windows, la salida redirigida usaría cp1252 y no podría escribirlos.
+sys.stdout.reconfigure(encoding="utf-8")
 t = time.time()
 r = banco.ejecutar(4)
 errores = banco.imprimir(r)

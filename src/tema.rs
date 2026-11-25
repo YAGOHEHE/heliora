@@ -170,8 +170,8 @@ pub fn aplicar(ctx: &egui::Context, m: Modo) {
     v.code_bg_color = p.fondo;
     v.hyperlink_color = p.acento_2;
     v.selection.bg_fill = p.acento.linear_multiply(0.35);
-    v.selection.stroke = Stroke::new(1.0, p.acento);
-    v.window_stroke = Stroke::new(1.0, p.linea);
+    v.selection.stroke = Stroke::new(1.0_f32, p.acento);
+    v.window_stroke = Stroke::new(1.0_f32, p.linea);
     v.window_corner_radius = CornerRadius::same(radio_ventana);
     v.menu_corner_radius = CornerRadius::same(radio_ventana);
     v.window_shadow = match m {
@@ -182,20 +182,20 @@ pub fn aplicar(ctx: &egui::Context, m: Modo) {
     let w = &mut v.widgets;
     w.noninteractive.bg_fill = p.panel;
     w.noninteractive.weak_bg_fill = p.panel;
-    w.noninteractive.bg_stroke = Stroke::new(1.0, p.linea);
-    w.noninteractive.fg_stroke = Stroke::new(1.0, p.texto_2);
+    w.noninteractive.bg_stroke = Stroke::new(1.0_f32, p.linea);
+    w.noninteractive.fg_stroke = Stroke::new(1.0_f32, p.texto_2);
     w.inactive.bg_fill = p.campo;
     w.inactive.weak_bg_fill = p.campo;
-    w.inactive.bg_stroke = Stroke::new(1.0, p.linea);
-    w.inactive.fg_stroke = Stroke::new(1.0, p.texto);
+    w.inactive.bg_stroke = Stroke::new(1.0_f32, p.linea);
+    w.inactive.fg_stroke = Stroke::new(1.0_f32, p.texto);
     w.hovered.bg_fill = p.realce;
     w.hovered.weak_bg_fill = p.realce;
-    w.hovered.bg_stroke = Stroke::new(1.0, p.linea_fuerte);
-    w.hovered.fg_stroke = Stroke::new(1.0, p.texto);
+    w.hovered.bg_stroke = Stroke::new(1.0_f32, p.linea_fuerte);
+    w.hovered.fg_stroke = Stroke::new(1.0_f32, p.texto);
     w.active.bg_fill = p.realce;
     w.active.weak_bg_fill = p.realce;
-    w.active.bg_stroke = Stroke::new(1.0, p.acento);
-    w.active.fg_stroke = Stroke::new(1.0, p.texto);
+    w.active.bg_stroke = Stroke::new(1.0_f32, p.acento);
+    w.active.fg_stroke = Stroke::new(1.0_f32, p.texto);
     w.open = w.hovered;
     for e in [&mut w.noninteractive, &mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
         e.corner_radius = esq;
@@ -289,19 +289,19 @@ pub fn titulo(ui: &mut egui::Ui, t: &str) {
 /// Única acción primaria por pantalla (p. ej. «Simular»).
 pub fn boton_principal(ui: &mut egui::Ui, t: &str) -> egui::Response {
     let p = p();
-    ui.add(egui::Button::new(egui::RichText::new(t).color(p.sobre_acento).family(semi())).fill(p.acento).stroke(Stroke::new(1.0, p.acento)))
+    ui.add(egui::Button::new(egui::RichText::new(t).color(p.sobre_acento).family(semi())).fill(p.acento).stroke(Stroke::new(1.0_f32, p.acento)))
 }
 
 /// Grosor de cable del lienzo: eléctrico 2 px, señal 1,25 px; en falla, 1,75 px discontinuo.
 pub fn trazo_cable(electrico: bool, en_falla: bool) -> Stroke {
     let p = p();
     if en_falla {
-        return Stroke::new(1.75, p.falla);
+        return Stroke::new(1.75_f32, p.falla);
     }
     if electrico {
-        Stroke::new(2.0, p.electrica)
+        Stroke::new(2.0_f32, p.electrica)
     } else {
-        Stroke::new(1.25, p.senal)
+        Stroke::new(1.25_f32, p.senal)
     }
 }
 
@@ -402,7 +402,7 @@ pub const MODULOS: [(Modulo, &str); 10] = [
 pub fn icono(pt: &egui::Painter, r: Rect, m: Modulo, color: Color32) {
     let c = r.center();
     let s = r.width().min(r.height()) / 2.0;
-    let t = Stroke::new(1.5, color);
+    let t = Stroke::new(1.5_f32, color);
     let q = |x: f32, y: f32| Pos2::new(c.x + x * s, c.y + y * s);
     // Segmento con extremos redondeados: la línea y un punto de radio w/2 en cada extremo
     let seg = |a: Pos2, b: Pos2| {
@@ -485,7 +485,7 @@ pub fn tarjeta<R>(ui: &mut egui::Ui, f: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let p = p();
     egui::Frame::new()
         .fill(p.panel)
-        .stroke(Stroke::new(1.0, p.linea))
+        .stroke(Stroke::new(1.0_f32, p.linea))
         .corner_radius(CornerRadius::same(radio_ventana()))
         .inner_margin(Margin::same(12))
         .show(ui, f)

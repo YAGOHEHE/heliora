@@ -17,6 +17,17 @@ También se puede preparar a mano:
     python3 -m venv .venv
     .venv/bin/pip install -r engine/requirements.txt
 
+En Windows (PowerShell), con Python 3.11 o 3.12 de python.org y Rust con la cadena MSVC
+(el instalador `rustup-init` ofrece instalar Visual Studio Build Tools si faltan):
+
+    py -3 -m venv .venv
+    .venv\Scripts\python -m pip install -r engine\requirements.txt
+    cargo run
+
+En Windows la aplicación busca `.venv\Scripts\python.exe` y, si no está, `python`. La instalación
+desde el botón usa el lanzador `py`. Si Python está en otro sitio, la variable `HELIORA_PYTHON` indica
+la ruta del intérprete; `HELIORA_ENGINE`, la de la carpeta `engine`.
+
 ## Dónde está cada cosa
 
 | Tema | Archivo |
@@ -27,6 +38,12 @@ También se puede preparar a mano:
 | Elementos eléctricos | `engine/heliora/lib/electrica.py` |
 | Convertidores, modulación, control y medida | `engine/heliora/lib/potencia.py` |
 | Fotovoltaica | `engine/heliora/lib/fotovoltaica.py` |
+| Señal, control (PID) y tiempo discreto | `engine/heliora/lib/senal.py` |
+| Dominio térmico y uniones de semiconductores | `engine/heliora/lib/termica.py` |
+| Batería, supercondensador y cargador DC-DC | `engine/heliora/lib/almacenamiento.py` |
+| Dominio mecánico rotacional | `engine/heliora/lib/mecanica.py` |
+| Máquinas (continua, PMSM, inducción) | `engine/heliora/lib/maquinas.py` |
+| Diseño propuesto del motor DAE (sin construir) | `docs/diseno_motor_dae.md` |
 | Estadística | `engine/heliora/lib/estadistica.py` |
 | Aprendizaje automático | `engine/heliora/lib/aprendizaje.py` |
 | Mantenimiento | `engine/heliora/lib/mantenimiento.py` |
@@ -67,9 +84,22 @@ En la aplicación, módulo Validación. Desde la línea de órdenes:
     cd engine
     ../.venv/bin/python -c "from heliora.validacion import banco; banco.imprimir(banco.ejecutar(4))"
 
-Cada simulación, linealización y validación devuelve un bloque `procedencia` con la huella SHA-256 de la
-entrada (el diagrama, o el código del banco de pruebas), la versión del motor y las de NumPy, SciPy,
-pandas y scikit-learn, para poder reproducir el resultado.
+O todas las fases con su resumen (en Windows, `..\.venv\Scripts\python validar_todo.py`):
+
+    ../.venv/bin/python validar_todo.py
+
+Cada simulación, linealización y validación devuelve un bloque `procedencia`:
+
+- `sha256`: huella de la entrada (el diagrama tal como se envió, o el código del banco de pruebas).
+- En simulación y linealización, además, `sha256_resuelto` (los parámetros de cada bloque ya evaluados
+  con el espacio de trabajo: el mismo diagrama con otra variable da otra huella), `sha256_codigo` (el
+  código de los bloques usados y del núcleo de simulación, incluidas las ediciones locales) y la lista
+  `archivos_codigo`.
+- Las versiones del motor, de Python y de NumPy, SciPy, pandas, scikit-learn, statsmodels, pvlib, joblib
+  y pyarrow.
+
+Son huellas, no copias: identifican qué se ejecutó, pero el código y los datos no se guardan con el
+resultado. Para reproducirlo hace falta conservar esos archivos (por ejemplo, en Git).
 
 ## Linealización
 
