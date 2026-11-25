@@ -3,6 +3,9 @@
 ## Dónde estamos
 
 - Ventana Rust/egui + motor Python; Windows y macOS.
+- Interfaz con el rediseño de `diseno/rediseno/` en las 11 pantallas (rejilla de 12 columnas, herramientas
+  en pestañas, fichas, parámetros a la derecha). Diferencias con el diseño y su motivo en
+  `historial/2026-11-25.md`.
 - Instaladores con Python incluido (Windows `.exe`, macOS `.dmg`) generados por la CI; sin firma digital.
 - Auditoría de todos los módulos resuelta en lo grave: importar tablas desde archivo, evaluador seguro,
   guardado sin pérdidas, mantenimiento editable, aplicar modelo, CEC. Detalle en `historial/2026-11-25.md`.
@@ -23,9 +26,13 @@
 
 ## Verificado (2026-11-25, Windows)
 
+- Rediseño: clippy limpio, `cargo test` 50/50, `validar_todo.py` 129/129, capturas comparadas con el
+  diseño. Sin probar a mano la interacción ni 1280 × 800.
+
 - Tras auditoría, arreglos en paralelo y revisión independiente: `cargo test` 36/36, clippy limpio,
   `validar_todo.py` 129/129. Motor autocontenido montado y probado en local.
-- Sin probar: flujo «Instaladores» en GitHub, `.dmg` en un Mac y los formularios nuevos a mano.
+- Flujo «Instaladores» en GitHub correcto (instalador de Windows 137 MB, `.dmg` 220 MB). Sin probar: el
+  `.dmg` en un Mac real y el instalador en un Windows limpio.
 
 ## Verificado (2026-11-19, Windows)
 

@@ -101,11 +101,11 @@ nombres de columna con unidades, duplicados), KPIs, detección de fallas y fiabi
 tablero, calendario, órdenes de trabajo (crear, editar, reprogramar, cerrar, reabrir y borrar),
 catálogo de equipos, planes, AMEF e historial, con exportación a CSV e informe O&M.
 
-![KPIs de la planta](docs/capturas/mantenimiento.png)
+![KPIs de la planta](docs/capturas/mantenimiento_analisis.png)
 
-![Tablero y calendario](docs/capturas/tablero.png)
+![Tablero y calendario](docs/capturas/mantenimiento_tablero.png)
 
-![Órdenes de trabajo con filtros](docs/capturas/ordenes.png)
+![Órdenes de trabajo con filtros](docs/capturas/mantenimiento_ordenes.png)
 
 ### Validación
 
