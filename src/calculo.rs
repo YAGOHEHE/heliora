@@ -233,46 +233,46 @@ impl Calculo {
                 interfaz::pagina(ui, |ui| {
                     interfaz::fila(ui, &[8, 4], alturas[0], |i, ui| {
                         ui.scope_builder(egui::UiBuilder::new().id_salt(("calculo_fila_1", i)), |ui| {
-                        ui.spacing_mut().item_spacing.y = 4.0;
-                        if i == 0 {
-                            let acciones = |ui: &mut egui::Ui| {
-                                ui.add(egui::Label::new(egui::RichText::new("Python · np, pd, linalg, optimize, interpolate, signal, stats").size(12.0).color(pal.texto_2)).truncate());
-                            };
-                            interfaz::tarjeta_con_titulo(ui, "Script", acciones, |ui| self.editor(ui));
-                        } else {
-                            let (mut borrar, mut importar) = (false, false);
-                            let acciones = |ui: &mut egui::Ui| {
-                                borrar = ui.small_button("Borrar todo").clicked();
-                                importar = ui.small_button("Importar datos").on_hover_text("CSV, TSV, TXT o Parquet").clicked();
-                            };
-                            interfaz::tarjeta_con_titulo(ui, "Espacio de trabajo", acciones, |ui| self.variables(ui, motor, c));
-                            self.atender_acciones_variables(motor, c, borrar, importar);
-                        }
+                            ui.spacing_mut().item_spacing.y = 4.0;
+                            if i == 0 {
+                                let acciones = |ui: &mut egui::Ui| {
+                                    ui.add(egui::Label::new(egui::RichText::new("Python · np, pd, linalg, optimize, interpolate, signal, stats").size(12.0).color(pal.texto_2)).truncate());
+                                };
+                                interfaz::tarjeta_con_titulo(ui, "Script", acciones, |ui| self.editor(ui));
+                            } else {
+                                let (mut borrar, mut importar) = (false, false);
+                                let acciones = |ui: &mut egui::Ui| {
+                                    borrar = ui.small_button("Borrar todo").clicked();
+                                    importar = ui.small_button("Importar datos").on_hover_text("CSV, TSV, TXT o Parquet").clicked();
+                                };
+                                interfaz::tarjeta_con_titulo(ui, "Espacio de trabajo", acciones, |ui| self.variables(ui, motor, c));
+                                self.atender_acciones_variables(motor, c, borrar, importar);
+                            }
                         });
                     });
                     interfaz::fila(ui, &[8, 4], alturas[1], |i, ui| {
                         ui.scope_builder(egui::UiBuilder::new().id_salt(("calculo_fila_2", i)), |ui| {
-                        ui.spacing_mut().item_spacing.y = 4.0;
-                        if i == 0 {
-                            let ejecutando = self.id_eval.is_some();
-                            let (mut limpiar, mut detener) = (false, false);
-                            let acciones = |ui: &mut egui::Ui| {
-                                limpiar = ui.small_button("Limpiar").clicked();
-                                if ejecutando {
-                                    detener = ui.small_button("Detener").clicked();
-                                    ui.spinner();
+                            ui.spacing_mut().item_spacing.y = 4.0;
+                            if i == 0 {
+                                let ejecutando = self.id_eval.is_some();
+                                let (mut limpiar, mut detener) = (false, false);
+                                let acciones = |ui: &mut egui::Ui| {
+                                    limpiar = ui.small_button("Limpiar").clicked();
+                                    if ejecutando {
+                                        detener = ui.small_button("Detener").clicked();
+                                        ui.spinner();
+                                    }
+                                };
+                                interfaz::tarjeta_con_titulo(ui, "Consola", acciones, |ui| self.consola(ui, motor));
+                                if limpiar {
+                                    self.historia.clear();
                                 }
-                            };
-                            interfaz::tarjeta_con_titulo(ui, "Consola", acciones, |ui| self.consola(ui, motor));
-                            if limpiar {
-                                self.historia.clear();
+                                if detener {
+                                    motor.llamar("cancelar", json!({}));
+                                }
+                            } else {
+                                interfaz::tarjeta_plena(ui, |ui| self.panel_figuras(ui, c));
                             }
-                            if detener {
-                                motor.llamar("cancelar", json!({}));
-                            }
-                        } else {
-                            interfaz::tarjeta_plena(ui, |ui| self.panel_figuras(ui, c));
-                        }
                         });
                     });
                 });
