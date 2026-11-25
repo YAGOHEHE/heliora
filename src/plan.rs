@@ -242,6 +242,19 @@ impl Mantenimiento {
         }
     }
 
+    /// Nombre de la pestaña abierta, para la ruta de la cabecera.
+    pub fn nombre_pestana(&self) -> &'static str {
+        match self.pestana {
+            Pestana::Analisis => "Análisis",
+            Pestana::Tablero => "Tablero y calendario",
+            Pestana::Ordenes => "Órdenes de trabajo",
+            Pestana::Catalogo => "Catálogo de equipos",
+            Pestana::Planes => "Planes",
+            Pestana::Amef => "AMEF",
+            Pestana::Historial => "Historial",
+        }
+    }
+
     pub fn fijar_pestana(&mut self, p: &str) {
         self.pestana = match p {
             "tablero" => Pestana::Tablero,

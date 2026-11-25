@@ -37,6 +37,8 @@ fn main() -> eframe::Result<()> {
             _ => {}
         }
     }
+    // Las capturas de comprobación se hacen siempre a 1440 × 900, no al último tamaño guardado
+    let persistir_ventana = op.captura.is_none();
     let opciones = eframe::NativeOptions {
         viewport: {
             let v = egui::ViewportBuilder::default().with_inner_size([1440.0, 900.0]).with_min_inner_size([900.0, 600.0]).with_title("Heliora");
@@ -45,6 +47,7 @@ fn main() -> eframe::Result<()> {
                 Err(_) => v,
             }
         },
+        persist_window: persistir_ventana,
         ..Default::default()
     };
     eframe::run_native("Heliora", opciones, Box::new(move |cc| Ok(Box::new(app::App::nueva(cc, op)))))

@@ -381,6 +381,13 @@ fn parametro_principal(b: &BloqueD, f: Option<&Ficha>) -> String {
     t
 }
 
+/// Versiones de Python y de las librerías principales a partir de un bloque `procedencia` del motor.
+pub fn versiones_de(p: &Value) -> String {
+    let v = |k: &str| p["librerias"][k].as_str().map(|x| format!(" {x}")).unwrap_or_default();
+    let py = p["python"].as_str().map(|x| format!(" {x}")).unwrap_or_default();
+    format!("Python{py} · NumPy{} · SciPy{} · pvlib{}", v("numpy"), v("scipy"), v("pvlib"))
+}
+
 // ================================================================= Estado del editor
 
 /// Resumen de la última simulación para el inspector.
@@ -962,10 +969,12 @@ impl Editor {
 
     /// Versiones de Python y de las librerías con las que corrió la última simulación.
     pub fn versiones(&self) -> String {
-        let p = &self.procedencia;
-        let v = |k: &str| p["librerias"][k].as_str().map(|x| format!(" {x}")).unwrap_or_default();
-        let py = p["python"].as_str().map(|x| format!(" {x}")).unwrap_or_default();
-        format!("Python{py} · NumPy{} · SciPy{} · pvlib{}", v("numpy"), v("scipy"), v("pvlib"))
+        versiones_de(&self.procedencia)
+    }
+
+    /// Indica si ya hay una simulación con su procedencia (huella y versiones).
+    pub fn tiene_procedencia(&self) -> bool {
+        !self.procedencia.is_null()
     }
 
     /// Bloques del nivel que se está viendo.

@@ -605,6 +605,12 @@ impl Pagina {
         self.valores.entry(id.to_string()).or_default().insert(param.to_string(), valor.to_string());
     }
 
+    /// Título de la herramienta abierta, para la ruta de la cabecera.
+    pub fn titulo_seleccion(&self, todas: &[Herramienta]) -> Option<String> {
+        let id = self.seleccion.as_deref()?;
+        todas.iter().find(|h| h.id == id).map(|h| h.titulo.clone())
+    }
+
     pub fn seleccionar(&mut self, id: &str) {
         self.seleccion = Some(id.to_string());
     }

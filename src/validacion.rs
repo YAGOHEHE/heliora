@@ -14,7 +14,7 @@ pub struct Validacion {
     catalogo: Value,
     id_catalogo: Option<u64>,
     /// Huella y versiones de la última validación
-    procedencia: Value,
+    pub procedencia: Value,
 }
 
 impl Validacion {

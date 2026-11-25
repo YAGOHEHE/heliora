@@ -463,7 +463,21 @@ impl App {
             }
         });
         ui.label(egui::RichText::new("/").color(pal.texto_3));
-        ui.label(egui::RichText::new(tema::nombre_modulo(self.modulo)).color(pal.texto_3));
+        // El último tramo de la ruta va en TEXTO; los anteriores, en TEXTO_3
+        let detalle = match self.modulo {
+            Modulo::Potencia => self.potencia.titulo_seleccion(&self.herramientas),
+            Modulo::Fotovoltaica => self.fotovoltaica.titulo_seleccion(&self.herramientas),
+            Modulo::Estadistica => self.estadistica.titulo_seleccion(&self.herramientas),
+            Modulo::Aprendizaje => self.aprendizaje.titulo_seleccion(&self.herramientas),
+            Modulo::Mantenimiento => Some(self.mantenimiento.nombre_pestana().to_string()),
+            _ => None,
+        };
+        let ultimo = detalle.is_none() && self.modulo != Modulo::Bloques;
+        ui.label(egui::RichText::new(tema::nombre_modulo(self.modulo)).color(if ultimo { pal.texto } else { pal.texto_3 }));
+        if let Some(d) = detalle {
+            ui.label(egui::RichText::new("/").color(pal.texto_3));
+            ui.label(egui::RichText::new(d).color(pal.texto));
+        }
         if self.modulo != Modulo::Bloques {
             return;
         }
@@ -609,7 +623,9 @@ impl App {
                 ui.horizontal_centered(|ui| {
                     let f = tema::fuente_mono(11.0);
                     ui.spacing_mut().item_spacing.x = 16.0;
-                    ui.label(egui::RichText::new(self.editor.versiones()).font(f.clone()).color(pal.texto_3));
+                    // Hasta la primera simulación, las versiones salen de la última validación guardada
+                    let versiones = if self.editor.tiene_procedencia() { self.editor.versiones() } else { crate::bloques::versiones_de(&self.validacion.procedencia) };
+                    ui.label(egui::RichText::new(versiones).font(f.clone()).color(pal.texto_3));
                     let ancho = ui.available_width();
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(egui::RichText::new(format!("Tema: {}", self.modo.nombre())).font(f.clone()).color(pal.texto_3));
