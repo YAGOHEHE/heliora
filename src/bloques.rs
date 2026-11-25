@@ -4,6 +4,7 @@ use crate::grafica::{self, Fig2D, Figura, Serie, TipoSerie};
 use crate::herramientas;
 use crate::motor::Motor;
 use crate::tema;
+use crate::ui as interfaz;
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, Vec2};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -427,12 +428,12 @@ pub struct Editor {
     id_ejemplo: Option<u64>,
     pub avance: f32,
     pub resultado: Vec<(String, Figura)>,
-    pestana: usize,
+    pestana_diag: usize,
+    ver_solver: bool,
     pub stats: String,
     pub avisos: Vec<String>,
     pub error: Option<String>,
     centrar: bool,
-    alto_osc: f32,
     /// Bloques (identificadores completos) de cada lazo algebraico de la última simulación
     pub lazos: Vec<Vec<String>>,
     /// Petición de linealización en curso y su informe (Bode, escalón, polos)
@@ -480,12 +481,12 @@ impl Editor {
             id_ejemplo: None,
             avance: 0.0,
             resultado: vec![],
-            pestana: 0,
+            pestana_diag: 0,
+            ver_solver: false,
             stats: String::new(),
             avisos: vec![],
             error: None,
             centrar: false,
-            alto_osc: 320.0,
             lazos: vec![],
             id_lin: None,
             lineal: None,
@@ -604,9 +605,6 @@ impl Editor {
                 self.avisos = lista_txt(&valor["avisos"]);
                 self.lazos = valor["lazos"].as_array().map(|a| a.iter().map(lista_txt).collect()).unwrap_or_default();
                 self.procedencia = valor["procedencia"].clone();
-                if self.pestana >= self.resultado.len() {
-                    self.pestana = 0;
-                }
                 c.fijar_variables(&valor["variables"]);
             } else {
                 self.error = Some(err.to_string());
@@ -1040,21 +1038,14 @@ impl Editor {
 
     pub fn ui(&mut self, ui: &mut egui::Ui, motor: &mut Motor, c: &mut Compartido) {
         let pal = tema::p();
-        let marco = |m: egui::Margin| egui::Frame::new().fill(pal.panel).inner_margin(m).stroke(Stroke::new(1.0_f32, pal.linea));
-        egui::SidePanel::left("paleta").default_width(232.0).width_range(190.0..=340.0).frame(marco(egui::Margin { left: 12, right: 12, top: 12, bottom: 8 })).show_inside(ui, |ui| self.paleta(ui));
-        egui::SidePanel::right("inspector").default_width(280.0).width_range(240.0..=460.0).frame(marco(egui::Margin::ZERO)).show_inside(ui, |ui| self.inspector(ui, c));
-        egui::TopBottomPanel::top("barra_bloques").exact_height(40.0).frame(marco(egui::Margin::symmetric(10, 0))).show_inside(ui, |ui| self.barra(ui, motor));
-        if !self.resultado.is_empty() || self.error.is_some() || !self.stats.is_empty() {
-            egui::TopBottomPanel::bottom("osciloscopios")
-                .resizable(true)
-                .default_height(self.alto_osc)
-                .height_range(140.0..=700.0)
-                .frame(marco(egui::Margin::ZERO))
-                .show_inside(ui, |ui| self.osciloscopios(ui, c));
-        }
+        egui::TopBottomPanel::top("pestanas_bloques")
+            .exact_height(41.0)
+            .frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(20, 0)).stroke(Stroke::new(1.0_f32, pal.linea)))
+            .show_inside(ui, |ui| self.pestanas(ui, motor));
         if let Some(a) = self.aviso_apertura.clone() {
             let mut cerrar = false;
-            egui::TopBottomPanel::top("aviso_codigo").frame(marco(egui::Margin::symmetric(12, 6))).show_inside(ui, |ui| {
+            let marco = egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(20, 6)).stroke(Stroke::new(1.0_f32, pal.linea));
+            egui::TopBottomPanel::top("aviso_codigo").frame(marco).show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("⚠").color(pal.alerta));
                     ui.add(egui::Label::new(egui::RichText::new(&a).color(pal.texto)).wrap());
@@ -1065,7 +1056,39 @@ impl Editor {
                 self.aviso_apertura = None;
             }
         }
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.fondo)).show_inside(ui, |ui| self.lienzo(ui));
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.fondo)).show_inside(ui, |ui| {
+            let apilado = interfaz::apilar(ui.available_width() - 2.0 * interfaz::MARGEN, &[8, 4]);
+            let alturas = interfaz::altos(ui.available_height() - 1.0, 2.0 * interfaz::MARGEN - interfaz::HUECO, &[2.2, 1.0]);
+            egui::ScrollArea::vertical().scroll_source(if apilado { egui::containers::scroll_area::ScrollSource::ALL } else { egui::containers::scroll_area::ScrollSource::NONE }).auto_shrink([false, false]).show(ui, |ui| {
+                interfaz::pagina(ui, |ui| {
+                    interfaz::fila(ui, &[8, 4], alturas[0], |i, ui| {
+                        ui.scope_builder(egui::UiBuilder::new().id_salt(("bloques_fila_1", i)), |ui| {
+                            ui.spacing_mut().item_spacing = Vec2::new(8.0, 4.0);
+                            if i == 0 {
+                                self.libreria_y_lienzo(ui);
+                            } else {
+                                self.tarjetas_laterales(ui, c);
+                            }
+                        });
+                    });
+                    interfaz::fila(ui, &[8, 4], alturas[1], |i, ui| {
+                        ui.scope_builder(egui::UiBuilder::new().id_salt(("bloques_fila_2", i)), |ui| {
+                            ui.spacing_mut().item_spacing = Vec2::new(8.0, 4.0);
+                            if i == 0 {
+                                self.tarjeta_osciloscopios(ui, c);
+                            } else {
+                                interfaz::tarjeta_plena(ui, |ui| self.diagnostico_y_consola(ui));
+                            }
+                        });
+                    });
+                });
+            });
+        });
+        if self.ver_solver {
+            let mut abierta = true;
+            egui::Window::new("Solver").open(&mut abierta).collapsible(false).resizable(false).default_pos(ui.max_rect().right_top() + Vec2::new(-440.0, 60.0)).show(ui.ctx(), |ui| self.panel_solver(ui));
+            self.ver_solver = abierta;
+        }
         if self.ver_lineal {
             let mut abierta = true;
             if let Some(inf) = self.lineal.as_mut() {
@@ -1084,80 +1107,229 @@ impl Editor {
         }
     }
 
-    /// Barra del lienzo: edición, vista, linealización, migas de subsistema, leyenda y zoom.
-    fn barra(&mut self, ui: &mut egui::Ui, motor: &mut Motor) {
+    /// Pestaña del diagrama abierto con las acciones de edición y vista a la derecha.
+    fn pestanas(&mut self, ui: &mut egui::Ui, motor: &mut Motor) {
+        let nombre = self.archivo.as_ref().and_then(|a| a.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "Diagrama sin guardar".into());
+        let mut activa = 0;
+        interfaz::barra_pestanas(ui, &[nombre.as_str()], &mut activa, |ui| self.acciones_barra(ui, motor));
+    }
+
+    /// Deshacer, rehacer, encuadrar, ordenar cables y linealizar.
+    fn acciones_barra(&mut self, ui: &mut egui::Ui, motor: &mut Motor) {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        let ocupado = self.id_lin.is_some() || self.id_sim.is_some();
+        if ui
+            .add_enabled(!ocupado, egui::Button::new("Linealizar aquí"))
+            .on_hover_text("Modelo lineal en el punto de operación (simula hasta el final y refina con Newton). Entrada: la primera fuente. Salida: el bloque seleccionado o el primer osciloscopio. Abre su Bode, su escalón y sus polos.")
+            .clicked()
+        {
+            self.linealizar(motor);
+        }
+        if self.id_lin.is_some() {
+            ui.spinner();
+        }
+        if self.lineal.is_some() && !self.ver_lineal && ui.button("Ver modelo lineal").clicked() {
+            self.ver_lineal = true;
+        }
+        if ui.add(egui::Button::new("Ordenar cables").selected(self.ordenar_cables)).on_hover_text("Traza los cables en ángulo recto en lugar de en curva").clicked() {
+            self.ordenar_cables = !self.ordenar_cables;
+        }
+        if ui.button("Encuadrar").on_hover_text("Ajusta la vista a todo el diagrama").clicked() {
+            self.encuadrar();
+        }
+        if ui.add_enabled(!self.rehacer.is_empty(), egui::Button::new("↷").min_size(Vec2::new(30.0, 28.0))).on_hover_text("Rehacer (Ctrl+Mayús+Z)").clicked() {
+            self.rehacer_ya();
+        }
+        if ui.add_enabled(!self.deshacer.is_empty(), egui::Button::new("↶").min_size(Vec2::new(30.0, 28.0))).on_hover_text("Deshacer (Ctrl+Z)").clicked() {
+            self.deshacer_ya();
+        }
+    }
+
+    /// Tarjeta de 8 columnas: la librería (200 px) a la izquierda y el lienzo a la derecha.
+    fn libreria_y_lienzo(&mut self, ui: &mut egui::Ui) {
         let pal = tema::p();
-        ui.horizontal_centered(|ui| {
-            if ui.add_enabled(!self.deshacer.is_empty(), egui::Button::new("↶").min_size(Vec2::new(30.0, 28.0))).on_hover_text("Deshacer (Ctrl+Z)").clicked() {
-                self.deshacer_ya();
+        interfaz::tarjeta_plena(ui, |ui| {
+            let r = ui.max_rect();
+            let r_lib = Rect::from_min_max(r.min, Pos2::new(r.left() + 200.0, r.bottom()));
+            let mut lib = ui.new_child(egui::UiBuilder::new().id_salt("libreria").max_rect(r_lib.shrink2(Vec2::new(8.0, 12.0))));
+            lib.set_clip_rect(r_lib);
+            self.paleta(&mut lib);
+            ui.painter().line_segment([r_lib.right_top(), r_lib.right_bottom()], Stroke::new(1.0_f32, pal.linea));
+            let r_lienzo = Rect::from_min_max(Pos2::new(r_lib.right() + 1.0, r.top()), r.max);
+            let mut zona = ui.new_child(egui::UiBuilder::new().id_salt("zona_lienzo").max_rect(r_lienzo));
+            zona.set_clip_rect(r_lienzo);
+            self.lienzo(&mut zona);
+        });
+    }
+
+    /// Bloque seleccionado, solver y última simulación apilados en la celda de 4 columnas.
+    fn tarjetas_laterales(&mut self, ui: &mut egui::Ui, c: &mut Compartido) {
+        let r = ui.max_rect();
+        let alturas = interfaz::altos(r.height() + interfaz::HUECO, 0.0, &[0.32, 0.26, 0.42]);
+        let mut y = r.top();
+        for (k, alto) in alturas.iter().enumerate() {
+            let sub = Rect::from_min_size(Pos2::new(r.left(), y), Vec2::new(r.width(), *alto));
+            y += alto + interfaz::HUECO;
+            let mut hijo = ui.new_child(egui::UiBuilder::new().id_salt(("tarjeta_lateral", k)).max_rect(sub));
+            match k {
+                0 => interfaz::tarjeta_con_titulo(&mut hijo, "Bloque seleccionado", |_| {}, |ui| {
+                    egui::ScrollArea::vertical().id_salt("scroll_bloque").auto_shrink([false, false]).show(ui, |ui| self.bloque_seleccionado(ui, c));
+                }),
+                1 => {
+                    let mut editar = false;
+                    interfaz::tarjeta_con_titulo(&mut hijo, "Solver", |ui| editar = ui.small_button("Editar").clicked(), |ui| self.resumen_del_solver(ui));
+                    if editar {
+                        self.ver_solver = !self.ver_solver;
+                    }
+                }
+                _ => interfaz::tarjeta_con_titulo(&mut hijo, "Última simulación", |_| {}, |ui| {
+                    egui::ScrollArea::vertical().id_salt("scroll_ultima").auto_shrink([false, false]).show(ui, |ui| self.panel_ultima(ui));
+                }),
             }
-            if ui.add_enabled(!self.rehacer.is_empty(), egui::Button::new("↷").min_size(Vec2::new(30.0, 28.0))).on_hover_text("Rehacer (Ctrl+Mayús+Z)").clicked() {
-                self.rehacer_ya();
+        }
+    }
+
+    /// Inspector del bloque único seleccionado; con varios, sus acciones de grupo; sin selección, la ayuda del lienzo.
+    fn bloque_seleccionado(&mut self, ui: &mut egui::Ui, c: &mut Compartido) {
+        ui.set_width(ui.available_width());
+        if self.sel.len() == 1 {
+            if let Some(id) = self.sel.iter().next().cloned() {
+                self.inspector_bloque(ui, &id, c);
             }
-            if ui.button("Encuadrar").on_hover_text("Ajusta la vista a todo el diagrama").clicked() {
-                self.encuadrar();
+        } else if self.sel.len() > 1 {
+            ui.label(format!("{} bloques seleccionados", self.sel.len()));
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Crear subsistema").clicked() {
+                    self.agrupar();
+                }
+                if ui.button("Duplicar").clicked() {
+                    self.duplicar();
+                }
+                if ui.button("Borrar").clicked() {
+                    self.borrar_seleccion();
+                }
+            });
+        } else {
+            ui.label(egui::RichText::new(
+                "Arrastra bloques desde la librería al lienzo. Une puertos tirando de uno a otro: triángulos para señales, cuadrados para conexiones eléctricas. Doble clic en un subsistema para entrar. Mueve el lienzo con el botón derecho o dos dedos.",
+            ).small().color(tema::p().texto_3));
+        }
+    }
+
+    /// Método, intervalo y paso del solver en tres cajas iguales.
+    fn resumen_del_solver(&self, ui: &mut egui::Ui) {
+        let pal = tema::p();
+        let d = &self.diagrama.solver;
+        let metodo = d.get("metodo").and_then(|v| v.as_str()).unwrap_or("dopri");
+        let t0 = valor_txt(d.get("t_ini"));
+        let t0 = if t0.is_empty() { "0".to_string() } else { t0 };
+        let paso = if matches!(metodo, "euler" | "rk4") { format!("{} s", valor_txt(d.get("paso"))) } else { format!("rtol {}", valor_txt(d.get("rtol"))) };
+        let cajas = [("Método", etiqueta_metodo(metodo).to_string()), ("Intervalo", format!("{t0} → {} s", valor_txt(d.get("t_fin")))), ("Paso", paso)];
+        let hueco = 8.0;
+        let ancho = (ui.available_width() - 2.0 * hueco) / 3.0;
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = hueco;
+            for (etiqueta, valor) in cajas {
+                ui.allocate_ui_with_layout(Vec2::new(ancho, 50.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    egui::Frame::new().fill(pal.campo).corner_radius(6).inner_margin(egui::Margin::symmetric(10, 6)).show(ui, |ui| {
+                        ui.set_width(ancho - 20.0);
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        ui.label(egui::RichText::new(etiqueta).size(12.0).color(pal.texto_2));
+                        ui.add(egui::Label::new(egui::RichText::new(valor).font(tema::fuente_mono(12.5)).color(pal.texto)).truncate());
+                    });
+                });
             }
-            if ui.add(egui::Button::new("Ordenar cables").selected(self.ordenar_cables)).on_hover_text("Traza los cables en ángulo recto en lugar de en curva").clicked() {
-                self.ordenar_cables = !self.ordenar_cables;
+        });
+    }
+
+    /// Tarjeta de 8 columnas con un osciloscopio por columna y el intervalo simulado en la cabecera.
+    fn tarjeta_osciloscopios(&mut self, ui: &mut egui::Ui, c: &mut Compartido) {
+        let intervalo = if self.resultado.is_empty() {
+            String::new()
+        } else {
+            let t0 = valor_txt(self.solver_enviado.get("t_ini"));
+            format!("t = {} → {} s", if t0.is_empty() { "0".to_string() } else { t0 }, valor_txt(self.solver_enviado.get("t_fin")))
+        };
+        let acciones = |ui: &mut egui::Ui| {
+            ui.label(egui::RichText::new(intervalo).font(tema::fuente_mono(11.0)).color(tema::p().texto_3));
+        };
+        interfaz::tarjeta_con_titulo(ui, "Osciloscopios", acciones, |ui| self.osciloscopios(ui, c));
+    }
+
+    /// Pestañas del diagnóstico y de la consola de la última simulación.
+    fn diagnostico_y_consola(&mut self, ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        let n_diag = self.avisos.len() + usize::from(self.error.is_some()) + self.lazos.len();
+        let diagnostico = format!("Diagnóstico {n_diag}");
+        egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 0)).show(ui, |ui| {
+            interfaz::barra_pestanas(ui, &[diagnostico.as_str(), "Consola"], &mut self.pestana_diag, |_| {});
+        });
+        tema::separador(ui);
+        egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 12)).show(ui, |ui| {
+            if self.pestana_diag == 0 {
+                self.panel_diagnostico(ui);
+            } else {
+                self.panel_consola(ui);
             }
-            let ocupado = self.id_lin.is_some() || self.id_sim.is_some();
-            if ui
-                .add_enabled(!ocupado, egui::Button::new("Linealizar aquí"))
-                .on_hover_text("Modelo lineal en el punto de operación (simula hasta el final y refina con Newton). Entrada: la primera fuente. Salida: el bloque seleccionado o el primer osciloscopio. Abre su Bode, su escalón y sus polos.")
-                .clicked()
-            {
-                self.linealizar(motor);
+        });
+    }
+
+    /// Migas del camino dentro de los subsistemas.
+    fn migas(&mut self, ui: &mut egui::Ui) {
+        let pal = tema::p();
+        ui.horizontal(|ui| {
+            if ui.add(egui::Button::new(egui::RichText::new("Modelo").color(pal.texto_3)).frame(false)).clicked() {
+                self.ruta.clear();
+                self.sel.clear();
+                self.centrar = true;
             }
-            if self.id_lin.is_some() {
-                ui.spinner();
-            }
-            if self.lineal.is_some() && !self.ver_lineal && ui.button("Ver modelo lineal").clicked() {
-                self.ver_lineal = true;
-            }
-            // Migas del camino dentro de los subsistemas
-            if !self.ruta.is_empty() {
-                ui.add_space(8.0);
-                if ui.add(egui::Button::new(egui::RichText::new("Modelo").color(pal.texto_3)).frame(false)).clicked() {
-                    self.ruta.clear();
+            let r = self.ruta.clone();
+            for (i, p) in r.iter().enumerate() {
+                ui.label(egui::RichText::new("/").color(pal.texto_3));
+                let n = {
+                    let mut s = &self.diagrama.sistema;
+                    let mut nom = p.clone();
+                    for q in &r[..=i] {
+                        if let Some(b) = s.bloques.iter().find(|b| &b.id == q) {
+                            nom = if b.nombre.is_empty() { b.id.clone() } else { b.nombre.clone() };
+                            if let Some(x) = &b.sistema {
+                                s = x;
+                            }
+                        }
+                    }
+                    nom
+                };
+                let color = if i + 1 == r.len() { pal.texto } else { pal.texto_3 };
+                if ui.add(egui::Button::new(egui::RichText::new(n).color(color)).frame(false)).clicked() {
+                    self.ruta.truncate(i + 1);
                     self.sel.clear();
                     self.centrar = true;
                 }
-                let r = self.ruta.clone();
-                for (i, p) in r.iter().enumerate() {
-                    ui.label(egui::RichText::new("/").color(pal.texto_3));
-                    let n = {
-                        let mut s = &self.diagrama.sistema;
-                        let mut nom = p.clone();
-                        for q in &r[..=i] {
-                            if let Some(b) = s.bloques.iter().find(|b| &b.id == q) {
-                                nom = if b.nombre.is_empty() { b.id.clone() } else { b.nombre.clone() };
-                                if let Some(x) = &b.sistema {
-                                    s = x;
-                                }
-                            }
-                        }
-                        nom
-                    };
-                    let color = if i + 1 == r.len() { pal.texto } else { pal.texto_3 };
-                    if ui.add(egui::Button::new(egui::RichText::new(n).color(color)).frame(false)).clicked() {
-                        self.ruta.truncate(i + 1);
-                        self.sel.clear();
-                        self.centrar = true;
-                    }
-                }
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        });
+    }
+
+    /// Leyenda de cables y zoom arriba a la derecha del lienzo, y las migas arriba a la izquierda.
+    fn superposicion(&mut self, ui: &mut egui::Ui, area: Rect) {
+        let pal = tema::p();
+        let marco = || egui::Frame::new().fill(pal.panel).stroke(Stroke::new(1.0_f32, pal.linea)).corner_radius(6).inner_margin(egui::Margin::symmetric(10, 4));
+        let zona_der = Rect::from_min_max(area.right_top() + Vec2::new(-340.0, 10.0), area.right_top() + Vec2::new(-10.0, 46.0));
+        let mut der = ui.new_child(egui::UiBuilder::new().max_rect(zona_der).layout(egui::Layout::right_to_left(egui::Align::Min)));
+        marco().show(&mut der, |ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
+                interfaz::leyenda(ui, pal.electrica, "eléctrica", false);
+                interfaz::leyenda(ui, pal.senal, "señal", false);
                 if ui.add(egui::Button::new(egui::RichText::new(format!("{:.0} %", self.zoom * 100.0)).font(tema::fuente_mono(12.0)).color(pal.texto_3)).frame(false)).on_hover_text("Volver al 100 %").clicked() {
                     self.zoom = 1.0;
                 }
-                for (texto, color) in [("señal", pal.senal), ("eléctrica", pal.electrica)] {
-                    ui.label(egui::RichText::new(texto).size(12.0).color(pal.texto_3));
-                    let (r, _) = ui.allocate_exact_size(Vec2::new(14.0, 2.0), Sense::hover());
-                    ui.painter().rect_filled(r, 0.0, color);
-                }
             });
         });
+        if !self.ruta.is_empty() {
+            let zona_izq = Rect::from_min_max(area.left_top() + Vec2::new(10.0, 10.0), area.left_top() + Vec2::new(area.width() - 360.0, 46.0));
+            let mut izq = ui.new_child(egui::UiBuilder::new().max_rect(zona_izq));
+            marco().show(&mut izq, |ui| self.migas(ui));
+        }
     }
 
     /// Fila de la librería: altura 28 px, fondo REALCE al pasar el puntero; se puede arrastrar.
@@ -1192,8 +1364,6 @@ impl Editor {
 
     fn paleta(&mut self, ui: &mut egui::Ui) {
         let pal = tema::p();
-        tema::titulo(ui, "Librería");
-        ui.add_space(2.0);
         egui::Frame::new().fill(pal.fondo).stroke(Stroke::new(1.0_f32, pal.borde)).corner_radius(6).inner_margin(egui::Margin::symmetric(8, 4)).show(ui, |ui| {
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(Vec2::new(13.0, 18.0), Sense::hover());
@@ -1213,7 +1383,7 @@ impl Editor {
             ui.add_space(6.0);
             ui.label(egui::RichText::new(t).size(11.0).color(pal.texto_3));
         };
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("scroll_paleta").auto_shrink([false, false]).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 1.0;
             if filtro.is_empty() && !self.recientes.is_empty() {
                 seccion(ui, "Recientes");
@@ -1285,49 +1455,6 @@ impl Editor {
         v
     }
 
-    fn inspector(&mut self, ui: &mut egui::Ui, c: &mut Compartido) {
-        let unico = if self.sel.len() == 1 { self.sel.iter().next().cloned() } else { None };
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            let m = egui::Margin { left: 16, right: 16, top: 14, bottom: 14 };
-            egui::Frame::new().inner_margin(m).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                if let Some(id) = unico {
-                    self.inspector_bloque(ui, &id, c);
-                } else {
-                    tema::titulo(ui, "Solver");
-                    ui.add_space(4.0);
-                    self.panel_solver(ui);
-                    if self.sel.len() > 1 {
-                        ui.add_space(8.0);
-                        tema::tarjeta(ui, |ui| {
-                            ui.label(format!("{} bloques seleccionados", self.sel.len()));
-                            ui.horizontal(|ui| {
-                                if ui.button("Crear subsistema").clicked() {
-                                    self.agrupar();
-                                }
-                                if ui.button("Duplicar").clicked() {
-                                    self.duplicar();
-                                }
-                                if ui.button("Borrar").clicked() {
-                                    self.borrar_seleccion();
-                                }
-                            });
-                        });
-                    }
-                    ui.add_space(8.0);
-                    ui.label(egui::RichText::new(
-                        "Arrastra bloques desde la librería al lienzo. Une puertos tirando de uno a otro: triángulos para señales, cuadrados para conexiones eléctricas. Doble clic en un subsistema para entrar. Mueve el lienzo con el botón derecho o dos dedos.",
-                    ).small().color(tema::p().texto_3));
-                }
-            });
-            tema::separador(ui);
-            egui::Frame::new().inner_margin(m).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                self.panel_ultima(ui);
-            });
-        });
-    }
-
     /// Método, intervalo, paso y tolerancias del solver.
     pub fn panel_solver(&mut self, ui: &mut egui::Ui) {
         let metodo = self.diagrama.solver.get("metodo").and_then(|v| v.as_str()).unwrap_or("dopri").to_string();
@@ -1376,8 +1503,6 @@ impl Editor {
     /// Estado, solver, paso y huella de la última simulación.
     fn panel_ultima(&self, ui: &mut egui::Ui) {
         let pal = tema::p();
-        tema::titulo(ui, "Última simulación");
-        ui.add_space(2.0);
         let Some(u) = &self.ultima else {
             ui.label(egui::RichText::new("Simula el modelo (F5) para ver su resultado.").color(pal.texto_3));
             return;
@@ -1408,6 +1533,10 @@ impl Editor {
                 ui.end_row();
             }
         });
+        if !self.stats.is_empty() {
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(&self.stats).font(tema::fuente_mono(11.0)).color(pal.texto_3));
+        }
     }
 
     fn inspector_bloque(&mut self, ui: &mut egui::Ui, id: &str, c: &mut Compartido) {
@@ -1421,7 +1550,6 @@ impl Editor {
             let s = nivel(&mut self.diagrama.sistema, &r);
             let Some(b) = s.bloques.iter_mut().find(|b| b.id == id) else { return };
             let ficha = fichas.get(&b.tipo).cloned().unwrap_or_default();
-            tema::titulo(ui, "Bloque seleccionado");
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(if ficha.nombre.is_empty() { &b.tipo } else { &ficha.nombre }).size(18.0).family(tema::semi()).color(pal.texto));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1576,117 +1704,80 @@ impl Editor {
         }
     }
 
-    /// Dock de resultados: una pestaña por osciloscopio y la de diagnóstico; leyenda y
-    /// exportación a la derecha de la gráfica.
+    /// Un osciloscopio por columna (hasta tres a lo ancho; con más, desplazamiento horizontal), con su
+    /// leyenda y el menú de exportación.
     fn osciloscopios(&mut self, ui: &mut egui::Ui, c: &mut Compartido) {
         let pal = tema::p();
-        let n_diag = self.avisos.len() + usize::from(self.error.is_some()) + self.lazos.len();
-        let i_diag = self.resultado.len();
-        if self.error.is_some() && self.resultado.is_empty() {
-            self.pestana = i_diag;
+        if self.resultado.is_empty() {
+            let (texto, color) = if self.error.is_some() { ("La simulación terminó con error: el detalle está en Diagnóstico.", pal.falla) } else { ("Simula el modelo (F5) para ver los osciloscopios.", pal.texto_2) };
+            ui.label(egui::RichText::new(texto).color(color));
+            return;
         }
-        egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 0)).show(ui, |ui| {
-            ui.set_height(36.0);
-            ui.horizontal_centered(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                ui.spacing_mut().button_padding.x = 12.0;
-                let pestana = |ui: &mut egui::Ui, texto: egui::WidgetText, activa: bool| -> bool {
-                    let r = ui.add(egui::Button::new(texto).frame(false).min_size(Vec2::new(0.0, 34.0)));
-                    if activa {
-                        ui.painter().rect_filled(Rect::from_min_max(Pos2::new(r.rect.left(), r.rect.bottom() - 2.0), r.rect.right_bottom()), 0.0, pal.acento);
-                    }
-                    r.clicked()
-                };
-                for (i, (n, _)) in self.resultado.iter().enumerate() {
-                    let activa = self.pestana == i;
-                    if pestana(ui, egui::RichText::new(n).color(if activa { pal.texto } else { pal.texto_2 }).into(), activa) {
-                        self.pestana = i;
-                    }
-                }
-                let activa = self.pestana == i_diag;
-                let color_n = if self.error.is_some() || !self.lazos.is_empty() {
-                    pal.falla
-                } else if !self.avisos.is_empty() {
-                    pal.alerta
-                } else {
-                    pal.ok
-                };
-                let mut job = egui::text::LayoutJob::simple_format("Diagnóstico ".into(), egui::TextFormat::simple(FontId::proportional(13.0), if activa { pal.texto } else { pal.texto_2 }));
-                job.append(&n_diag.to_string(), 0.0, egui::TextFormat::simple(tema::fuente_mono(11.0), color_n));
-                if pestana(ui, job.into(), activa) {
-                    self.pestana = i_diag;
-                }
-                if !self.stats.is_empty() {
-                    ui.add_space(12.0);
-                    ui.add(egui::Label::new(egui::RichText::new(self.stats.replace("evaluaciones", "eval")).font(tema::fuente_mono(11.0)).color(pal.texto_3)).truncate()).on_hover_text(&self.stats);
-                }
-            });
-        });
-        tema::separador(ui);
-        egui::Frame::new().inner_margin(egui::Margin { left: 16, right: 16, top: 12, bottom: 12 }).show(ui, |ui| {
-            if self.pestana >= i_diag {
-                self.panel_diagnostico(ui);
-                return;
-            }
-            let alto = ui.available_height().max(90.0);
-            let i = self.pestana;
-            let Some((_, Figura::D2(f))) = self.resultado.get_mut(i) else { return };
-            let mut accion = None;
-            let mut rect_graf = Rect::NOTHING;
-            let mut rect_leyenda = Rect::NOTHING;
+        let hueco = 24.0;
+        let visibles = self.resultado.len().min(3) as f32;
+        let ancho = ((ui.available_width() - hueco * (visibles - 1.0)) / visibles).max(160.0);
+        let alto = ui.available_height();
+        egui::ScrollArea::horizontal().id_salt("scroll_osciloscopios").auto_shrink([false, false]).show(ui, |ui| {
             ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = 16.0;
-                let ancho = (ui.available_width() - 216.0).max(120.0);
-                rect_graf = ui
-                    .allocate_ui(Vec2::new(ancho, alto), |ui| {
-                        accion = f.mostrar_con(ui, alto, false, false);
-                    })
-                    .response
-                    .rect;
-                let leyenda = ui.vertical(|ui| {
-                    ui.set_width(200.0);
-                    ui.spacing_mut().item_spacing.y = 4.0;
-                    egui::ScrollArea::vertical().id_salt("leyenda_osc").max_height((alto - 40.0).max(30.0)).auto_shrink([false, true]).show(ui, |ui| {
-                        for (k, s) in f.series.iter_mut().enumerate() {
-                            let color = s.color.unwrap_or(pal.series[k % pal.series.len()]);
-                            ui.horizontal(|ui| {
-                                ui.checkbox(&mut s.visible, "");
-                                let (r, _) = ui.allocate_exact_size(Vec2::new(12.0, 14.0), Sense::hover());
-                                ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(2.0_f32, color));
-                                let n = if s.nombre.is_empty() { format!("serie {}", k + 1) } else { s.nombre.replace(": ", " · ") };
-                                ui.add(egui::Label::new(egui::RichText::new(n).size(12.0).color(pal.texto)).truncate());
+                ui.spacing_mut().item_spacing.x = 0.0;
+                for (i, (nombre, figura)) in self.resultado.iter_mut().enumerate() {
+                    if i > 0 {
+                        let (r, _) = ui.allocate_exact_size(Vec2::new(hueco, alto), Sense::hover());
+                        ui.painter().line_segment([r.center_top(), r.center_bottom()], Stroke::new(1.0_f32, pal.linea));
+                    }
+                    let Figura::D2(f) = figura else { continue };
+                    ui.allocate_ui_with_layout(Vec2::new(ancho, alto), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.set_width(ancho);
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        let mut accion = None;
+                        ui.horizontal(|ui| {
+                            ui.set_height(22.0);
+                            ui.add(egui::Label::new(egui::RichText::new(nombre.as_str()).family(tema::semi()).size(13.0).color(pal.texto)).truncate());
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.menu_button("Exportar", |ui| {
+                                    for (texto, a) in [("PNG", grafica::Accion::Png(Rect::NOTHING)), ("SVG", grafica::Accion::Svg), ("CSV", grafica::Accion::Csv)] {
+                                        if ui.button(texto).clicked() {
+                                            accion = Some(a);
+                                            ui.close();
+                                        }
+                                    }
+                                });
                             });
+                        });
+                        let alto_graf = (alto - 54.0).max(50.0);
+                        let zona = ui.available_rect_before_wrap();
+                        let desde_grafica = f.mostrar_con(ui, alto_graf, false, false);
+                        accion = accion.or(desde_grafica);
+                        egui::ScrollArea::horizontal().id_salt(("leyenda_osc", i)).auto_shrink([false, true]).show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                for (k, s) in f.series.iter_mut().enumerate() {
+                                    let color = s.color.unwrap_or(pal.series[k % pal.series.len()]);
+                                    ui.checkbox(&mut s.visible, "");
+                                    let (r, _) = ui.allocate_exact_size(Vec2::new(12.0, 14.0), Sense::hover());
+                                    ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(2.0_f32, color));
+                                    let n = if s.nombre.is_empty() { format!("serie {}", k + 1) } else { s.nombre.replace(": ", " · ") };
+                                    ui.label(egui::RichText::new(n).size(12.0).color(pal.texto_2));
+                                    ui.add_space(6.0);
+                                }
+                            });
+                        });
+                        if let Some(a) = accion {
+                            let a = match a {
+                                grafica::Accion::Png(r) if r == Rect::NOTHING => grafica::Accion::Png(Rect::from_min_size(zona.min, Vec2::new(ancho, alto_graf))),
+                                a => a,
+                            };
+                            c.exportar(ui.ctx(), a, &Figura::D2(f.clone()));
                         }
                     });
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        if ui.button("PNG").on_hover_text("Guardar como PNG").clicked() {
-                            accion = Some(grafica::Accion::Png(Rect::NOTHING));
-                        }
-                        if ui.button("SVG").on_hover_text("Guardar como SVG").clicked() {
-                            accion = Some(grafica::Accion::Svg);
-                        }
-                        if ui.button("CSV").on_hover_text("Guardar los datos como CSV").clicked() {
-                            accion = Some(grafica::Accion::Csv);
-                        }
-                    });
-                });
-                rect_leyenda = leyenda.response.rect;
+                }
             });
-            if let Some(a) = accion {
-                let a = match a {
-                    grafica::Accion::Png(r) if r == Rect::NOTHING => grafica::Accion::Png(rect_graf.union(rect_leyenda)),
-                    a => a,
-                };
-                let fig = Figura::D2(f.clone());
-                c.exportar(ui.ctx(), a, &fig);
-            }
         });
     }
 
     /// Fallas, alertas y lazos de la última simulación, cada uno con su punto y su texto.
     fn panel_diagnostico(&self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("scroll_diagnostico").auto_shrink([false, false]).show(ui, |ui| {
             let mut hay = false;
             if let Some(e) = &self.error {
                 tema::estado(ui, tema::Nivel::Falla, e);
@@ -1702,10 +1793,39 @@ impl Editor {
             }
             if !hay && !self.stats.is_empty() {
                 tema::estado(ui, tema::Nivel::Ok, "Simulación completada sin avisos");
-                ui.label(egui::RichText::new(&self.stats).font(tema::fuente_mono(11.0)).color(tema::p().texto_3));
             } else if !hay {
                 ui.label(egui::RichText::new("Simula el modelo para ver su diagnóstico.").small().color(tema::p().texto_2));
             }
+        });
+    }
+
+    /// Mensajes de la última simulación: solver, estadísticas, avisos y errores.
+    fn panel_consola(&self, ui: &mut egui::Ui) {
+        let pal = tema::p();
+        egui::ScrollArea::vertical().id_salt("scroll_mensajes").auto_shrink([false, false]).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            let mono = |ui: &mut egui::Ui, t: &str, color: Color32| {
+                ui.label(egui::RichText::new(t).font(tema::fuente_mono(12.0)).color(color));
+            };
+            let Some(u) = &self.ultima else {
+                ui.label(egui::RichText::new("Simula el modelo (F5) para ver sus mensajes.").color(pal.texto_2));
+                return;
+            };
+            mono(ui, &format!("{} · {}", u.solver, u.paso), pal.texto_2);
+            if !self.stats.is_empty() {
+                mono(ui, &self.stats, pal.texto);
+            }
+            if let Some(e) = &self.error {
+                mono(ui, e, pal.falla);
+            }
+            for a in &self.avisos {
+                mono(ui, a, pal.alerta);
+            }
+            if self.error.is_none() && self.avisos.is_empty() {
+                mono(ui, "sin avisos", pal.ok);
+            }
+            ui.add_space(6.0);
+            ui.label(egui::RichText::new("La consola interactiva de Python está en el módulo Cálculo.").small().color(pal.texto_3));
         });
     }
 
@@ -1717,7 +1837,7 @@ impl Editor {
             self.centrar = false;
         }
         let p = ui.painter_at(area);
-        p.rect_filled(area, 0.0, tema::p().fondo);
+        p.rect_filled(area, egui::CornerRadius { nw: 0, ne: 7, sw: 0, se: 7 }, tema::p().fondo);
         let origen = area.min.to_vec2() + self.pan;
         let z = self.zoom;
         // Rejilla de puntos cada 16 px
@@ -2114,6 +2234,7 @@ impl Editor {
         } else {
             self.minimapa(ui, area);
         }
+        self.superposicion(ui, area);
     }
 
     /// Minimapa de 140 × 84 px abajo a la derecha: los bloques del nivel y la vista actual.
