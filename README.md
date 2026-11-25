@@ -3,15 +3,122 @@
 Aplicación de escritorio de cálculo técnico y simulación por bloques, para modelar una planta solar
 fotovoltaica con sus inversores, analizar sus datos de operación y planificar su mantenimiento.
 
-- **Ventana:** Rust con egui (`src/`).
+![Editor de bloques con la planta FV completa simulada](docs/capturas/bloques.png)
+
+- **Ventana:** Rust con egui (`src/`), modo claro y modo oscuro «Instrumento».
 - **Motor de cálculo:** Python con NumPy, SciPy, pandas, scikit-learn, statsmodels y pvlib (`engine/heliora/`).
   Se comunica con la ventana por entrada y salida estándar, con JSON por líneas.
 
-## Ejecutar
+## Instalar
+
+Los instaladores incluyen Python y todas sus librerías: no hace falta instalar nada más ni tener
+conexión a internet. Se generan en GitHub Actions (flujo «Instaladores»): en cada cambio de `main`
+quedan como artefactos de la ejecución, y con cada etiqueta `v*` se publican en Releases.
+
+| Sistema | Archivo | Notas |
+|---|---|---|
+| Windows 10/11 (64 bits) | `Heliora-Setup-<versión>.exe` | Instala en la carpeta del usuario, sin permisos de administrador, con accesos en el menú Inicio y, si se elige, en el Escritorio. |
+| macOS 11 o posterior (Apple Silicon) | `Heliora-<versión>-macos-arm64.dmg` | Se arrastra Heliora a Aplicaciones. |
+
+Los instaladores no llevan firma digital de un desarrollador verificado, así que el sistema avisa la
+primera vez:
+
+- **Windows:** SmartScreen muestra «Windows protegió su PC». Se pulsa «Más información» y «Ejecutar de
+  todas formas».
+- **macOS:** Gatekeeper indica que no puede verificar al desarrollador. Se abre con clic derecho sobre
+  Heliora → «Abrir», o en Ajustes del Sistema → Privacidad y seguridad → «Abrir igualmente».
+
+Para quitar esos avisos hace falta un certificado de firma (Apple Developer Program para macOS;
+certificado de firma de código o Azure Trusted Signing para Windows) guardado como secreto del
+repositorio; el flujo de la CI admite añadir ese paso.
+
+## Funcionalidades
+
+### Inicio
+
+Acceso a los módulos, primeros pasos y estado de las fases de validación. La barra superior lleva la
+ruta del proyecto, el buscador de comandos (`Ctrl K`: bloques, comandos, módulos, ejemplos y variables)
+y la píldora del solver con «Simular» (`F5`), disponible desde cualquier módulo.
+
+![Inicio](docs/capturas/inicio.png)
+
+### Simulación por bloques
+
+Lienzo con librería de más de 120 bloques (fuentes, matemática, control, eléctrica, potencia,
+fotovoltaica, almacenamiento, máquinas, térmica), subsistemas, cuatro solvers (Euler, RK4,
+Dormand-Prince y BDF), detección de lazos algebraicos y linealización con Bode, escalón y polos.
+Incluye minimapa, cables en ángulo recto («Ordenar cables»), bloques recientes, ayuda de cada
+parámetro y el resultado de la última simulación con su huella sha256. Los bloques «Desde CSV» y
+«Desde espacio de trabajo» eligen columnas y variables en desplegables.
+
+![Editor de bloques en modo oscuro con cables en ángulo recto](docs/capturas/bloques_oscuro.png)
+
+### Entorno de cálculo
+
+Consola y scripts de Python, espacio de trabajo con vista y exportación de variables, importación de
+CSV (también los de Excel en español: separador «;», coma decimal y Windows-1252), TSV y Parquet, y
+gráficas 2D y 3D exportables a PNG y SVG.
+
+![Entorno de cálculo con un script, variables y una superficie 3D](docs/capturas/calculo.png)
+
+### Electrónica de potencia
+
+Pérdidas y eficiencia del inversor, filtro LCL (resonancia, respuesta en frecuencia y valores de diseño
+en SI) y control: Bode y márgenes, escalón, lugar de las raíces y ajuste de un PI. Los resultados quedan
+en el espacio de trabajo y los informes se exportan a HTML; las tablas, a CSV.
+
+![Filtro LCL](docs/capturas/potencia.png)
+
+### Fotovoltaica
+
+Modelo de un diodo desde la hoja de datos, curvas I-V y P-V por irradiancia y temperatura, sombreado
+parcial con diodos de bypass y recurso solar con pvlib. Además de los módulos propios, busca en la base
+CEC de pvlib (unos 21 500 módulos comerciales).
+
+![Curvas de un módulo según irradiancia y temperatura](docs/capturas/solar.png)
+
+### Estadística
+
+Descriptiva, ajuste de distribuciones, Weibull, pruebas de hipótesis, regresión lineal y no lineal,
+ANOVA, descomposición y ARIMA y control estadístico de procesos. Cada tabla se elige del espacio de
+trabajo o se importa desde el ordenador con «Importar…».
+
+![Regresión lineal](docs/capturas/estadistica.png)
+
+### Aprendizaje automático
+
+Preparación de datos, regresión y clasificación con validación aleatoria, temporal o con conjunto de
+prueba (métricas de entrenamiento y de validación por separado, aviso de sobreajuste e
+hiperparámetros editables), clustering, PCA, detección de anomalías y «Aplicar modelo» para predecir
+con un modelo entrenado o guardado.
+
+![Clasificación con métricas de validación y de entrenamiento](docs/capturas/aprendizaje.png)
+
+### Mantenimiento
+
+Importación de SCADA real (CSV regionales, fechas día/mes, fecha y hora en columnas separadas,
+nombres de columna con unidades, duplicados), KPIs, detección de fallas y fiabilidad. Planificador con
+tablero, calendario, órdenes de trabajo (crear, editar, reprogramar, cerrar, reabrir y borrar),
+catálogo de equipos, planes, AMEF e historial, con exportación a CSV e informe O&M.
+
+![KPIs de la planta](docs/capturas/mantenimiento.png)
+
+![Tablero y calendario](docs/capturas/tablero.png)
+
+![Órdenes de trabajo con filtros](docs/capturas/ordenes.png)
+
+### Validación
+
+Pruebas por fases contra soluciones analíticas y hojas de datos, con el error numérico de cada una.
+
+![Validación por fases](docs/capturas/validacion.png)
+
+## Desarrollo
 
     cargo run
 
-La aplicación busca Python en `.venv/` junto al motor. Si no está, ofrece un botón «Instalar el motor».
+La aplicación busca Python junto al motor: primero el Python incluido en los instaladores
+(`python/`), después `.venv/`. Si no hay ninguno, ofrece un botón «Instalar el motor».
 También se puede preparar a mano:
 
     python3 -m venv .venv
@@ -27,6 +134,10 @@ En Windows (PowerShell), con Python 3.11 o 3.12 de python.org y Rust con la cade
 En Windows la aplicación busca `.venv\Scripts\python.exe` y, si no está, `python`. La instalación
 desde el botón usa el lanzador `py`. Si Python está en otro sitio, la variable `HELIORA_PYTHON` indica
 la ruta del intérprete; `HELIORA_ENGINE`, la de la carpeta `engine`.
+
+Para montar localmente el motor autocontenido de los instaladores:
+
+    bash packaging/preparar_motor.sh dist/Heliora x86_64-pc-windows-msvc   # o aarch64-apple-darwin
 
 ## Dónde está cada cosa
 
@@ -48,6 +159,10 @@ la ruta del intérprete; `HELIORA_ENGINE`, la de la carpeta `engine`.
 | Aprendizaje automático | `engine/heliora/lib/aprendizaje.py` |
 | Mantenimiento | `engine/heliora/lib/mantenimiento.py` |
 | Formularios de análisis | `engine/heliora/herramientas.py` |
+| Validación de entradas de los formularios | `engine/heliora/entradas.py` |
+| Lectura de CSV, TSV y Parquet | `engine/heliora/lectura.py` |
+| Guardado del espacio de trabajo | `engine/heliora/almacen.py` |
+| Instaladores (Windows y macOS) | `packaging/`, `.github/workflows/instaladores.yml` |
 | Pruebas por fases | `engine/heliora/validacion/` |
 | Diagramas de ejemplo en JSON | `engine/ejemplos/` |
 
