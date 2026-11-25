@@ -1,6 +1,8 @@
 """Módulo 6: aprendizaje automático. Funciones cortas sobre scikit-learn."""
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 import numpy as np
 import pandas as pd
 
@@ -56,53 +58,165 @@ def variables_temporales(df, columna=None):
 
 MODELOS_REG = ["lineal", "ridge", "bosque", "gradiente"]
 MODELOS_CLAS = ["logistica", "bosque", "gradiente", "svm"]
+VALIDACIONES = ["aleatoria (k pliegues)", "temporal", "hold-out"]
 
 
-def crear_regresor(nombre, semilla=0):
-    from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
-    from sklearn.linear_model import LinearRegression, Ridge
-    return {"lineal": LinearRegression(), "ridge": Ridge(),
-            "bosque": RandomForestRegressor(n_estimators=100, random_state=semilla),
-            "gradiente": GradientBoostingRegressor(random_state=semilla)}[nombre]
+@dataclass
+class ModeloEntrenado:
+    """Modelo listo para aplicar: preprocesado y estimador, columnas de entrada y tipo de tarea.
+
+    Es serializable con joblib: guarda todo lo necesario para predecir sobre otra tabla.
+    """
+    pipeline: object
+    columnas: list
+    tarea: str
+    objetivo: str
+    modelo: str
+    clases: list = field(default_factory=list)
+    metricas: dict = field(default_factory=dict)
+
+    @property
+    def estimador(self):
+        """Último paso del pipeline (el modelo propiamente dicho)."""
+        return self.pipeline[-1]
+
+    def predecir(self, df):
+        """Predice sobre una tabla con las mismas columnas de entrenamiento.
+
+        Args:
+            df: tabla con, al menos, las columnas de entrada del entrenamiento.
+
+        Returns:
+            Tupla (predicciones, filas con algún valor imputado).
+
+        Raises:
+            ValueError: si faltan columnas o alguna no es numérica.
+        """
+        d = df.copy()
+        d.columns = [str(c) for c in d.columns]
+        faltan = [c for c in self.columnas if c not in d.columns]
+        if faltan:
+            raise ValueError(f"A la tabla le faltan {len(faltan)} columna(s) con las que se entrenó el modelo: {', '.join(faltan)}. "
+                             f"Columnas de la tabla: {', '.join(d.columns)}.")
+        X = d[self.columnas].copy()
+        for c in self.columnas:
+            n = pd.to_numeric(X[c], errors="coerce")
+            if n.isna().sum() > X[c].isna().sum():
+                raise ValueError(f"La columna «{c}» no es numérica y el modelo se entrenó con valores numéricos.")
+            X[c] = n
+        A = X.to_numpy(dtype=float)
+        A[~np.isfinite(A)] = np.nan
+        return self.pipeline.predict(A), int(np.isnan(A).any(axis=1).sum())
 
 
-def crear_clasificador(nombre, semilla=0):
-    from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
-    from sklearn.linear_model import LogisticRegression
+def _con_preproceso(estimador):
+    from sklearn.impute import SimpleImputer
     from sklearn.pipeline import make_pipeline
     from sklearn.preprocessing import StandardScaler
+    return make_pipeline(SimpleImputer(strategy="median"), StandardScaler(), estimador)
+
+
+def crear_regresor(nombre, semilla=0, hiper=None):
+    """Pipeline (imputación, escalado, regresor); `hiper` admite n_estimators, max_depth (0 = por defecto) y alpha."""
+    from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+    from sklearn.linear_model import LinearRegression, Ridge
+    h = hiper or {}
+    n, prof = int(h.get("n_estimators", 100)), int(h.get("max_depth", 0)) or None
+    return _con_preproceso({"lineal": lambda: LinearRegression(), "ridge": lambda: Ridge(alpha=float(h.get("alpha", 1.0))),
+                            "bosque": lambda: RandomForestRegressor(n_estimators=n, max_depth=prof, random_state=semilla),
+                            "gradiente": lambda: GradientBoostingRegressor(n_estimators=n, max_depth=prof or 3, random_state=semilla)}[nombre]())
+
+
+def crear_clasificador(nombre, semilla=0, hiper=None):
+    """Pipeline (imputación, escalado, clasificador); `hiper` admite n_estimators, max_depth (0 = por defecto) y C."""
+    from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+    from sklearn.linear_model import LogisticRegression
     from sklearn.svm import SVC
-    return {"logistica": make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000)),
-            "bosque": RandomForestClassifier(n_estimators=100, random_state=semilla),
-            "gradiente": GradientBoostingClassifier(random_state=semilla),
-            "svm": make_pipeline(StandardScaler(), SVC(probability=True, random_state=semilla))}[nombre]
+    h = hiper or {}
+    n, prof, C = int(h.get("n_estimators", 100)), int(h.get("max_depth", 0)) or None, float(h.get("C", 1.0))
+    return _con_preproceso({"logistica": lambda: LogisticRegression(C=C, max_iter=1000),
+                            "bosque": lambda: RandomForestClassifier(n_estimators=n, max_depth=prof, random_state=semilla),
+                            "gradiente": lambda: GradientBoostingClassifier(n_estimators=n, max_depth=prof or 3, random_state=semilla),
+                            "svm": lambda: SVC(C=C, probability=True, random_state=semilla)}[nombre]())
 
 
 def _metricas_reg(y, p):
     from sklearn.metrics import mean_absolute_error, r2_score
-    return {"r2": float(r2_score(y, p)), "rmse": float(np.sqrt(np.mean((np.asarray(y) - p) ** 2))), "mae": float(mean_absolute_error(y, p))}
+    y, p = np.asarray(y, dtype=float), np.asarray(p, dtype=float)
+    return {"r2": float(r2_score(y, p)), "rmse": float(np.sqrt(np.mean((y - p) ** 2))), "mae": float(mean_absolute_error(y, p))}
 
 
-def entrenar_regresion(X, y, nombre="bosque", pliegues=5, semilla=0):
-    """Validación cruzada por pliegues y modelo final con todos los datos."""
-    from sklearn.model_selection import KFold, cross_val_predict
-    m = crear_regresor(nombre, semilla)
-    p = cross_val_predict(m, X, y, cv=KFold(int(pliegues), shuffle=True, random_state=semilla))
-    m.fit(X, y)
-    return m, {"modelo": nombre, "pliegues": int(pliegues), **_metricas_reg(y, p)}, p
+def _metricas_clas(y, p):
+    from sklearn.metrics import accuracy_score, f1_score
+    return {"exactitud": float(accuracy_score(y, p)), "f1": float(f1_score(y, p, average="macro"))}
 
 
-def entrenar_clasificacion(X, y, nombre="bosque", pliegues=5, semilla=0):
-    """Clasificación con validación cruzada: exactitud, F1 y matriz de confusión."""
-    from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
-    from sklearn.model_selection import StratifiedKFold, cross_val_predict
-    m = crear_clasificador(nombre, semilla)
-    p = cross_val_predict(m, X, y, cv=StratifiedKFold(int(pliegues), shuffle=True, random_state=semilla))
-    m.fit(X, y)
+def particiones(n, validacion, pliegues=5, semilla=0, pct=20.0, y=None, orden=None):
+    """Pares (entrenamiento, validación) de índices según el tipo de validación.
+
+    Args:
+        n: número de filas.
+        validacion: una de VALIDACIONES.
+        pliegues: pliegues de la validación aleatoria o divisiones de la temporal.
+        semilla: semilla del barajado.
+        pct: porcentaje de validación del hold-out.
+        y: clases, para estratificar (opcional).
+        orden: clave de orden de las filas para la validación temporal (por defecto, el orden de la tabla).
+
+    Raises:
+        ValueError: si el tipo es desconocido o no hay filas suficientes.
+    """
+    from sklearn.model_selection import KFold, ShuffleSplit, StratifiedKFold, StratifiedShuffleSplit, TimeSeriesSplit
+    if validacion == "temporal":
+        perm = np.argsort(np.asarray(orden), kind="stable") if orden is not None else np.arange(n)
+        return [(perm[a], perm[b]) for a, b in TimeSeriesSplit(int(pliegues)).split(perm)]
+    if validacion == "hold-out":
+        sep = (StratifiedShuffleSplit if y is not None else ShuffleSplit)(n_splits=1, test_size=pct / 100, random_state=semilla)
+    elif validacion.startswith("aleatoria"):
+        sep = (StratifiedKFold if y is not None else KFold)(int(pliegues), shuffle=True, random_state=semilla)
+    else:
+        raise ValueError(f"Tipo de validación desconocido: {validacion}")
+    return list(sep.split(np.zeros(n), y))
+
+
+def _entrenar(tarea, X, y, nombre, validacion, pliegues, semilla, pct, orden, hiper):
+    n = len(y)
+    crear = crear_regresor if tarea == "regresion" else crear_clasificador
+    metricas = _metricas_reg if tarea == "regresion" else _metricas_clas
+    partes = particiones(n, validacion, pliegues, semilla, pct, None if tarea == "regresion" else y, orden)
+    pred = np.full(n, np.nan) if tarea == "regresion" else np.full(n, y[0])
+    valida = np.zeros(n, dtype=bool)
+    en_entrenamiento = []
+    for tr, te in partes:
+        m = crear(nombre, semilla, hiper).fit(X[tr], y[tr])
+        pred[te], valida[te] = m.predict(X[te]), True
+        en_entrenamiento.append(metricas(y[tr], m.predict(X[tr])))
+    entrenamiento = {k: float(np.mean([f[k] for f in en_entrenamiento])) for k in en_entrenamiento[0]}
+    final = crear(nombre, semilla, hiper).fit(X, y)
+    r = {"modelo": nombre, "validacion": validacion, "pliegues": len(partes), "semilla": int(semilla), "n": n, "n_validado": int(valida.sum()),
+         "entrenamiento": entrenamiento, "validada": valida, **metricas(y[valida], pred[valida])}
+    return final, r, pred
+
+
+def entrenar_regresion(X, y, nombre="bosque", pliegues=5, semilla=0, validacion="aleatoria (k pliegues)", pct=20.0, orden=None, hiper=None):
+    """Entrena un regresor y lo valida fuera de muestra (aleatoria, temporal o hold-out).
+
+    Returns:
+        Tupla (pipeline entrenado con todos los datos, métricas, predicciones de validación con NaN en las filas no validadas).
+        Las métricas de validación están al nivel superior y las de entrenamiento en `entrenamiento`.
+    """
+    return _entrenar("regresion", np.asarray(X, dtype=float), np.asarray(y, dtype=float), nombre, validacion, pliegues, semilla, pct, orden, hiper)
+
+
+def entrenar_clasificacion(X, y, nombre="bosque", pliegues=5, semilla=0, validacion="aleatoria (k pliegues)", pct=20.0, orden=None, hiper=None):
+    """Clasificación con validación fuera de muestra: exactitud, F1 y matriz de confusión de las filas validadas."""
+    from sklearn.metrics import confusion_matrix
+    y = np.asarray(y)
+    m, r, p = _entrenar("clasificacion", np.asarray(X, dtype=float), y, nombre, validacion, pliegues, semilla, pct, orden, hiper)
     clases = sorted(pd.unique(pd.Series(y)).tolist(), key=str)
-    return m, {"modelo": nombre, "pliegues": int(pliegues), "exactitud": float(accuracy_score(y, p)),
-               "f1": float(f1_score(y, p, average="macro")), "clases": [str(c) for c in clases],
-               "confusion": confusion_matrix(y, p, labels=clases).tolist()}, p
+    v = r["validada"]
+    r.update(clases=[str(c) for c in clases], confusion=confusion_matrix(y[v], p[v], labels=clases).tolist())
+    return m, r, p
 
 
 def agrupar(X, k=3, semilla=0):
@@ -156,5 +270,6 @@ def guardar_modelo(modelo, ruta, metadatos=None):
 
 
 def cargar_modelo(ruta):
+    """Carga con joblib un modelo guardado; los archivos de origen desconocido pueden ejecutar código."""
     import joblib
     return joblib.load(ruta)
