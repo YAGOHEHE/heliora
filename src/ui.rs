@@ -98,6 +98,7 @@ pub fn mayusculas(t: &str) -> String {
 }
 
 /// Tarjeta que ocupa todo el `Ui`, con título en mayúsculas, acciones a la derecha y contenido.
+/// El contenido se recorta también por el área visible del contenedor (p. ej. una zona desplazable).
 ///
 /// Args:
 ///     ui: celda de la rejilla.
@@ -109,7 +110,7 @@ pub fn tarjeta_con_titulo<R>(ui: &mut Ui, titulo: &str, acciones: impl FnOnce(&m
     fondo_tarjeta(ui, r);
     let dentro = r.shrink2(Vec2::new(16.0, 14.0));
     let mut hijo = ui.new_child(UiBuilder::new().max_rect(dentro).layout(egui::Layout::top_down(egui::Align::Min)));
-    hijo.set_clip_rect(r.shrink(1.0));
+    hijo.set_clip_rect(r.shrink(1.0).intersect(ui.clip_rect()));
     if !titulo.is_empty() {
         hijo.horizontal(|ui| {
             ui.set_min_height(22.0);
@@ -126,7 +127,7 @@ pub fn tarjeta_plena<R>(ui: &mut Ui, contenido: impl FnOnce(&mut Ui) -> R) -> R 
     let r = ui.max_rect();
     fondo_tarjeta(ui, r);
     let mut hijo = ui.new_child(UiBuilder::new().max_rect(r.shrink(1.0)));
-    hijo.set_clip_rect(r.shrink(1.0));
+    hijo.set_clip_rect(r.shrink(1.0).intersect(ui.clip_rect()));
     contenido(&mut hijo)
 }
 

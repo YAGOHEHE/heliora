@@ -473,7 +473,7 @@ impl Pagina {
     /// Zona de resultados antes de calcular, mientras se calcula o tras un error.
     fn columna_vacia(&self, ui: &mut egui::Ui, h: &Herramienta) {
         let calculando = self.id_activo.as_ref().is_some_and(|a| a.1 == h.id);
-        tarjeta(ui, "", |_| {}, |ui| {
+        ui::tarjeta_con_titulo(ui, "", |_| {}, |ui| {
             if let Some(e) = self.errores.get(&h.id) {
                 banner(ui, "falla", e);
             }
@@ -493,7 +493,7 @@ impl Pagina {
     fn tarjeta_parametros(&mut self, ui: &mut egui::Ui, h: &Herramienta, motor: &mut Motor, c: &Compartido, res: Option<(&Informe, &Vista)>, calcular: &mut bool) {
         let pal = tema::p();
         let ocupada = self.ocupada();
-        tarjeta_lisa(ui, |ui| {
+        ui::tarjeta_plena(ui, |ui| {
             let r = ui.max_rect();
             let alto_pie = 60.0;
             let r_cuerpo = Rect::from_min_max(r.min, Pos2::new(r.right(), r.bottom() - alto_pie));
@@ -1004,35 +1004,6 @@ fn guardar_informe_html(inf: &Informe) {
     }
 }
 
-/// Tarjeta como `ui::tarjeta_con_titulo`, recortada además por el área visible del contenedor:
-/// dentro de una zona desplazable, el contenido no se dibuja fuera de ella.
-fn tarjeta<R>(ui: &mut egui::Ui, titulo: &str, acciones: impl FnOnce(&mut egui::Ui), contenido: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    let pal = tema::p();
-    let r = ui.max_rect();
-    ui.painter().rect(r, tema::radio_ventana() as f32, pal.panel, Stroke::new(1.0_f32, pal.linea), egui::StrokeKind::Inside);
-    let mut hijo = ui.new_child(UiBuilder::new().max_rect(r.shrink2(Vec2::new(16.0, 14.0))).layout(Layout::top_down(Align::Min)));
-    hijo.set_clip_rect(r.shrink(1.0).intersect(ui.clip_rect()));
-    if !titulo.is_empty() {
-        hijo.horizontal(|ui| {
-            ui.set_min_height(22.0);
-            ui.label(egui::RichText::new(ui::mayusculas(titulo)).family(tema::semi()).size(11.0).color(pal.texto_2));
-            ui.with_layout(Layout::right_to_left(Align::Center), acciones);
-        });
-        hijo.add_space(6.0);
-    }
-    contenido(&mut hijo)
-}
-
-/// Tarjeta sin márgenes interiores, recortada como `tarjeta`.
-fn tarjeta_lisa<R>(ui: &mut egui::Ui, contenido: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    let pal = tema::p();
-    let r = ui.max_rect();
-    ui.painter().rect(r, tema::radio_ventana() as f32, pal.panel, Stroke::new(1.0_f32, pal.linea), egui::StrokeKind::Inside);
-    let mut hijo = ui.new_child(UiBuilder::new().max_rect(r.shrink(1.0)));
-    hijo.set_clip_rect(r.shrink(1.0).intersect(ui.clip_rect()));
-    contenido(&mut hijo)
-}
-
 /// Cabecera de una tarjeta: contenido a la izquierda y acciones a la derecha, sin que un título
 /// largo empuje las acciones fuera de la tarjeta.
 fn cabecera(ui: &mut egui::Ui, izquierda: impl FnOnce(&mut egui::Ui), derecha: impl FnOnce(&mut egui::Ui)) {
@@ -1097,7 +1068,7 @@ fn acciones_tabla(ui: &mut egui::Ui, titulo: &str, col: &[String], fil: &[Vec<St
 
 /// Tarjeta con una tabla desplazable y sus acciones CSV.
 fn tarjeta_tabla(ui: &mut egui::Ui, titulo: &str, col: &[String], fil: &[Vec<String>], id: impl std::hash::Hash) {
-    tarjeta(
+    ui::tarjeta_con_titulo(
         ui,
         titulo,
         |ui| acciones_tabla(ui, titulo, col, fil),
@@ -1171,7 +1142,7 @@ fn figura_mut(inf: &mut Informe, i: usize) -> Option<&mut Figura> {
 
 /// Tarjeta grande de la zona de resultados: cabecera, avisos y gráfica, mapa o tabla principal.
 fn tarjeta_principal(ui: &mut egui::Ui, inf: &mut Informe, v: &Vista, c: &mut Compartido, sel: &mut usize, base: &str) {
-    tarjeta(
+    ui::tarjeta_con_titulo(
         ui,
         "",
         |_| {},
