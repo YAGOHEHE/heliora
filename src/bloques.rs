@@ -2439,3 +2439,22 @@ pub fn json_canonico(d: &Diagrama) -> Result<String, String> {
     t.push('\n');
     Ok(t)
 }
+
+/// Bloques y cables del nivel raíz con sus posiciones en el lienzo, para la vista previa de Inicio.
+pub struct VistaPrevia {
+    pub bloques: Vec<Rect>,
+    /// Pares (origen, destino) como índices de `bloques`.
+    pub cables: Vec<(usize, usize)>,
+}
+
+impl Editor {
+    /// Rectángulos de los bloques del nivel raíz (con el alto nominal de un bloque) y sus conexiones.
+    pub fn vista_previa(&self) -> VistaPrevia {
+        const ALTO: f32 = 56.0;
+        let s = &self.diagrama.sistema;
+        let bloques = s.bloques.iter().map(|b| Rect::from_min_size(Pos2::new(b.x, b.y), Vec2::new(ANCHO, ALTO))).collect();
+        let indice = |id: &str| s.bloques.iter().position(|b| b.id == id);
+        let cables = s.conexiones.iter().filter_map(|c| Some((indice(&c.de.0)?, indice(&c.a.0)?))).collect();
+        VistaPrevia { bloques, cables }
+    }
+}

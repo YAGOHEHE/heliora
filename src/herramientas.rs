@@ -611,6 +611,11 @@ impl Pagina {
         todas.iter().find(|h| h.id == id).map(|h| h.titulo.clone())
     }
 
+    /// Último informe de una herramienta, si se ha ejecutado con éxito.
+    pub fn informe(&self, id: &str) -> Option<&Informe> {
+        self.informes.get(id)
+    }
+
     pub fn seleccionar(&mut self, id: &str) {
         self.seleccion = Some(id.to_string());
     }
