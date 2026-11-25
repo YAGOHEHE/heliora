@@ -104,13 +104,14 @@ pub fn carpeta_motor() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("engine"))
 }
 
-/// El intérprete: variable de entorno, entorno privado junto al motor o el del sistema.
+/// El intérprete: variable de entorno, Python incluido en el instalador, entorno privado junto al
+/// motor o el del sistema.
 pub fn interprete(motor: &Path) -> PathBuf {
     if let Ok(v) = std::env::var("HELIORA_PYTHON") {
         return PathBuf::from(v);
     }
     let base = motor.parent().unwrap_or(motor);
-    for rel in [".venv/bin/python", ".venv/bin/python3", ".venv/Scripts/python.exe"] {
+    for rel in ["python/python.exe", "python/bin/python3", ".venv/bin/python", ".venv/bin/python3", ".venv/Scripts/python.exe"] {
         let c = base.join(rel);
         if c.exists() {
             return c;
