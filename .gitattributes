@@ -6,9 +6,13 @@
 *.toml      text eol=lf
 *.csv       text eol=lf
 *.yml       text eol=lf
+*.sh        text eol=lf
+*.iss       text eol=lf
+*.plist     text eol=lf
 # Binarios: nunca se mezclan ni se convierten
 *.parquet   binary
 *.png       binary
 *.pdf       binary
 *.ttf       binary
 *.joblib    binary
+*.ico       binary
