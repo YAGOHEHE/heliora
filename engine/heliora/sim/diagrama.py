@@ -163,8 +163,9 @@ class _Lazo:
 class Modelo:
     """Modelo compilado: evalúa señales y derivadas y mantiene el estado discreto."""
 
-    def __init__(self, diagrama, espacio=None):
+    def __init__(self, diagrama, espacio=None, dae=False):
         cargar_librerias()
+        self.dae = dae
         self.espacio = espacio if espacio is not None else {}
         self.evaluaciones = 0
         self.t_actual = 0.0
@@ -222,7 +223,7 @@ class Modelo:
         elementos = [i for i in self.instancias.values() if isinstance(i, circuito.Elemento)]
         normales = [i for i in self.instancias.values()
                     if i.tipo not in paso and not isinstance(i, circuito.Elemento)]
-        self.red = circuito.Red(elementos, grupos_e, self.instancias) if elementos else None
+        self.red = circuito.Red(elementos, grupos_e, self.instancias, dae=self.dae) if elementos else None
         self.lista = list(normales)
         indice = {b.id: k for k, b in enumerate(self.lista)}
         self.red_idx = -1
@@ -319,8 +320,10 @@ class Modelo:
             if a <= i < c:
                 b = self.lista[k]
                 if b is self.red:
+                    # En modo DAE la red solo expone sus estados libres: se pasa al índice completo
+                    j = int(b.idx_libres[i - a]) if b.dae else i - a
                     for e in b.elementos:
-                        if e.xa <= i - a < e.xb:
+                        if e.xa <= j < e.xb:
                             return e.etiqueta
                 return b.etiqueta
         return "?"
@@ -416,14 +419,22 @@ class Modelo:
             dx[a:c] = self.lista[k].derivada(t, x[a:c], self._u(k))
         return dx
 
-    def iniciar(self, t0=0.0):
-        """Reinicia los bloques y devuelve el vector de estados inicial, con las salidas evaluadas en t0."""
+    def iniciar(self, t0=0.0, preparar=None):
+        """Reinicia los bloques y devuelve el vector de estados inicial, con las salidas evaluadas en t0.
+
+        Args:
+            t0: instante inicial, en s.
+            preparar: función (t0, x) que se llama antes del primer `paso_mayor`; el solver DAE la usa
+                para dejar la red coherente con las salidas de los bloques.
+        """
         for b in self.lista:
             b.reiniciar()
         x = self.x_ini.copy()
         self.t_actual = t0
         self.evaluaciones = 0
         self.salidas(t0, x)
+        if preparar is not None:
+            preparar(t0, x)
         self.paso_mayor(t0, x)
         return x
 
@@ -539,9 +550,9 @@ def simular(diagrama, espacio=None, cancelar=None, config=None, informe=None):
     t_ini = time.perf_counter()
     cfg = dict(diagrama.get("solver", {}))
     cfg.update(config or {})
-    m = Modelo(diagrama, espacio)
     metodo = cfg.get("metodo", "dopri")
-    variable = metodo in ("dopri", "bdf")
+    m = Modelo(diagrama, espacio, dae=metodo == "dae")
+    variable = metodo in ("dopri", "bdf", "dae")
     m.registrar_saltos = variable
     # Con paso variable, los bloques con discontinuidad mantienen su modo durante el paso y el
     # solver localiza el instante del cambio. Con paso fijo no hay localización.
@@ -561,6 +572,8 @@ def simular(diagrama, espacio=None, cancelar=None, config=None, informe=None):
         "pasos": info["pasos"], "rechazos": info["rechazos"], "evaluaciones": info["evaluaciones"],
         "estados": int(m.x_ini.size), "bloques": len(m.instancias), "metodo": metodo,
         "cruces": info["cruces"], "lazos": len(m.lazos), "segundos": time.perf_counter() - t_ini}}
+    if metodo == "dae":
+        res["estadisticas"]["jacobianos"] = info.get("jacobianos", 0)
     # El estado que más veces fijó el error del paso indica qué parte del modelo frena al solver
     lim = info.get("limitante")
     if lim is not None and lim.size and lim.sum() > 0:
@@ -581,6 +594,7 @@ def simular(diagrama, espacio=None, cancelar=None, config=None, informe=None):
             res["senales"].append({"bloque": b.id, "etiqueta": b.etiqueta, "t": t, "trazas": trazas,
                                    "exportado": isinstance(b, AEspacio), "nombres": m.nombres_entradas(b)})
     res["avisos"] = list(m.red.avisos) if m.red else []
+    res["avisos"] += info.get("avisos_dae", [])
     res["avisos"] += m.avisos_muestreo(_num(cfg.get("paso")) if not variable else None)
     res["avisos"] += [f"«{b.etiqueta}»: {a}" for b in m.instancias.values() for a in b.avisos_preparacion]
     # Bloques de cada lazo (sin la red, que reúne a todos los elementos eléctricos)

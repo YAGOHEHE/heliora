@@ -35,7 +35,7 @@ Heliora brings the engineering work of a photovoltaic plant together in one wind
 
 | Area | What it does |
 |---|---|
-| **Simulation** | Block diagrams with 127 blocks (electrical, power electronics, photovoltaic, thermal, machines, storage, control), four solvers and linearisation. |
+| **Simulation** | Block diagrams with 127 blocks (electrical, power electronics, photovoltaic, thermal, machines, storage, control), five solvers and linearisation. |
 | **Computation** | Python console and scripts with a workspace, data import and 2D and 3D plots. |
 | **Analysis** | Power electronics, PV modules, statistics and machine learning through forms with exportable reports. |
 | **Operations** | SCADA data, plant KPIs, fault detection, reliability and maintenance planning. |
@@ -72,7 +72,9 @@ and the app offers to validate again. The top bar holds the command palette (`Ct
 
 ### Block-diagram simulation
 
-Canvas with a block library, subsystems, four solvers (Euler, RK4, Dormand-Prince and BDF), algebraic
+Canvas with a block library, subsystems, five solvers (Euler, RK4, Dormand-Prince, BDF and DAE: the
+implicit one, which solves network and diagram together and accepts capacitors in parallel or inertias
+coupled by a gear), algebraic
 loop detection and linearisation at the operating point with Bode, step response and poles. Includes a
 minimap, right-angle wiring, recent blocks, help for every parameter and the result of the last
 simulation with its sha256 fingerprint. "Linearise here" also stores the model in the variable `lin`,

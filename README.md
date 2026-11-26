@@ -32,7 +32,7 @@ Heliora reúne en una ventana el trabajo de ingeniería de una planta fotovoltai
 
 | Área | Qué permite |
 |---|---|
-| **Simulación** | Diagramas de bloques con 127 bloques (eléctrica, potencia, fotovoltaica, térmica, máquinas, almacenamiento, control), cuatro solvers y linealización. |
+| **Simulación** | Diagramas de bloques con 127 bloques (eléctrica, potencia, fotovoltaica, térmica, máquinas, almacenamiento, control), cinco solvers y linealización. |
 | **Cálculo** | Consola y scripts de Python con espacio de trabajo, importación de datos y gráficas 2D y 3D. |
 | **Análisis** | Electrónica de potencia, módulos FV, estadística y aprendizaje automático mediante formularios con informes exportables. |
 | **Operación** | Datos SCADA, KPIs de planta, detección de fallas, fiabilidad y planificación del mantenimiento. |
@@ -70,7 +70,9 @@ marca como histórica y ofrece volver a validar. La barra superior lleva el busc
 
 ### Simulación por bloques
 
-Lienzo con librería de bloques, subsistemas, cuatro solvers (Euler, RK4, Dormand-Prince y BDF),
+Lienzo con librería de bloques, subsistemas, cinco solvers (Euler, RK4, Dormand-Prince, BDF y DAE: el
+implícito, que resuelve red y diagrama juntos y admite condensadores en paralelo o inercias unidas por
+un engranaje),
 detección de lazos algebraicos y linealización en el punto de operación con Bode, escalón y polos.
 Incluye minimapa, cables en ángulo recto, bloques recientes, ayuda de cada parámetro y el resultado de
 la última simulación con su huella sha256. «Linealizar aquí» deja además el modelo en la variable

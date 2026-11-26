@@ -59,6 +59,11 @@ class Inercia(_ElementoMecanico):
         return [float(self.p["w0"]), float(self.p["th0"])]
 
     @override
+    def estados_en_rama(self):
+        """La velocidad fija la rama; el ángulo sigue siendo un estado."""
+        return {0: 0}
+
+    @override
     def estampar_fijo(self, S):
         S.rama_tension(self.ramas[0], self.n["p"], -1)
 

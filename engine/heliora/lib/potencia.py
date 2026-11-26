@@ -708,6 +708,11 @@ class FiltroLC(_Trifasico3Hilos):
         return [0.0] * 4
 
     @override
+    def estados_en_rama(self):
+        """Las tensiones v_a y v_b del condensador fijan sus ramas; la tercera es la restricción."""
+        return {2: 0, 3: 1}
+
+    @override
     def estampar_fijo(self, S):
         N = self.internos[0]
         for f in range(3):

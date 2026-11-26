@@ -57,6 +57,10 @@ class _Maquina(Elemento):
         if self.J > 0:
             b[self.ramas[-1]] = x[self.n_electricos]
 
+    def estados_en_rama(self):
+        """Con inercia propia, la velocidad del rotor fija la última rama (la del eje)."""
+        return {self.n_electricos: len(self.ramas) - 1} if self.J > 0 else {}
+
     def omega(self, z, x):
         return x[self.n_electricos] if self.J > 0 else z[self.n["eje"]]
 

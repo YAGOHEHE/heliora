@@ -89,6 +89,11 @@ class CapacidadTermica(_ElementoTermico):
         return [float(self.p["T0"])]
 
     @override
+    def estados_en_rama(self):
+        """La temperatura fija la rama."""
+        return {0: 0}
+
+    @override
     def estampar_fijo(self, S):
         S.rama_tension(self.ramas[0], self.n["p"], -1)
 
@@ -228,6 +233,11 @@ class RedTermicaRC(_ElementoTermico):
 
     def _cadena(self):
         return [self.n["a"]] + list(self.internos) + [self.n["b"]]
+
+    @override
+    def estados_en_rama(self):
+        """Cada caída de temperatura fija su rama."""
+        return {i: i for i in range(self.R.size)}
 
     @override
     def estampar_fijo(self, S):
@@ -392,6 +402,16 @@ class UnionesTermicas:
             d.append(pcj)
             d.append(Pj)
         return d
+
+    def estados_en_rama(self):
+        """Cada caída ΔT_i de las redes Foster fija su rama; las energías siguen siendo estados."""
+        if not self.termico:
+            return {}
+        mapa = {}
+        for _, ramas, s, R, _ in self._disposicion():
+            for i in range(R.size):
+                mapa[s + i] = self.ramas.index(ramas[i])
+        return mapa
 
     def temperaturas(self, z):
         """Temperatura de cada unión [°C]; T_ref si el puerto térmico no está conectado."""

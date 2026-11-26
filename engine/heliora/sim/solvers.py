@@ -399,6 +399,13 @@ def integrar_modelo(modelo, metodo="dopri", t0=0.0, tf=1.0, paso=None, rtol=RTOL
     _validar(t0, tf, paso, None if fijo else rtol, None if fijo else atol, paso_max, fijo)
     span = tf - t0
     hmax = paso_max if paso_max else max(FRACCION_PASO_MAX * span, 16 * np.spacing(abs(tf)))
+    if metodo == "dae":
+        from .dae import bucle_dae
+        stats = {}
+        x, n, r = bucle_dae(modelo, t0, tf, rtol, atol, hmax, paso_min, paso_ini, cancelar, informe, stats)
+        return {"pasos": n, "rechazos": r, "evaluaciones": modelo.evaluaciones, "x_final": x, "limitante": None,
+                "cruces": stats.get("cruces", 0), "jacobianos": stats.get("jacobianos", 0),
+                "avisos_dae": stats.get("avisos_dae", [])}
     x = modelo.iniciar(t0)
     f = modelo.f
     mayor = modelo.paso_mayor

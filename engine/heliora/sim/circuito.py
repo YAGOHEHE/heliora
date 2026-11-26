@@ -14,6 +14,16 @@ Los interruptores cambian M; cada combinación de estados se factoriza una vez y
 
 Índices: el último elemento de z es siempre 0 y representa la tierra, de modo que un
 elemento puede usar el nodo -1 sin casos especiales.
+
+Modo DAE (`Red(..., dae=True)`, solver «dae»): los almacenes (condensadores, inercias, capacidades
+térmicas) dejan de ser fuentes. Cada uno declara en `estados_en_rama()` qué estado fija qué rama de
+tensión; esa rama pasa a ser la ecuación diferencial
+
+    d(fila_k · z)/dt = derivada del estado,
+
+con fila_k la fila de la rama en la matriz fija (la tensión que antes imponía). El estado deja de
+existir como tal: se reconstruye de z. Así dos almacenes en paralelo comparten la misma tensión y la
+red ya no es singular. El solver de `dae.py` resuelve z junto con los estados del diagrama.
 """
 from __future__ import annotations
 
@@ -42,6 +52,27 @@ MENSAJE_SINGULAR = (
     "fuentes de velocidad en paralelo, directamente o a través de un transformador o un engranaje ideal. "
     "Deja solo una (suma las inercias, refiriéndolas con n² si hay engranaje) o separa las dos con una "
     "resistencia, una fricción o un resorte.")
+
+
+def _residuo_relativo(A, z, c):
+    """Máximo de |A·z - c| relativo a la magnitud de los términos de cada ecuación."""
+    if not A.size:
+        return 0.0
+    r = np.abs(A @ z - c)
+    return float(np.max(r / np.maximum(np.abs(A) @ np.abs(z) + np.abs(c), 1e-300)))
+
+
+def _resolver_o_aproximar(A, c):
+    """Solución de A·z = c; si A es singular (almacenes unidos rígidamente), la de mínimos cuadrados."""
+    if not A.size:
+        return np.zeros(0)
+    try:
+        z = np.linalg.solve(A, c)
+        if np.all(np.isfinite(z)) and _residuo_relativo(A, z, c) <= 1e-9:
+            return z
+    except np.linalg.LinAlgError:
+        pass
+    return np.linalg.lstsq(A, c, rcond=None)[0]
 
 
 class Estampa:
@@ -174,6 +205,15 @@ class Elemento(Bloque):
     def reiniciar_e(self):
         """Restablece el estado del elemento ligado a la red; la red lo llama tras `reiniciar`."""
 
+    def estados_en_rama(self):
+        """Estados que fijan el valor de una rama de tensión, para el modo DAE.
+
+        Returns:
+            Diccionario {índice local del estado: índice local de la rama}. Cada rama debe recibir
+            en `rhs` exactamente ese estado (b[rama] = x[estado]). Vacío si el elemento no almacena.
+        """
+        return {}
+
 
 class Red(Bloque):
     """Reúne los elementos en un solo sistema de ecuaciones."""
@@ -182,15 +222,18 @@ class Red(Bloque):
     nombre = "Red eléctrica"
     directo = True
 
-    def __init__(self, elementos, conexiones, instancias):
+    def __init__(self, elementos, conexiones, instancias, dae=False):
         self.etiqueta = "Red eléctrica"
         self.id = "_red"
         self.crudos = {}
         self.p = {}
         self.espacio = {}
         self.elementos = elementos
+        self.dae = dae
         self._numerar(conexiones, instancias)
         self._preparar_matrices()
+        if dae:
+            self._preparar_dae()
         self._analizar_directas()
 
     # ---------------------------------------------------------------- numeración
@@ -325,6 +368,7 @@ class Red(Bloque):
         self.z = np.zeros(n)
         self.b = np.zeros(n)
         self._clave_resolver = None  # memo de una entrada: (t, x, u) del último solve
+        self.version = 0             # cambia cuando `tras_paso` cambia los valores de las matrices
         self._usar_clave()
 
     def _revisar_nodos(self, M):
@@ -363,7 +407,9 @@ class Red(Bloque):
             for e in self.conmutados:
                 e.estampar_estado(S)
             try:
-                inv = None if self.din else np.linalg.inv(M[:-1, :-1])
+                # En modo DAE la red no se invierte: la resuelve el solver (y, para ser coherente
+                # tras un cambio, mínimos cuadrados en `consistente`)
+                inv = None if (self.din or self.dae) else np.linalg.inv(M[:-1, :-1])
             except np.linalg.LinAlgError:
                 raise ValueError(MENSAJE_SINGULAR) from None
             d = (M, inv)
@@ -437,16 +483,160 @@ class Red(Bloque):
             raise ValueError(f"La solución de la red dejó de ser finita en t = {t:.6g} s "
                              "(una entrada o un parámetro no finito, o una red mal condicionada).")
 
+    # ---------------------------------------------------------------- modo DAE
+    def _preparar_dae(self):
+        """Localiza los almacenes y separa sus estados de los que siguen siendo diferenciales."""
+        almacen = []   # (índice en x completo, rama k, elemento, estado local)
+        for e in self.elementos:
+            for i, r in e.estados_en_rama().items():
+                almacen.append((e.xa + i, e.ramas[r], e, i))
+        self.almacen = almacen
+        de_almacen = {j for j, _, _, _ in almacen}
+        self.idx_libres = np.array([j for j in range(self.nx) if j not in de_almacen], dtype=int)
+        self.idx_alm = np.array([j for j, _, _, _ in almacen], dtype=int)
+        self.ramas_alm = np.array([k for _, k, _, _ in almacen], dtype=int)
+        # La fila de cada rama de almacén es la tensión que fijaba: con ella se reconstruye el estado
+        self.filas_alm = self.M_fijo[self.ramas_alm, :].copy() if almacen else np.zeros((0, self.tam + 1))
+        self.nx_dae = int(self.idx_libres.size)
+        self.z_ext = np.zeros(self.tam + 1)
+        self.x_alm_ini = np.zeros(len(almacen))
+        self.pendiente = True
+        self.avisos_dae = set()
+
+    def _x_completo(self, xr, z=None):
+        """Estados de todos los elementos: los libres de `xr` y los de almacén reconstruidos de z."""
+        xf = np.empty(self.nx)
+        xf[self.idx_libres] = xr
+        if self.almacen:
+            xf[self.idx_alm] = self.filas_alm @ (self.z_ext if z is None else z)
+        return xf
+
+    def fijar_z(self, z):
+        """Fija la solución de la red que proponen el solver o la interpolación (sin la tierra)."""
+        self.z_ext[:-1] = z
+        self.z_ext[-1] = 0.0
+
+    def masa(self):
+        """Matriz E de ∂R/∂ż para las incógnitas de la red (sin la tierra): filas de las ramas de almacén."""
+        E = np.zeros((self.tam, self.tam))
+        for f, k in enumerate(self.ramas_alm):
+            E[k, :] = self.filas_alm[f, :-1]
+        return E
+
+    def diferenciales(self):
+        """Máscara de las incógnitas de la red que aparecen derivadas (columnas no nulas de E)."""
+        return np.any(self.masa() != 0.0, axis=0)
+
+    def residuo(self, t, xr, u, zp):
+        """Residuo de la red para el solver DAE: M(z)·z - b(z) y, en las ramas de almacén, d(fila·z)/dt - derivada.
+
+        Args:
+            t: tiempo, en s.
+            xr: estados libres de la red (sin los de almacén).
+            u: entradas de la red.
+            zp: derivada temporal de z (sin la tierra).
+
+        Returns:
+            Vector de residuos, uno por incógnita de la red.
+        """
+        z = self.z_ext
+        xf = self._x_completo(xr)
+        b = np.zeros(self.tam + 1)
+        for e in self.elementos:
+            e.rhs(b, t, xf[e.xa:e.xb], u[e.ua:e.ub])
+        if self.din:
+            M, b = self._estampar_din(z, b, t, xf, u)
+        else:
+            M = self.M
+        R = M[:-1, :] @ z - b[:-1]
+        if self.almacen:
+            d = {}
+            for f, (_, k, e, i) in enumerate(self.almacen):
+                if e not in d:
+                    d[e] = e.derivada_e(z, t, xf[e.xa:e.xb], u[e.ua:e.ub])
+                R[k] = float(self.filas_alm[f, :-1] @ zp) - float(d[e][i])
+        return R
+
+    def _pesos_almacen(self, t, xf, u):
+        """Capacidad de cada almacén (C, J o capacidad térmica): la inversa de ∂(derivada)/∂(corriente de su rama)."""
+        z = self.z_ext.copy()
+        pesos = np.ones(len(self.almacen))
+        for f, (_, k, e, i) in enumerate(self.almacen):
+            d0 = float(e.derivada_e(z, t, xf[e.xa:e.xb], u[e.ua:e.ub])[i])
+            z[k] += 1.0
+            d1 = float(e.derivada_e(z, t, xf[e.xa:e.xb], u[e.ua:e.ub])[i])
+            z[k] -= 1.0
+            if d1 != d0 and np.isfinite(d1 - d0):
+                pesos[f] = abs(1.0 / (d1 - d0))
+        return pesos
+
+    def _proyectar(self, A, c, pesos):
+        """Cumple exactamente las ecuaciones que no son de almacén y, de las de almacén, lo más posible.
+
+        Minimiza Σ C_i·(valor_i - fijado_i)² con el resto de la red como restricción: dos condensadores
+        en paralelo quedan con la tensión que conserva la carga; dos inercias por un engranaje, con la
+        velocidad que conserva el momento angular referido al eje.
+        """
+        n = A.shape[0]
+        alm = np.zeros(n, dtype=bool)
+        alm[self.ramas_alm] = True
+        S, v = A[alm], c[alm]
+        Aa, ca = A[~alm], c[~alm]
+        W = np.diag(pesos)
+        K = np.block([[S.T @ W @ S, Aa.T], [Aa, np.zeros((Aa.shape[0], Aa.shape[0]))]])
+        rhs = np.concatenate([S.T @ W @ v, ca])
+        return np.linalg.lstsq(K, rhs, rcond=None)[0][:n]
+
+    def consistente(self, t, xr, u, inicial=False):
+        """Resuelve la red con cada almacén fijado a su valor actual (o al inicial) y la deja en z_ext.
+
+        Es la red de siempre (almacenes como fuentes). Si dos almacenes unidos rígidamente tienen
+        valores incompatibles, se proyectan conservando la carga, el momento o el calor (`_proyectar`)
+        y se avisa.
+        """
+        xf = self._x_completo(xr)
+        if inicial and self.almacen:
+            xf[self.idx_alm] = self.x_alm_ini
+        z = self.z_ext
+        b = np.zeros(self.tam + 1)
+        for e in self.elementos:
+            e.rhs(b, t, xf[e.xa:e.xb], u[e.ua:e.ub])
+        proyectado = False
+        for _ in range(MAX_ITER_NO_LINEAL if self.hay_no_lineal else 1):
+            M, bb = self._estampar_din(z, b, t, xf, u) if self.din else (self.M, b)
+            A, c = M[:-1, :-1], bb[:-1]
+            nuevo = _resolver_o_aproximar(A, c)
+            if A.size and self.almacen and _residuo_relativo(A, nuevo, c) > 1e-9:
+                if not hasattr(self, "_pesos"):
+                    self._pesos = self._pesos_almacen(t, xf, u)
+                nuevo = self._proyectar(A, c, self._pesos)
+                proyectado = True
+            cambio = np.max(np.abs(nuevo - z[:-1])) if nuevo.size else 0.0
+            z[:-1] = nuevo
+            self._comprobar_finita(z, t)
+            if cambio < TOL_NO_LINEAL * max(1.0, float(np.max(np.abs(nuevo))) if nuevo.size else 1.0):
+                break
+        if proyectado and _residuo_relativo(A, z[:-1], c) > 1e-6:
+            self.avisos_dae.add(
+                "Hay almacenes unidos rígidamente (condensadores en paralelo, inercias por un engranaje) con "
+                "valores iniciales incompatibles: se igualaron conservando la carga, el momento angular o el calor.")
+        self.pendiente = False
+        return z
+
     # ---------------------------------------------------------------- interfaz de bloque
     @override
     def n_estados(self):
-        return self.nx
+        return self.nx_dae if self.dae else self.nx
 
     @override
     def x0(self):
         v = []
         for e in self.elementos:
             v.extend(e.x0())
+        if self.dae:
+            v = np.asarray(v, dtype=float)
+            self.x_alm_ini = v[self.idx_alm].copy() if self.almacen else np.zeros(0)
+            return list(v[self.idx_libres])
         return v
 
     @override
@@ -455,26 +645,41 @@ class Red(Bloque):
             e.reiniciar()
             e.reiniciar_e()
         self.z[:] = 0.0
+        if self.dae:
+            self.z_ext[:] = 0.0
+            self.pendiente = True
         self._usar_clave()
+
+    def _solucion(self, t, x, u):
+        """(z, estados completos de los elementos): resuelta por la red o, en modo DAE, la del solver."""
+        if not self.dae:
+            return self._resolver(t, x, u), x
+        if self.pendiente:
+            self.consistente(t, x, u, inicial=True)
+        return self.z_ext, self._x_completo(x)
 
     def calcular_salidas(self, t, x, u, Y):
         """Resuelve la red y escribe en Y[e.ya:e.yb] las salidas de cada elemento."""
+        # Estados completos: algunos elementos leen los de un vecino (red infinita con su filtro)
         self.x_actual = x
-        z = self._resolver(t, x, u)
+        z, xf = self._solucion(t, x, u)
+        self.x_actual = xf
         for e in self.con_salida:
-            Y[e.ya:e.yb] = e.salida_e(z, t, x[e.xa:e.xb], u[e.ua:e.ub])
+            Y[e.ya:e.yb] = e.salida_e(z, t, xf[e.xa:e.xb], u[e.ua:e.ub])
 
     @override
     def derivada(self, t, x, u):
-        z = self._resolver(t, x, u)
+        z, xf = self._solucion(t, x, u)
         dx = np.empty(self.nx)
         for e in self.elementos:
             if e.xb > e.xa:
-                dx[e.xa:e.xb] = e.derivada_e(z, t, x[e.xa:e.xb], u[e.ua:e.ub])
-        return dx
+                dx[e.xa:e.xb] = e.derivada_e(z, t, xf[e.xa:e.xb], u[e.ua:e.ub])
+        return dx[self.idx_libres] if self.dae else dx
 
     def paso_mayor(self, t, x, u, y):
         """Lee las compuertas y busca el estado coherente de los interruptores."""
+        if self.dae:
+            return self._paso_mayor_dae(t, x, u)
         cambio = False
         if self.conmutados:
             for _ in range(MAX_ITER_CONMUTADORES):
@@ -498,7 +703,46 @@ class Red(Bloque):
         if estampa:
             # Cambió algún valor de `estampar_estado`: las factorizaciones guardadas ya no valen
             self._cache = {}
+            self.version += 1
             self._usar_clave()
+            cambio = True
+        return cambio
+
+    def _paso_mayor_dae(self, t, xr, u):
+        """Atiende interruptores y `tras_paso` en modo DAE.
+
+        Tras cada cambio la red se vuelve a hacer coherente con los almacenes en su valor actual: los
+        almacenes no saltan; las corrientes y tensiones libres sí.
+        """
+        cambio = False
+        if self.pendiente:
+            self.consistente(t, xr, u, inicial=True)
+        if self.conmutados:
+            for _ in range(MAX_ITER_CONMUTADORES):
+                xf = self._x_completo(xr)
+                cambiados = [e for e in self.conmutados
+                             if e.actualizar(self.z_ext, t, xf[e.xa:e.xb], u[e.ua:e.ub])]
+                if not cambiados:
+                    break
+                cambio = True
+                self._usar_clave()
+                self.consistente(t, xr, u)
+            else:
+                raise ValueError(
+                    f"Los interruptores no encuentran un estado coherente en t = {t:.6g} s: tras "
+                    f"{MAX_ITER_CONMUTADORES} intentos siguen cambiando "
+                    + ", ".join(e.etiqueta for e in cambiados)[:300]
+                    + ". Revisa si dos interruptores se contradicen (por ejemplo, un diodo en antiparalelo con una fuente).")
+        xf = self._x_completo(xr)
+        estampa = False
+        for e in self.elementos:
+            if e.tras_paso(self.z_ext, t, xf[e.xa:e.xb], u[e.ua:e.ub]):
+                estampa = True
+        if estampa:
+            self._cache = {}
+            self.version += 1
+            self._usar_clave()
+            self.consistente(t, xr, u)
             cambio = True
         return cambio
 
@@ -524,7 +768,11 @@ class Red(Bloque):
             return np.full(3, 0.5) if q in e.entradas_vector else 0.5
 
         u0 = [base(e, q) for e, q in self.entradas_lista]
-        x = np.ones(self.nx) * 0.7
+        x = np.ones(self.n_estados()) * 0.7
+        if self.dae:
+            # En modo DAE z es una incógnita del solver: solo cuenta lo que la salida lee de u directamente
+            self.pendiente = False
+            self.z_ext[:-1] = 0.3
         self.salidas_directas = set()
         self._entradas_directas = []
         if not self.salidas_lista or not self.entradas_lista:
@@ -547,6 +795,9 @@ class Red(Bloque):
             if afecta:
                 self._entradas_directas.append(i)
         self.z[:] = 0.0
+        if self.dae:
+            self.z_ext[:] = 0.0
+            self.pendiente = True
         self.hay_directas = bool(self.salidas_directas)
 
     def entradas_directas(self):
@@ -559,9 +810,9 @@ class Red(Bloque):
 
     @override
     def cruce(self, t, x, u):
-        z = self._resolver(t, x, u)
+        z, xf = self._solucion(t, x, u)
         g = []
         for e in self.elementos:
             if e.cruce_e is not None:
-                g.extend(e.cruce_e(z, t, x[e.xa:e.xb], u[e.ua:e.ub]))
+                g.extend(e.cruce_e(z, t, xf[e.xa:e.xb], u[e.ua:e.ub]))
         return g
