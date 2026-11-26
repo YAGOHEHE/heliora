@@ -18,8 +18,8 @@ jobs:
       # Intérprete del entorno privado: bin/ en macOS y Linux, Scripts/ en Windows
       PY: ${{ matrix.os == 'windows-latest' && '.venv/Scripts/python' || '.venv/bin/python' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Entorno del motor
