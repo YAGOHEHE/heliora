@@ -42,6 +42,15 @@ enum Continuar {
     Abrir,
 }
 
+/// Acción pedida desde la cinta; se ejecuta al dibujar la página porque necesita el motor.
+#[derive(Clone, Copy)]
+enum AccionCinta {
+    Pedir(Continuar),
+    /// Guardar el plan; `true` pide siempre elegir archivo.
+    Guardar(bool),
+    Informe,
+}
+
 /// Efecto pedido por un control de la interfaz; se ejecuta al terminar de dibujar.
 enum Accion {
     Operar(&'static str, Value),
@@ -109,6 +118,7 @@ pub struct Mantenimiento {
     confirmar: Option<Confirmar>,
     nueva: Option<NuevaOrden>,
     regenerar: Option<String>,
+    cinta_pendiente: Option<AccionCinta>,
 }
 
 /// Fecha civil a partir del tiempo del sistema (algoritmo de días civiles).
@@ -178,10 +188,26 @@ const PESTANAS: [(Pestana, &str); 7] = [
 const FILTROS: [(&str, &str); 6] = [("pendiente", "Pendientes"), ("vencida", "Vencidas"), ("cerrada", "Cerradas"), ("semana", "Esta semana"), ("proximas", "Próximos 30 días"), ("todas", "Todas")];
 const ALTO_FICHA: f32 = 84.0;
 const ALTO_PIE: f32 = 44.0;
+const ALTO_FILA: f32 = 32.0;
+/// Alto de la línea del título de pantalla.
+const ALTO_TITULO: f32 = 30.0;
 const CELDA_DIA: f32 = 24.0;
 const AGENDA_MAX: usize = 60;
 /// Semanas que muestra el plan por equipo.
 const SEMANAS: i64 = 12;
+
+/// Icono de una vista en la cinta y en la pestaña de documento.
+fn icono_pestana(p: Pestana) -> Icono {
+    match p {
+        Pestana::Analisis => Icono::Grafica,
+        Pestana::Tablero => Icono::Calendario,
+        Pestana::Ordenes => Icono::Lista,
+        Pestana::Catalogo => Icono::Tabla,
+        Pestana::Planes => Icono::Informe,
+        Pestana::Amef => Icono::Raices,
+        Pestana::Historial => Icono::Deshacer,
+    }
+}
 
 /// Criterios de la lista de órdenes.
 struct FiltroOrdenes<'a> {
@@ -325,6 +351,7 @@ impl Mantenimiento {
             confirmar: None,
             nueva: None,
             regenerar: None,
+            cinta_pendiente: None,
         }
     }
 
@@ -341,24 +368,54 @@ impl Mantenimiento {
         }
     }
 
-    /// Cinta del módulo: las vistas de Mantenimiento como botones grandes y, en Análisis, sus herramientas.
+    /// Cinta del módulo: las vistas, el menú del plan, el informe y, en Análisis, las herramientas de análisis.
     pub fn cinta(&mut self, ui: &mut egui::Ui, todas: &[Herramienta]) {
-        ui::grupo_cinta(ui, "Vistas", |ui| {
+        ui::grupo_cinta(ui, "Herramientas", |ui| {
             for (p, nombre) in PESTANAS {
-                let icono = match p {
-                    Pestana::Analisis => Icono::Grafica,
-                    Pestana::Tablero => Icono::Calendario,
-                    Pestana::Ordenes => Icono::Lista,
-                    Pestana::Catalogo => Icono::Tabla,
-                    Pestana::Planes => Icono::Informe,
-                    Pestana::Amef => Icono::Raices,
-                    Pestana::Historial => Icono::Deshacer,
-                };
-                if ui::boton_cinta(ui, icono, nombre, self.pestana == p).clicked() {
+                if ui::boton_cinta(ui, icono_pestana(p), nombre, self.pestana == p).clicked() {
                     self.pestana = p;
                 }
             }
         });
+        let plan_abierto = !self.estado.is_null();
+        let archivo = self.nombre_archivo();
+        let informe_libre = plan_abierto && self.id_informe.is_none();
+        ui::grupo_cinta(ui, "Plan", |ui| {
+            let menu = ui::boton_cinta(ui, Icono::Carpeta, "Plan ▾", false);
+            egui::Popup::menu(&menu).show(|ui| {
+                if ui.button("Plan de ejemplo").on_hover_text("Sustituye el plan en pantalla por el de ejemplo").clicked() {
+                    self.cinta_pendiente = Some(AccionCinta::Pedir(Continuar::Ejemplo));
+                    ui.close();
+                }
+                if ui.button("Nuevo plan vacío").clicked() {
+                    self.cinta_pendiente = Some(AccionCinta::Pedir(Continuar::Vacio));
+                    ui.close();
+                }
+                if ui.button("Abrir plan…").clicked() {
+                    self.cinta_pendiente = Some(AccionCinta::Pedir(Continuar::Abrir));
+                    ui.close();
+                }
+                ui.separator();
+                if ui.add_enabled(plan_abierto, egui::Button::new("Guardar como…")).clicked() {
+                    self.cinta_pendiente = Some(AccionCinta::Guardar(true));
+                    ui.close();
+                }
+            });
+            match ui::columna_cinta(ui, &[(Icono::NuevoDocumento, &archivo, false), (Icono::Guardar, "Guardar", plan_abierto), (Icono::Nuevo, "Plan de ejemplo", true)]) {
+                Some(1) => self.cinta_pendiente = Some(AccionCinta::Guardar(false)),
+                Some(2) => self.cinta_pendiente = Some(AccionCinta::Pedir(Continuar::Ejemplo)),
+                _ => {}
+            }
+        });
+        ui::grupo_cinta(ui, "Informe", |ui| {
+            let r = ui::boton_cinta(ui, Icono::Informe, "Informe O&M", false).on_hover_text("Indicadores, hallazgos, órdenes y calendario de 30 días en HTML y PDF");
+            if r.clicked() && informe_libre {
+                self.cinta_pendiente = Some(AccionCinta::Informe);
+            }
+        });
+        if self.cinta_pendiente.is_some() {
+            ui.ctx().request_repaint();
+        }
         if self.pestana == Pestana::Analisis {
             self.analisis.cinta(ui, todas);
         }
@@ -577,27 +634,50 @@ impl Mantenimiento {
             self.sucio = huella(&self.estado) != self.hash_guardado.get();
         }
         let pal = tema::p();
-        egui::TopBottomPanel::top("pest_mant").frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(16, 4)).stroke(egui::Stroke::new(1.0_f32, pal.linea))).show_inside(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.set_min_height(32.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| self.acciones_plan(ui, motor));
+        match self.cinta_pendiente.take() {
+            Some(AccionCinta::Pedir(c)) => self.pedir(c, motor),
+            Some(AccionCinta::Guardar(como)) => self.guardar(como),
+            Some(AccionCinta::Informe) => self.escribir_informe(motor),
+            None => {}
+        }
+        if !self.mensaje.is_empty() {
+            egui::TopBottomPanel::top("aviso_mant").frame(egui::Frame::new()).show_inside(ui, |ui| {
+                if ui::aviso_negro(ui, &self.mensaje) {
+                    self.mensaje.clear();
+                } else if self.mensaje_error {
+                    let r = ui.min_rect();
+                    ui.painter().rect_filled(Rect::from_min_size(r.min, Vec2::new(4.0, r.height())), 0.0, pal.falla);
+                }
             });
-            if !self.mensaje.is_empty() {
-                let color = if self.mensaje_error { pal.falla } else { pal.texto_2 };
-                ui.label(egui::RichText::new(&self.mensaje).size(12.0).color(color));
-                ui.add_space(4.0);
-            }
-        });
+        }
         if self.pestana == Pestana::Analisis {
             self.analisis.ui(ui, todas, motor, c);
             self.dialogos(ui.ctx(), motor);
             return;
         }
         let mut acciones = vec![];
+        let ocupado = self.id_estado.is_some() || self.id_carga.is_some();
+        let plan_abierto = !self.estado.is_null();
+        let ordenes: Vec<Value> = self.estado["ordenes"].as_array().cloned().unwrap_or_default();
+        if plan_abierto {
+            if matches!(self.pestana, Pestana::Tablero | Pestana::Ordenes) {
+                egui::SidePanel::right("panel_mant").exact_width(360.0).resizable(false).frame(egui::Frame::new().fill(pal.panel).stroke(egui::Stroke::new(1.0_f32, pal.linea))).show_inside(ui, |ui| {
+                    ui.add_enabled_ui(!ocupado, |ui| {
+                        if self.pestana == Pestana::Tablero {
+                            self.panel_calendario(ui, &ordenes, &mut acciones);
+                        } else {
+                            self.panel_orden(ui, &ordenes, &mut acciones);
+                        }
+                    });
+                });
+            }
+            egui::TopBottomPanel::top("doc_mant").frame(egui::Frame::new()).show_inside(ui, |ui| {
+                ui::pestanas_documento(ui, &[(icono_pestana(self.pestana), self.nombre_pestana())], &mut 0, false);
+            });
+        }
         egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.fondo)).show_inside(ui, |ui| {
             let alto = ui.available_height();
-            let ocupado = self.id_estado.is_some() || self.id_carga.is_some();
-            if self.estado.is_null() {
+            if !plan_abierto {
                 ui::pagina(ui, |ui| {
                     if ocupado {
                         ui.label(egui::RichText::new("Preparando el plan de mantenimiento...").color(pal.texto_2));
@@ -606,7 +686,7 @@ impl Mantenimiento {
                     }
                     if !ocupado {
                         ui.vertical_centered(|ui| {
-                            if ui.button("Nuevo plan vacío").clicked() {
+                            if ui::boton(ui, ui::EstiloBoton::Secundario, None, "Nuevo plan vacío", "", true).clicked() {
                                 self.pedir(Continuar::Vacio, motor);
                             }
                         });
@@ -614,23 +694,41 @@ impl Mantenimiento {
                 });
                 return;
             }
-            let disponible = (alto - 2.0 * ui::MARGEN - 1.0).max(0.0);
+            let disponible = (alto - 2.0 * ui::MARGEN - 1.0 - ALTO_TITULO - ui::HUECO).max(0.0);
+            let archivo = self.nombre_archivo();
+            let subtitulo = if self.pestana == Pestana::Ordenes { "Mantenimiento · filtradas por estado".to_string() } else { format!("Mantenimiento · plan {archivo}") };
             ui.add_enabled_ui(!ocupado, |ui| {
                 egui::ScrollArea::vertical().id_salt("plan_desplazable_1").auto_shrink([false, false]).show(ui, |ui| {
-                    ui::pagina(ui, |ui| match self.pestana {
-                        Pestana::Tablero => self.p_tablero(ui, disponible, &mut acciones),
-                        Pestana::Ordenes => self.p_ordenes(ui, disponible, &mut acciones),
-                        Pestana::Catalogo => self.marco(ui, disponible, "Equipos de la planta", |s, ui| s.p_catalogo(ui, &mut acciones)),
-                        Pestana::Planes => self.marco(ui, disponible, "Planes de mantenimiento preventivo", |s, ui| s.p_planes(ui, &mut acciones)),
-                        Pestana::Amef => self.marco(ui, disponible, "AMEF por equipo", |s, ui| s.p_amef(ui, &mut acciones)),
-                        Pestana::Historial => self.marco(ui, disponible, "Trabajos realizados", |s, ui| s.p_historial(ui, &mut acciones)),
-                        Pestana::Analisis => {}
+                    ui::pagina(ui, |ui| {
+                        ui::titulo_pantalla(ui, self.nombre_pestana(), &subtitulo);
+                        match self.pestana {
+                            Pestana::Tablero => self.p_tablero(ui, disponible, &ordenes, &mut acciones),
+                            Pestana::Ordenes => self.p_ordenes(ui, disponible, &ordenes, &mut acciones),
+                            Pestana::Catalogo => self.marco(ui, disponible, "Equipos de la planta", |s, ui| s.p_catalogo(ui, &mut acciones)),
+                            Pestana::Planes => self.marco(ui, disponible, "Planes de mantenimiento preventivo", |s, ui| s.p_planes(ui, &mut acciones)),
+                            Pestana::Amef => self.marco(ui, disponible, "AMEF por equipo", |s, ui| s.p_amef(ui, &mut acciones)),
+                            Pestana::Historial => self.marco(ui, disponible, "Trabajos realizados", |s, ui| s.p_historial(ui, &mut acciones)),
+                            Pestana::Analisis => {}
+                        }
                     });
                 });
             });
         });
+        if !acciones.is_empty() {
+            ui.ctx().request_repaint();
+        }
         self.despachar(acciones, motor);
         self.dialogos(ui.ctx(), motor);
+    }
+
+    /// Nombre del archivo del plan, o «sin archivo»; con «•» si hay cambios sin guardar.
+    fn nombre_archivo(&self) -> String {
+        let nombre = self.ruta.as_ref().and_then(|r| r.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "sin archivo".into());
+        if self.sucio {
+            format!("{nombre} •")
+        } else {
+            nombre
+        }
     }
 
     /// Tarjeta de ancho completo y alto `alto` con el título dado, para las pestañas de edición.
@@ -650,43 +748,14 @@ impl Mantenimiento {
         });
     }
 
-    /// Acciones del plan en la barra de pestañas: informe, menú «Plan ▾», nombre del archivo y estado de los cambios.
-    fn acciones_plan(&mut self, ui: &mut egui::Ui, motor: &mut Motor) {
-        let pal = tema::p();
-        let ocupado = self.id_informe.is_some() || self.estado.is_null();
-        if ui.add_enabled(!ocupado, egui::Button::new("Informe O&M")).on_hover_text("Indicadores, hallazgos, órdenes y calendario de 30 días en HTML y PDF").clicked() {
-            if let Some(c) = rfd::FileDialog::new().set_title("Carpeta para el informe").pick_folder() {
-                self.id_informe = Some(motor.llamar("informe_om", json!({"estado": self.estado, "carpeta": c.display().to_string(), "hoy": self.hoy})));
-                self.avisar("Escribiendo el informe...", false);
-            }
+    /// Pide al motor el informe O&M en la carpeta que elija la persona.
+    fn escribir_informe(&mut self, motor: &mut Motor) {
+        if self.id_informe.is_some() || self.estado.is_null() {
+            return;
         }
-        ui.menu_button("Plan ▾", |ui| {
-            if ui.button("Plan de ejemplo").on_hover_text("Sustituye el plan en pantalla por el de ejemplo").clicked() {
-                self.pedir(Continuar::Ejemplo, motor);
-                ui.close();
-            }
-            if ui.button("Nuevo plan vacío").clicked() {
-                self.pedir(Continuar::Vacio, motor);
-                ui.close();
-            }
-            if ui.button("Abrir plan…").clicked() {
-                self.pedir(Continuar::Abrir, motor);
-                ui.close();
-            }
-            ui.separator();
-            if ui.add_enabled(!self.estado.is_null(), egui::Button::new("Guardar")).on_hover_text("Guarda el plan en JSON").clicked() {
-                self.guardar(false);
-                ui.close();
-            }
-            if ui.add_enabled(!self.estado.is_null(), egui::Button::new("Guardar como…")).clicked() {
-                self.guardar(true);
-                ui.close();
-            }
-        });
-        let archivo = self.ruta.as_ref().and_then(|r| r.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "sin archivo".into());
-        ui.label(egui::RichText::new(archivo).size(12.5).color(pal.texto_2));
-        if self.sucio {
-            ui.label(egui::RichText::new("• cambios sin guardar").size(12.0).color(pal.acento_texto));
+        if let Some(c) = rfd::FileDialog::new().set_title("Carpeta para el informe").pick_folder() {
+            self.id_informe = Some(motor.llamar("informe_om", json!({"estado": self.estado, "carpeta": c.display().to_string(), "hoy": self.hoy})));
+            self.avisar("Escribiendo el informe...", false);
         }
     }
 
@@ -894,9 +963,8 @@ impl Mantenimiento {
         }
     }
 
-    /// Pestaña Tablero: fichas, plan por equipo en 12 semanas y, a la derecha, calendario del mes con la agenda.
-    fn p_tablero(&mut self, ui: &mut egui::Ui, disponible: f32, acciones: &mut Vec<Accion>) {
-        let ordenes: Vec<Value> = self.estado["ordenes"].as_array().cloned().unwrap_or_default();
+    /// Pestaña Tablero: fichas y plan por equipo en 12 semanas.
+    fn p_tablero(&mut self, ui: &mut egui::Ui, disponible: f32, ordenes: &[Value], acciones: &mut Vec<Accion>) {
         let hoy = dias_de(&self.hoy).unwrap_or(0);
         let lunes = lunes_de(hoy);
         let (desde, hasta, _) = limites(&self.hoy);
@@ -919,13 +987,7 @@ impl Mantenimiento {
             ui::ficha_kpi(ui, e, v, u, n, None);
         });
         let alto = ui::altos(disponible, ALTO_FICHA, &[1.0])[0];
-        ui::fila_ajustable(ui, "mantenimiento_tablero", alto, |i, ui| {
-            if i == 0 {
-                self.plan_por_equipo(ui, &ordenes, lunes, hoy, acciones);
-            } else {
-                self.calendario_y_agenda(ui, &ordenes, acciones);
-            }
-        });
+        ui::fila(ui, &[12], alto, |_, ui| self.plan_por_equipo(ui, ordenes, lunes, hoy, acciones));
     }
 
     /// Tarjeta «Plan por equipo»: controles de generación y cuadrícula de equipos por semana.
@@ -935,9 +997,10 @@ impl Mantenimiento {
         let hay_otras = ordenes.iter().any(|o| tema::color_tipo_orden(texto(o, "nombre")) == tema::color_tipo_orden("otro"));
         ui::tarjeta_plena(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            egui::Frame::new().inner_margin(egui::Margin { left: 16, right: 16, top: 12, bottom: 10 }).show(ui, |ui| {
+            egui::Frame::new().inner_margin(egui::Margin { left: 16, right: 16, top: 8, bottom: 10 }).show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Plan por equipo").family(tema::semi()).size(14.0));
+                    ui.set_min_height(28.0);
+                    ui.label(egui::RichText::new("Plan por equipo").family(tema::semi()).size(15.0));
                     ui.label(egui::RichText::new(format!("{SEMANAS} semanas")).size(12.0).color(pal.texto_2));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 5.0;
@@ -954,16 +1017,19 @@ impl Mantenimiento {
                 });
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Generar órdenes hasta").size(12.5).color(pal.texto_2));
+                    ui.label(egui::RichText::new("Generar órdenes hasta").size(12.5));
                     let valida = fecha_libre(ui, &mut self.hasta, 100.0, false);
-                    if ui.add_enabled(valida, egui::Button::new("Generar")).clicked() {
-                        acciones.push(Accion::Generar);
-                    }
-                    if ui.button("Crear correctivas desde fallas").on_hover_text("Usa los hallazgos de «Detección de fallas»; no repite una correctiva abierta").clicked() {
+                    ui.add_enabled_ui(valida, |ui| {
+                        if ui::boton(ui, ui::EstiloBoton::Principal, None, "Generar", "", true).clicked() {
+                            acciones.push(Accion::Generar);
+                        }
+                    });
+                    if ui::boton(ui, ui::EstiloBoton::Secundario, None, "Crear correctivas desde fallas", "", true).on_hover_text("Usa los hallazgos de «Detección de fallas»; no repite una correctiva abierta").clicked() {
                         acciones.push(Accion::Correctivas);
                     }
                 });
             });
+            tema::separador(ui);
             if equipos.is_empty() {
                 if ui::estado_vacio(ui, "El catálogo no tiene equipos.", "Ir al catálogo") {
                     acciones.push(Accion::Ir(Pestana::Catalogo));
@@ -974,47 +1040,59 @@ impl Mantenimiento {
         });
     }
 
-    /// Calendario pequeño del mes con la agenda de las próximas órdenes debajo.
-    fn calendario_y_agenda(&mut self, ui: &mut egui::Ui, ordenes: &[Value], acciones: &mut Vec<Accion>) {
-        let r = ui.max_rect();
-        let filas = ((dias_desde_civil(self.anio, self.mes, 1) + 3).rem_euclid(7) as u32 + dias_mes(self.anio, self.mes)).div_ceil(7);
-        let alto_cal = (28.0 + 26.0 + 18.0 + filas as f32 * (CELDA_DIA + 3.0) + 14.0 + 12.0).min(r.height() * 0.62);
-        let r_cal = Rect::from_min_size(r.min, Vec2::new(r.width(), alto_cal));
-        let r_agenda = Rect::from_min_max(Pos2::new(r.left(), r_cal.bottom() + ui::HUECO), r.max);
-        let mut cal = ui.new_child(egui::UiBuilder::new().max_rect(r_cal));
-        ui::tarjeta_con_titulo(&mut cal, "", |_| {}, |ui| self.calendario_mes(ui, ordenes));
-        let mut ir_ordenes = false;
-        let mut agenda = ui.new_child(egui::UiBuilder::new().max_rect(r_agenda));
-        ui::tarjeta_con_titulo(
-            &mut agenda,
-            "Agenda",
-            |ui| {
-                if ui.link("Órdenes →").clicked() {
-                    ir_ordenes = true;
-                }
-            },
-            |ui| self.agenda(ui, ordenes, acciones),
-        );
-        if ir_ordenes {
-            acciones.push(Accion::Ir(Pestana::Ordenes));
-        }
+    /// Pie de un panel lateral: línea superior y botones alineados a la derecha.
+    fn pie_panel(ui: &mut egui::Ui, id: &str, botones: impl FnOnce(&mut egui::Ui)) {
+        egui::TopBottomPanel::bottom(id.to_string()).exact_height(64.0).frame(egui::Frame::new()).show_inside(ui, |ui| {
+            let r = ui.max_rect();
+            ui.painter().line_segment([r.left_top(), r.right_top()], egui::Stroke::new(1.0_f32, tema::p().linea));
+            let mut hijo = ui.new_child(egui::UiBuilder::new().max_rect(r.shrink2(Vec2::new(20.0, 14.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
+            hijo.spacing_mut().item_spacing.x = 10.0;
+            botones(&mut hijo);
+        });
+    }
+
+    /// Panel derecho del Tablero: calendario del mes, agenda y el botón «Nueva orden».
+    fn panel_calendario(&mut self, ui: &mut egui::Ui, ordenes: &[Value], acciones: &mut Vec<Accion>) {
+        let pal = tema::p();
+        Self::pie_panel(ui, "pie_calendario", |ui| {
+            if ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::Mas), "Nueva orden", "", false).clicked() {
+                acciones.push(Accion::NuevaOrden);
+            }
+        });
+        egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(20, 18))).show_inside(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.label(egui::RichText::new("Calendario").font(tema::fuente_negrita(20.0)));
+            self.calendario_mes(ui, ordenes);
+            ui.add_space(8.0);
+            tema::separador(ui);
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Agenda").font(tema::fuente_negrita(20.0)));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.link(egui::RichText::new("Órdenes →").family(tema::semi()).size(13.0).color(pal.texto)).clicked() {
+                        acciones.push(Accion::Ir(Pestana::Ordenes));
+                    }
+                });
+            });
+            self.agenda(ui, ordenes, acciones);
+        });
     }
 
     /// Mes en curso: título con navegación, días de la semana y rejilla de días; marca hoy, el día elegido y los días con órdenes.
     fn calendario_mes(&mut self, ui: &mut egui::Ui, ordenes: &[Value]) {
         let pal = tema::p();
         let ancho = ui.available_width();
-        let (cab, _) = ui.allocate_exact_size(Vec2::new(ancho, 26.0), Sense::hover());
-        ui.painter().text(cab.center(), egui::Align2::CENTER_CENTER, format!("{} de {}", MESES[self.mes as usize - 1], self.anio), tema::fuente_semi(13.0), pal.texto);
-        let boton = |ui: &mut egui::Ui, r: Rect, t: &str| ui.put(r, egui::Button::new(t).frame(false)).clicked();
-        let r_hoy = Rect::from_min_size(Pos2::new(cab.right() - 40.0, cab.top()), Vec2::new(40.0, 26.0));
-        if boton(ui, Rect::from_min_size(cab.left_top(), Vec2::splat(26.0)), "‹") {
+        let (cab, _) = ui.allocate_exact_size(Vec2::new(ancho, 30.0), Sense::hover());
+        ui.painter().text(cab.center(), egui::Align2::CENTER_CENTER, format!("{} de {}", MESES[self.mes as usize - 1], self.anio), tema::fuente_semi(14.0), pal.texto);
+        let boton = |ui: &mut egui::Ui, r: Rect, t: &str| ui.put(r, egui::Button::new(egui::RichText::new(t).size(16.0)).frame(false)).clicked();
+        if boton(ui, Rect::from_min_size(cab.left_top(), Vec2::splat(30.0)), "‹") {
             (self.anio, self.mes) = if self.mes == 1 { (self.anio - 1, 12) } else { (self.anio, self.mes - 1) };
         }
-        if boton(ui, Rect::from_min_size(Pos2::new(r_hoy.left() - 28.0, cab.top()), Vec2::splat(26.0)), "›") {
+        if boton(ui, Rect::from_min_size(Pos2::new(cab.right() - 92.0, cab.top()), Vec2::splat(30.0)), "›") {
             (self.anio, self.mes) = if self.mes == 12 { (self.anio + 1, 1) } else { (self.anio, self.mes + 1) };
         }
-        if boton(ui, r_hoy, "Hoy") {
+        let mut zona_hoy = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(Pos2::new(cab.right() - 60.0, cab.top()), cab.right_bottom())).layout(egui::Layout::right_to_left(egui::Align::Center)));
+        if ui::boton(&mut zona_hoy, ui::EstiloBoton::Secundario, None, "Hoy", "", true).clicked() {
             let (y, m, _) = hoy_civil();
             self.anio = y;
             self.mes = m;
@@ -1023,16 +1101,16 @@ impl Mantenimiento {
         let dias = dias_mes(self.anio, self.mes);
         let primero = ((dias_desde_civil(self.anio, self.mes, 1) + 3).rem_euclid(7)) as u32;
         let filas = (primero + dias).div_ceil(7);
-        let paso = CELDA_DIA + 3.0;
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(ancho, 18.0 + paso * filas as f32), Sense::hover());
+        let paso = CELDA_DIA + 2.0;
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(ancho, 22.0 + paso * filas as f32), Sense::hover());
         let col = ancho / 7.0;
         for (i, d) in ["L", "M", "X", "J", "V", "S", "D"].iter().enumerate() {
-            ui.painter().text(rect.left_top() + Vec2::new(col * (i as f32 + 0.5), 8.0), egui::Align2::CENTER_CENTER, *d, egui::FontId::proportional(10.5), pal.texto_2);
+            ui.painter().text(rect.left_top() + Vec2::new(col * (i as f32 + 0.5), 10.0), egui::Align2::CENTER_CENTER, *d, egui::FontId::proportional(11.0), pal.texto_2);
         }
-        let con_ordenes: std::collections::HashSet<&str> = ordenes.iter().map(|o| texto(o, "fecha")).collect();
+        let con_ordenes: std::collections::HashSet<&str> = ordenes.iter().filter(|o| texto(o, "estado") != "cerrada").map(|o| texto(o, "fecha")).collect();
         for dia in 1..=dias {
             let idx = primero + dia - 1;
-            let celda = Rect::from_min_size(rect.left_top() + Vec2::new((idx % 7) as f32 * col, 18.0 + (idx / 7) as f32 * paso), Vec2::new(col, CELDA_DIA)).shrink2(Vec2::new(2.0, 0.0));
+            let celda = Rect::from_min_size(rect.left_top() + Vec2::new((idx % 7) as f32 * col, 22.0 + (idx / 7) as f32 * paso), Vec2::new(col, CELDA_DIA)).shrink2(Vec2::new(1.0, 0.0));
             let f = fecha(self.anio, self.mes, dia);
             let resp = ui.interact(celda, ui.id().with(("dia", &f)), Sense::click());
             let es_hoy = f == self.hoy;
@@ -1053,9 +1131,9 @@ impl Mantenimiento {
                 ui.painter().rect_stroke(celda, tema::RADIO_FICHA, egui::Stroke::new(1.0_f32, pal.acento), egui::StrokeKind::Inside);
             }
             let color = if es_hoy { pal.sobre_acento } else { pal.texto };
-            ui.painter().text(celda.center(), egui::Align2::CENTER_CENTER, dia.to_string(), tema::fuente_mono(11.0), color);
-            if !es_hoy && con_ordenes.contains(f.as_str()) {
-                ui.painter().rect_filled(Rect::from_min_max(Pos2::new(celda.left() + 4.0, celda.bottom() - 2.0), Pos2::new(celda.right() - 4.0, celda.bottom())), 1.0, pal.senal);
+            ui.painter().text(celda.center() - Vec2::new(0.0, 1.0), egui::Align2::CENTER_CENTER, dia.to_string(), tema::fuente_mono(12.0), color);
+            if con_ordenes.contains(f.as_str()) {
+                ui.painter().rect_filled(Rect::from_center_size(Pos2::new(celda.center().x, celda.bottom() - 4.0), Vec2::splat(3.0)), 0.0, color);
             }
             if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                 self.dia_sel = Some(f);
@@ -1084,35 +1162,35 @@ impl Mantenimiento {
                     dia_actual = f;
                     let d = dias_de(f).unwrap_or(0);
                     let t = if f == self.hoy { format!("hoy · {}", dia_corto(d)) } else { dia_corto(d) };
-                    ui.add_space(if primero { 0.0 } else { 8.0 });
-                    ui.label(egui::RichText::new(ui::mayusculas(&t)).family(tema::semi()).size(11.0).color(pal.texto_2));
-                    ui.add_space(2.0);
+                    ui.add_space(if primero { 6.0 } else { 12.0 });
+                    ui::titulo_seccion(ui, &t);
+                    ui.add_space(4.0);
                 }
-                let (r, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::click());
-                if resp.hovered() {
-                    ui.painter().rect_filled(r, tema::RADIO_FICHA, pal.realce);
+                let (r, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::click());
+                if ui.rect_contains_pointer(r) {
+                    ui.painter().rect_filled(r, 0.0, pal.realce);
                 }
-                ui.painter().rect_filled(Rect::from_center_size(Pos2::new(r.left() + 7.0, r.center().y), Vec2::splat(9.0)), 2.0, color_orden(o));
-                let eq = ui.painter().layout_no_wrap(texto(o, "equipo").to_string(), tema::fuente_mono(11.0), pal.texto_2);
-                let ancho_eq = eq.size().x;
-                ui.painter().galley(Pos2::new(r.right() - 6.0 - ancho_eq, r.center().y - eq.size().y / 2.0), eq, pal.texto_2);
-                ui.painter().with_clip_rect(Rect::from_min_max(Pos2::new(r.left() + 20.0, r.top()), Pos2::new(r.right() - ancho_eq - 14.0, r.bottom()))).text(
+                ui::fondo_fila(ui, r, 0);
+                ui::dibujar_muestra(ui.painter(), Rect::from_center_size(Pos2::new(r.left() + 7.0, r.center().y), Vec2::splat(14.0)), color_orden(o), ui::muestra_tipo(texto(o, "nombre")));
+                let mut hijo = ui.new_child(egui::UiBuilder::new().max_rect(r.shrink2(Vec2::new(0.0, 4.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
+                let chip = ui::chip(&mut hijo, texto(o, "equipo"), false);
+                let limite = chip.rect.left() - 8.0;
+                ui.painter().with_clip_rect(Rect::from_min_max(Pos2::new(r.left() + 20.0, r.top()), Pos2::new(limite, r.bottom()))).text(
                     Pos2::new(r.left() + 20.0, r.center().y),
                     egui::Align2::LEFT_CENTER,
                     texto(o, "nombre"),
                     egui::FontId::proportional(13.0),
                     pal.texto,
                 );
-                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() || chip.clicked() {
                     acciones.push(Accion::AbrirOrden(texto(o, "id").to_string()));
                 }
             }
         });
     }
 
-    /// Pestaña Órdenes: fichas que filtran, tabla agrupada por semana con paginación y detalle de la orden elegida.
-    fn p_ordenes(&mut self, ui: &mut egui::Ui, disponible: f32, acciones: &mut Vec<Accion>) {
-        let ordenes: Vec<Value> = self.estado["ordenes"].as_array().cloned().unwrap_or_default();
+    /// Pestaña Órdenes: fichas que filtran y tabla agrupada por semana con paginación.
+    fn p_ordenes(&mut self, ui: &mut egui::Ui, disponible: f32, ordenes: &[Value], acciones: &mut Vec<Accion>) {
         let hoy = dias_de(&self.hoy).unwrap_or(0);
         let (lunes, domingo, limite) = limites(&self.hoy);
         let base = |estado: &'static str| FiltroOrdenes { estado, equipo: "", desde: "", hasta: "", hoy: &self.hoy, lunes: &lunes, domingo: &domingo, limite: &limite };
@@ -1148,17 +1226,12 @@ impl Mantenimiento {
         self.pagina = self.pagina.min(paginas - 1);
         if self.orden_sel.as_deref().is_none_or(|id| !ordenes.iter().any(|o| texto(o, "id") == id)) {
             self.orden_sel = visibles.first().map(|o| texto(o, "id").to_string());
+            ui.ctx().request_repaint();
         }
         let pagina: Vec<&Value> = visibles.iter().skip(self.pagina * POR_PAGINA).take(POR_PAGINA).copied().collect();
-        let sel = self.orden_sel.clone();
         let titulo = FILTROS.iter().find(|(c, _)| *c == self.f_estado).map(|(_, e)| *e).unwrap_or("Órdenes");
-        ui::fila_ajustable(ui, "mantenimiento_ordenes", alto, |i, ui| {
-            if i == 0 {
-                self.tabla_ordenes(ui, titulo, &pagina, n_visibles, paginas, &codigos, acciones);
-            } else {
-                let o = sel.as_deref().and_then(|id| ordenes.iter().find(|o| texto(o, "id") == id));
-                self.detalle_orden(ui, o, &ordenes, &codigos, acciones);
-            }
+        ui::fila(ui, &[12], alto, |_, ui| {
+            self.tabla_ordenes(ui, titulo, &pagina, n_visibles, paginas, &codigos, acciones);
         });
     }
 
@@ -1168,13 +1241,14 @@ impl Mantenimiento {
         let pal = tema::p();
         ui::tarjeta_plena(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            egui::Frame::new().inner_margin(egui::Margin { left: 16, right: 16, top: 12, bottom: 12 }).show(ui, |ui| {
+            egui::Frame::new().inner_margin(egui::Margin { left: 16, right: 16, top: 8, bottom: 8 }).show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(titulo).family(tema::semi()).size(14.0));
+                    ui.set_min_height(28.0);
+                    ui.label(egui::RichText::new(titulo).family(tema::semi()).size(15.0));
                     ui.label(egui::RichText::new(format!("{total} órdenes")).size(12.0).color(pal.texto_2));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
-                        if tema::boton_principal(ui, "+ Nueva orden").clicked() {
+                        if ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::Mas), "Nueva orden", "", true).clicked() {
                             acciones.push(Accion::NuevaOrden);
                         }
                         let mut cambio = fecha_filtro(ui, "Hasta", &mut self.f_hasta);
@@ -1201,12 +1275,12 @@ impl Mantenimiento {
             });
             let ancho = ui.available_width();
             let cols = columnas_tabla(ancho);
-            let (cab, _) = ui.allocate_exact_size(Vec2::new(ancho, 28.0), Sense::hover());
-            ui.painter().rect_filled(cab, 0.0, pal.campo_alt);
+            let (cab, _) = ui.allocate_exact_size(Vec2::new(ancho, 30.0), Sense::hover());
+            ui.painter().rect_filled(cab, 0.0, pal.campo);
             ui.painter().line_segment([cab.left_top(), cab.right_top()], egui::Stroke::new(1.0_f32, pal.linea));
-            ui.painter().line_segment([cab.left_bottom(), cab.right_bottom()], egui::Stroke::new(1.0_f32, pal.linea));
-            for (x, t) in cols.iter().zip(["FECHA", "OT", "TAREA", "EQUIPO", "TIPO", "ESTADO"]) {
-                ui.painter().text(Pos2::new(cab.left() + x.0, cab.center().y), egui::Align2::LEFT_CENTER, ui::mayusculas(t), tema::fuente_semi(10.5), pal.texto_2);
+            ui.painter().line_segment([cab.left_bottom(), cab.right_bottom()], egui::Stroke::new(1.0_f32, pal.borde));
+            for (x, t) in cols.iter().zip(["Fecha", "OT", "Tarea", "Equipo", "Tipo", "Estado"]) {
+                ui.painter().text(Pos2::new(cab.left() + x.0, cab.center().y), egui::Align2::LEFT_CENTER, t, tema::fuente_semi(12.5), pal.texto);
             }
             let alto_cuerpo = (ui.available_height() - ALTO_PIE).max(40.0);
             egui::ScrollArea::vertical().id_salt("plan_desplazable_3").auto_shrink([false, false]).max_height(alto_cuerpo).show(ui, |ui| {
@@ -1217,21 +1291,20 @@ impl Mantenimiento {
                     return;
                 }
                 let mut semana = i64::MIN;
-                let mut indice = 0;
                 for o in pagina {
                     let d = dias_de(texto(o, "fecha")).unwrap_or(0);
                     if lunes_de(d) != semana {
                         semana = lunes_de(d);
-                        let (r, _) = ui.allocate_exact_size(Vec2::new(ancho, 24.0), Sense::hover());
-                        ui.painter().rect_filled(r, 0.0, pal.campo);
-                        ui.painter().text(Pos2::new(r.left() + cols[0].0, r.center().y), egui::Align2::LEFT_CENTER, ui::mayusculas(&format!("Semana del {}", dia_mes(semana))), tema::fuente_semi(10.5), pal.texto_2);
-                        indice = 0;
+                        let (r, _) = ui.allocate_exact_size(Vec2::new(ancho, 30.0), Sense::hover());
+                        ui.painter().rect_filled(r, 0.0, pal.campo_alt);
+                        ui::fondo_fila(ui, r, 0);
+                        ui.painter().text(Pos2::new(r.left() + cols[0].0, r.center().y), egui::Align2::LEFT_CENTER, ui::mayusculas(&format!("Semana del {}", dia_mes(semana))), tema::fuente_semi(12.0), pal.texto_2);
                     }
                     let elegida = self.orden_sel.as_deref() == Some(texto(o, "id"));
-                    if fila_orden(ui, o, &self.hoy, ancho, &cols, elegida, indice).clicked() {
+                    if fila_orden(ui, o, &self.hoy, ancho, &cols, elegida) {
                         self.orden_sel = Some(texto(o, "id").to_string());
+                        ui.ctx().request_repaint();
                     }
-                    indice += 1;
                 }
             });
             let (pie, _) = ui.allocate_exact_size(Vec2::new(ancho, ALTO_PIE), Sense::hover());
@@ -1249,164 +1322,163 @@ impl Mantenimiento {
         });
     }
 
-    /// Tarjeta con el detalle de la orden elegida: datos, lista de comprobación, notas, enlaces y acciones.
-    fn detalle_orden(&mut self, ui: &mut egui::Ui, orden: Option<&Value>, ordenes: &[Value], codigos: &[String], acciones: &mut Vec<Accion>) {
+    /// Panel derecho de Órdenes: detalle de la orden elegida con sus datos editables, notas, enlaces y acciones.
+    fn panel_orden(&self, ui: &mut egui::Ui, ordenes: &[Value], acciones: &mut Vec<Accion>) {
         let pal = tema::p();
-        ui::tarjeta_plena(ui, |ui| {
-            let Some(o) = orden else {
+        let codigos = self.codigos();
+        let orden = self.orden_sel.as_deref().and_then(|id| ordenes.iter().find(|o| texto(o, "id") == id));
+        let Some(o) = orden else {
+            egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(20, 18))).show_inside(ui, |ui| {
+                ui.label(egui::RichText::new("Orden de trabajo").font(tema::fuente_negrita(20.0)));
                 ui::estado_vacio(ui, "Elige una orden de la tabla para ver su detalle.", "");
-                return;
-            };
-            let id = texto(o, "id").to_string();
-            let fec = texto(o, "fecha");
-            let cerrada = texto(o, "estado") == "cerrada";
-            let (estado, color_estado) = estado_orden(o, &self.hoy);
-            let r = ui.max_rect();
-            let r_pie = Rect::from_min_max(Pos2::new(r.left(), r.bottom() - 58.0), r.max);
-            let r_cuerpo = Rect::from_min_max(r.min, Pos2::new(r.right(), r_pie.top()));
-            let mut edicion: Option<Accion> = None;
-            let mut cuerpo = ui.new_child(egui::UiBuilder::new().max_rect(r_cuerpo));
-            egui::ScrollArea::vertical().id_salt("plan_desplazable_4").auto_shrink([false, false]).show(&mut cuerpo, |ui| {
-                egui::Frame::new().inner_margin(egui::Margin::same(16)).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.spacing_mut().item_spacing.y = 6.0;
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(&id).font(tema::fuente_mono(13.0)).color(pal.texto_2));
-                        ui::etiqueta(ui, estado, color_estado);
-                    });
-                    ui.add_space(4.0);
-                    ui.label(egui::RichText::new(texto(o, "nombre")).family(tema::semi()).size(18.0));
-                    ui.label(egui::RichText::new(format!("{} · {}", texto(o, "equipo"), tipo_orden(o))).size(13.0).color(pal.texto_2));
-                    ui.add_space(10.0);
-                    egui::Grid::new(("g_det", &id)).num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
-                        let etq = |ui: &mut egui::Ui, t: &str| ui.label(egui::RichText::new(t).size(13.0).color(pal.texto_2));
-                        let valor = |ui: &mut egui::Ui, t: &str| ui.label(egui::RichText::new(t).font(tema::fuente_mono(12.5)));
-                        if !cerrada {
-                            etq(ui, "Trabajo");
-                            if let Some(t) = texto_diferido(ui, ("o_trabajo", &id), texto(o, "nombre"), 200.0, 1) {
-                                edicion = Some(Accion::Operar("orden_editar", json!({"ident": id, "trabajo": t})));
-                            }
-                            ui.end_row();
-                            etq(ui, "Equipo");
-                            let mut eq = texto(o, "equipo").to_string();
-                            if combo_texto(ui, ("o_equipo", &id), &mut eq, codigos, 110.0) {
-                                edicion = Some(Accion::Operar("orden_editar", json!({"ident": id, "equipo": eq})));
-                            }
-                            ui.end_row();
-                            etq(ui, "Tipo");
-                            let mut tipo = tipo_orden(o).to_string();
-                            if combo_texto(ui, ("o_tipo", &id), &mut tipo, &TIPOS_ORDEN.map(String::from), 110.0) {
-                                edicion = Some(Accion::Operar("orden_editar", json!({"ident": id, "tipo": tipo})));
-                            }
-                            ui.end_row();
-                        }
-                        etq(ui, "Responsable");
-                        if let Some(t) = texto_diferido(ui, ("o_resp", &id), texto(o, "responsable"), 200.0, 1) {
-                            edicion = Some(Accion::Operar("orden_editar", json!({"ident": id, "responsable": t})));
-                        }
-                        ui.end_row();
-                        etq(ui, "Fecha prevista");
-                        if cerrada {
-                            valor(ui, fec);
-                        } else {
-                            let clave = egui::Id::new(("o_fecha", &id, fec));
-                            let mut f = ui.data(|d| d.get_temp::<String>(clave)).unwrap_or_else(|| fec.to_string());
-                            fecha_libre(ui, &mut f, 100.0, false);
-                            ui.data_mut(|d| d.insert_temp(clave, f));
-                        }
-                        ui.end_row();
-                        etq(ui, "Siguiente");
-                        match siguiente(ordenes, &self.estado["planes"], o) {
-                            Some(s) => valor(ui, &format!("{} · {}", texto(s, "fecha"), texto(s, "id"))),
-                            None => valor(ui, "—"),
-                        };
-                        ui.end_row();
-                        etq(ui, "Periodicidad");
-                        match self.estado["planes"].as_array().and_then(|p| p.iter().find(|p| texto(p, "id") == texto(o, "plan"))) {
-                            Some(p) => ui.label(format!("cada {} días", p["frecuencia_dias"].as_i64().unwrap_or(0))),
-                            None => ui.label(egui::RichText::new("sin plan").color(pal.texto_2)),
-                        };
-                        ui.end_row();
-                        if cerrada {
-                            etq(ui, "Cerrada el");
-                            valor(ui, texto(o, "cerrada"));
-                            ui.end_row();
-                        }
-                        if !cerrada {
-                            etq(ui, "Cerrar con fecha");
-                            let clave = egui::Id::new(("o_cierre", &id));
-                            let mut f = ui.data(|d| d.get_temp::<String>(clave)).unwrap_or_else(|| self.hoy.clone());
-                            fecha_libre(ui, &mut f, 100.0, false);
-                            ui.data_mut(|d| d.insert_temp(clave, f));
-                            ui.end_row();
-                        }
-                    });
-                    ui.add_space(12.0);
-                    ui.label(egui::RichText::new(ui::mayusculas("Notas de cierre")).family(tema::semi()).size(11.0).color(pal.texto_2));
-                    let mut notas = texto(o, "notas").to_string();
-                    if cerrada {
-                        if let Some(t) = texto_diferido(ui, ("o_notas", &id), &notas, ui.available_width(), 5) {
-                            edicion = Some(Accion::Operar("orden_editar", json!({"ident": id, "notas": t})));
-                        }
-                    } else if ui.add(egui::TextEdit::multiline(&mut notas).desired_rows(4).desired_width(f32::INFINITY).hint_text("Qué se hizo, hallazgos, materiales…")).changed() {
-                        acciones.push(Accion::Notas(id.clone(), notas));
-                    }
-                    ui.add_space(12.0);
-                    ui.label(egui::RichText::new(ui::mayusculas("Relacionado")).family(tema::semi()).size(11.0).color(pal.texto_2));
-                    let equipo = texto(o, "equipo");
-                    if ui.link(format!("Equipo {equipo} en el catálogo →")).clicked() {
-                        acciones.push(Accion::Ir(Pestana::Catalogo));
-                    }
-                    let tipo_equipo = self.estado["equipos"].as_array().and_then(|e| e.iter().find(|e| texto(e, "codigo") == equipo)).map(|e| texto(e, "tipo").to_string()).unwrap_or_default();
-                    if ui.add_enabled(!tipo_equipo.is_empty(), egui::Link::new(format!("Modos de falla de {tipo_equipo} en el AMEF →"))).clicked() {
-                        acciones.push(Accion::IrAmef(tipo_equipo));
-                    }
-                    ui.add_enabled(false, egui::Link::new("Bloque del diagrama →")).on_disabled_hover_text("El plan no guarda qué bloque del diagrama corresponde a cada equipo, así que no se puede enlazar.");
-                    if let Some(ch) = o["checklist"].as_array().filter(|c| !c.is_empty()) {
-                        ui.add_space(12.0);
-                        ui.label(egui::RichText::new(ui::mayusculas("Lista de comprobación")).family(tema::semi()).size(11.0).color(pal.texto_2));
-                        for (i, c) in ch.iter().enumerate() {
-                            let mut h = c["hecho"].as_bool().unwrap_or(false);
-                            if ui.checkbox(&mut h, texto(c, "texto")).changed() {
-                                acciones.push(Accion::Hecho(id.clone(), i, h));
-                            }
-                        }
-                    }
-                });
             });
-            ui.painter().line_segment([r_pie.left_top(), r_pie.right_top()], egui::Stroke::new(1.0_f32, pal.linea));
-            let mut pie = ui.new_child(egui::UiBuilder::new().max_rect(r_pie.shrink2(Vec2::new(16.0, 12.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
-            let mut boton: Option<Accion> = None;
+            return;
+        };
+        let id = texto(o, "id").to_string();
+        let fec = texto(o, "fecha");
+        let cerrada = texto(o, "estado") == "cerrada";
+        let (estado, color_estado) = estado_orden(o, &self.hoy);
+        let clave_cierre = egui::Id::new(("o_cierre", &id));
+        let clave_fecha = egui::Id::new(("o_fecha", &id, fec));
+        let cierre = ui.ctx().data(|d| d.get_temp::<String>(clave_cierre)).unwrap_or_else(|| self.hoy.clone());
+        let nueva = ui.ctx().data(|d| d.get_temp::<String>(clave_fecha)).unwrap_or_else(|| fec.to_string());
+        let mut boton: Option<Accion> = None;
+        Self::pie_panel(ui, "pie_orden", |ui| {
             if cerrada {
-                if pie.button("Reabrir").clicked() {
+                if ui::boton(ui, ui::EstiloBoton::Secundario, None, "Reabrir", "", false).clicked() {
                     boton = Some(Accion::Operar("orden_reabrir", json!({"ident": id})));
                 }
-            } else {
-                let cierre = pie.ctx().data(|d| d.get_temp::<String>(egui::Id::new(("o_cierre", &id)))).unwrap_or_else(|| self.hoy.clone());
-                let nueva = pie.ctx().data(|d| d.get_temp::<String>(egui::Id::new(("o_fecha", &id, fec)))).unwrap_or_else(|| fec.to_string());
-                pie.add_enabled_ui(fecha_valida(&cierre), |ui| {
-                    if tema::boton_principal(ui, "Cerrar orden").clicked() {
-                        boton = Some(Accion::Operar("orden_cerrar", json!({"ident": id, "fecha": cierre})));
-                    }
-                });
-                if pie.add_enabled(fecha_valida(&nueva) && nueva != fec, egui::Button::new("Reprogramar")).on_hover_text("Cambia la fecha prevista por la de «Fecha prevista»").clicked() {
+                return;
+            }
+            ui.add_enabled_ui(fecha_valida(&cierre), |ui| {
+                if ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::Correcto), "Cerrar orden", "", false).clicked() {
+                    boton = Some(Accion::Operar("orden_cerrar", json!({"ident": id, "fecha": cierre})));
+                }
+            });
+            ui.add_enabled_ui(fecha_valida(&nueva) && nueva != fec, |ui| {
+                if ui::boton(ui, ui::EstiloBoton::Secundario, Some(Icono::Calendario), "Reprogramar", "", false).on_hover_text("Cambia la fecha prevista por la de «Fecha prevista»").clicked() {
                     boton = Some(Accion::Operar("orden_editar", json!({"ident": id, "fecha": nueva})));
                 }
-            }
-            pie.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Borrar").clicked() {
+            });
+        });
+        let mut edicion: Option<Accion> = None;
+        egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(20, 18))).show_inside(ui, |ui| {
+            ui.label(egui::RichText::new("Orden de trabajo").font(tema::fuente_negrita(20.0)));
+            egui::ScrollArea::vertical().id_salt("plan_desplazable_4").auto_shrink([false, false]).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(&id).font(tema::fuente_mono(13.0)));
+                    chip_estado(ui, estado, color_estado);
+                });
+                ui.label(egui::RichText::new(texto(o, "nombre")).family(tema::semi()).size(18.0));
+                ui.label(egui::RichText::new(format!("{} · {}", texto(o, "equipo"), tipo_orden(o))).size(13.0).color(pal.texto_2));
+                ui.add_space(8.0);
+                let mono = |ui: &mut egui::Ui, t: &str| ui.label(egui::RichText::new(t).font(tema::fuente_mono(12.0)));
+                fila_dato(ui, "Fecha prevista", |ui| {
+                    if cerrada {
+                        mono(ui, fec);
+                    } else {
+                        let mut f = nueva.clone();
+                        fecha_libre(ui, &mut f, 100.0, false);
+                        ui.data_mut(|d| d.insert_temp(clave_fecha, f));
+                    }
+                });
+                fila_dato(ui, "Siguiente", |ui| {
+                    match siguiente(ordenes, &self.estado["planes"], o) {
+                        Some(s) => mono(ui, &format!("{} · {}", texto(s, "fecha"), texto(s, "id"))),
+                        None => mono(ui, "—"),
+                    };
+                });
+                fila_dato(ui, "Periodicidad", |ui| {
+                    match self.estado["planes"].as_array().and_then(|p| p.iter().find(|p| texto(p, "id") == texto(o, "plan"))) {
+                        Some(p) => mono(ui, &format!("cada {} días", p["frecuencia_dias"].as_i64().unwrap_or(0))),
+                        None => ui.label(egui::RichText::new("sin plan").color(pal.texto_2)),
+                    };
+                });
+                fila_dato(ui, "Estado", |ui| {
+                    let mut e = estado.to_string();
+                    e[..1].make_ascii_uppercase();
+                    ui.label(e);
+                });
+                if cerrada {
+                    fila_dato(ui, "Cerrada el", |ui| {
+                        mono(ui, texto(o, "cerrada"));
+                    });
+                }
+                fila_dato(ui, "Responsable", |ui| {
+                    if let Some(t) = texto_diferido(ui, ("o_resp", &id), texto(o, "responsable"), 170.0, 1) {
+                        edicion = Some(Accion::Operar("orden_editar", json!({"ident": id, "responsable": t})));
+                    }
+                });
+                if !cerrada {
+                    fila_dato(ui, "Trabajo", |ui| {
+                        if let Some(t) = texto_diferido(ui, ("o_trabajo", &id), texto(o, "nombre"), 170.0, 1) {
+                            edicion = Some(Accion::Operar("orden_editar", json!({"ident": id, "trabajo": t})));
+                        }
+                    });
+                    fila_dato(ui, "Equipo", |ui| {
+                        let mut eq = texto(o, "equipo").to_string();
+                        if combo_texto(ui, ("o_equipo", &id), &mut eq, &codigos, 110.0) {
+                            edicion = Some(Accion::Operar("orden_editar", json!({"ident": id, "equipo": eq})));
+                        }
+                    });
+                    fila_dato(ui, "Tipo", |ui| {
+                        let mut tipo = tipo_orden(o).to_string();
+                        if combo_texto(ui, ("o_tipo", &id), &mut tipo, &TIPOS_ORDEN.map(String::from), 110.0) {
+                            edicion = Some(Accion::Operar("orden_editar", json!({"ident": id, "tipo": tipo})));
+                        }
+                    });
+                    fila_dato(ui, "Cerrar con fecha", |ui| {
+                        let mut f = cierre.clone();
+                        fecha_libre(ui, &mut f, 100.0, false);
+                        ui.data_mut(|d| d.insert_temp(clave_cierre, f));
+                    });
+                }
+                ui.add_space(10.0);
+                ui::titulo_seccion(ui, "Notas de cierre");
+                let mut notas = texto(o, "notas").to_string();
+                if cerrada {
+                    if let Some(t) = texto_diferido(ui, ("o_notas", &id), &notas, ui.available_width(), 5) {
+                        edicion = Some(Accion::Operar("orden_editar", json!({"ident": id, "notas": t})));
+                    }
+                } else if ui.add(egui::TextEdit::multiline(&mut notas).desired_rows(4).desired_width(f32::INFINITY).hint_text("Trabajo realizado, materiales, incidencias…")).changed() {
+                    acciones.push(Accion::Notas(id.clone(), notas));
+                }
+                ui.add_space(10.0);
+                ui::titulo_seccion(ui, "Relacionado");
+                let equipo = texto(o, "equipo");
+                if ui.link(format!("Equipo {equipo} en el catálogo →")).clicked() {
+                    acciones.push(Accion::Ir(Pestana::Catalogo));
+                }
+                let tipo_equipo = self.estado["equipos"].as_array().and_then(|e| e.iter().find(|e| texto(e, "codigo") == equipo)).map(|e| texto(e, "tipo").to_string()).unwrap_or_default();
+                if ui.add_enabled(!tipo_equipo.is_empty(), egui::Link::new(format!("Modos de falla de {tipo_equipo} en el AMEF →"))).clicked() {
+                    acciones.push(Accion::IrAmef(tipo_equipo));
+                }
+                ui.add_enabled(false, egui::Link::new("Bloque del diagrama →")).on_disabled_hover_text("El plan no guarda qué bloque del diagrama corresponde a cada equipo, así que no se puede enlazar.");
+                if let Some(ch) = o["checklist"].as_array().filter(|c| !c.is_empty()) {
+                    ui.add_space(10.0);
+                    ui::titulo_seccion(ui, "Lista de comprobación");
+                    for (i, c) in ch.iter().enumerate() {
+                        let mut h = c["hecho"].as_bool().unwrap_or(false);
+                        if ui.checkbox(&mut h, texto(c, "texto")).changed() {
+                            acciones.push(Accion::Hecho(id.clone(), i, h));
+                        }
+                    }
+                }
+                ui.add_space(10.0);
+                if ui::boton_texto(ui, Some(Icono::Cerrar), "Borrar orden").clicked() {
                     boton = Some(Accion::Confirmar(Confirmar::BorrarOrden(id.clone())));
                 }
             });
-            if let Some(a) = boton.or(edicion) {
-                acciones.push(a);
-            }
         });
+        if let Some(a) = boton.or(edicion) {
+            acciones.push(a);
+        }
     }
 
     fn p_catalogo(&mut self, ui: &mut egui::Ui, acciones: &mut Vec<Accion>) {
         ui.horizontal(|ui| {
-            if ui.button("+ Añadir equipo").clicked() {
+            if ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::Mas), "Añadir equipo", "", true).clicked() {
                 acciones.push(Accion::Operar("equipo_crear", json!({})));
             }
         });
@@ -1415,7 +1487,7 @@ impl Mantenimiento {
             let Some(eq) = self.estado["equipos"].as_array_mut() else { return };
             egui::Grid::new("g_eq").striped(true).num_columns(6).spacing([10.0, 5.0]).show(ui, |ui| {
                 for t in ["Código", "Tipo", "Descripción", "Ubicación", "Instalado", ""] {
-                    ui.label(egui::RichText::new(t).strong().color(tema::p().texto));
+                    ui.label(egui::RichText::new(t).family(tema::semi()).size(12.5).color(tema::p().texto));
                 }
                 ui.end_row();
                 for (i, e) in eq.iter_mut().enumerate() {
@@ -1449,12 +1521,12 @@ impl Mantenimiento {
 
     fn p_planes(&mut self, ui: &mut egui::Ui, acciones: &mut Vec<Accion>) {
         ui.horizontal(|ui| {
-            if ui.button("+ Añadir plan").clicked() {
+            if ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::Mas), "Añadir plan", "", true).clicked() {
                 acciones.push(Accion::Operar("plan_crear", json!({"nombre": "Plan nuevo", "tipo_equipo": "Módulos", "frecuencia_dias": 90, "checklist": ["Paso 1"]})));
             }
         });
         if let Some(id) = self.regenerar.clone() {
-            tema::tarjeta(ui, |ui| {
+            tarjeta_plana(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.label(format!("El plan {id} cambió: sus órdenes pendientes conservan las fechas anteriores. Al regenerar se sustituyen por las que corresponden hasta {}.", self.hasta));
                 ui.horizontal(|ui| {
@@ -1476,7 +1548,7 @@ impl Mantenimiento {
             let Some(planes) = self.estado["planes"].as_array_mut() else { return };
             for (i, p) in planes.iter_mut().enumerate() {
                 let id = texto(p, "id").to_string();
-                tema::tarjeta(ui, |ui| {
+                tarjeta_plana(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal_wrapped(|ui| {
                         let mut a = p["activo"].as_bool().unwrap_or(true);
@@ -1537,14 +1609,14 @@ impl Mantenimiento {
                     ui.selectable_value(&mut self.filtro_amef, t.to_string(), t);
                 }
             });
-            if ui.button("+ Añadir modo de falla").clicked() {
+            if ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::Mas), "Añadir modo de falla", "", true).clicked() {
                 let t = if self.filtro_amef.is_empty() { "Módulos".to_string() } else { self.filtro_amef.clone() };
                 acciones.push(Accion::Operar("amef_crear", json!({"tipo_equipo": t})));
             }
-            if ui.button("Ordenar por RPN").on_hover_text("Reordena la tabla de mayor a menor RPN; las ediciones no la reordenan").clicked() {
+            if ui::boton(ui, ui::EstiloBoton::Secundario, None, "Ordenar por RPN", "", true).on_hover_text("Reordena la tabla de mayor a menor RPN; las ediciones no la reordenan").clicked() {
                 acciones.push(Accion::Operar("amef_ordenar", json!({})));
             }
-            if ui.button("Exportar CSV").on_hover_text("Exporta las filas que se ven, con «;» y UTF-8 para Excel").clicked() {
+            if ui::boton(ui, ui::EstiloBoton::Secundario, None, "Exportar CSV", "", true).on_hover_text("Exporta las filas que se ven, con «;» y UTF-8 para Excel").clicked() {
                 acciones.push(Accion::Exportar("amef", self.filtro_amef.clone()));
             }
         });
@@ -1555,7 +1627,7 @@ impl Mantenimiento {
             let rpn = |a: &Value| a["S"].as_i64().unwrap_or(1) * a["O"].as_i64().unwrap_or(1) * a["D"].as_i64().unwrap_or(1);
             egui::Grid::new("g_amef").striped(true).num_columns(11).spacing([8.0, 5.0]).show(ui, |ui| {
                 for t in ["Equipo", "Modo de falla", "Causa", "Efecto", "S", "O", "D", "RPN", "Control", "Acción", ""] {
-                    ui.label(egui::RichText::new(t).strong().color(tema::p().texto));
+                    ui.label(egui::RichText::new(t).family(tema::semi()).size(12.5).color(tema::p().texto));
                 }
                 ui.end_row();
                 for (i, a) in am.iter_mut().enumerate() {
@@ -1604,7 +1676,7 @@ impl Mantenimiento {
                     ui.selectable_value(&mut self.f_historial, e.clone(), e);
                 }
             });
-            if ui.add_enabled(!h.is_empty(), egui::Button::new("Exportar CSV")).on_hover_text("Exporta las filas que se ven, con «;» y UTF-8 para Excel").clicked() {
+            if ui.add_enabled_ui(!h.is_empty(), |ui| ui::boton(ui, ui::EstiloBoton::Secundario, None, "Exportar CSV", "", true)).inner.on_hover_text("Exporta las filas que se ven, con «;» y UTF-8 para Excel").clicked() {
                 acciones.push(Accion::Exportar("historial", self.f_historial.clone()));
             }
         });
@@ -1615,13 +1687,13 @@ impl Mantenimiento {
         egui::ScrollArea::both().id_salt("plan_desplazable_8").auto_shrink([false, false]).show(ui, |ui| {
             egui::Grid::new("g_hist").striped(true).num_columns(6).spacing([14.0, 4.0]).show(ui, |ui| {
                 for t in ["Fecha", "Orden", "Equipo", "Trabajo", "Lista completa", "Notas"] {
-                    ui.label(egui::RichText::new(t).strong().color(tema::p().texto));
+                    ui.label(egui::RichText::new(t).family(tema::semi()).size(12.5).color(tema::p().texto));
                 }
                 ui.end_row();
                 for r in h.iter().rev().filter(|r| self.f_historial.is_empty() || texto(r, "equipo") == self.f_historial) {
                     ui.label(texto(r, "fecha"));
                     ui.label(texto(r, "orden"));
-                    ui.label(texto(r, "equipo"));
+                    ui::chip(ui, texto(r, "equipo"), false);
                     ui.label(texto(r, "trabajo"));
                     ui.label(if r["completo"].as_bool().unwrap_or(false) { "sí" } else { "no" });
                     ui.label(texto(r, "notas"));
@@ -1684,40 +1756,49 @@ fn fecha_filtro(ui: &mut egui::Ui, etiqueta: &str, v: &mut String) -> bool {
     *v != antes
 }
 
-/// Píldora de estado dibujada a partir de su borde izquierdo.
-fn pildora(p: &egui::Painter, izquierda_centro: Pos2, texto: &str, color: Color32) {
-    let g = p.layout_no_wrap(texto.to_string(), egui::FontId::proportional(11.5), color);
-    let r = Rect::from_min_size(Pos2::new(izquierda_centro.x, izquierda_centro.y - 10.0), Vec2::new(g.size().x + 16.0, 20.0));
-    p.rect_filled(r, 10.0, color.gamma_multiply(0.14));
-    p.galley(Pos2::new(r.left() + 8.0, r.center().y - g.size().y / 2.0), g, color);
+/// Recuadro con borde de 1 px y sin radio para agrupar contenido dentro de una pestaña de edición.
+fn tarjeta_plana<R>(ui: &mut egui::Ui, contenido: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let pal = tema::p();
+    egui::Frame::new().fill(pal.panel).stroke(egui::Stroke::new(1.0_f32, pal.borde)).inner_margin(egui::Margin::same(12)).show(ui, contenido).inner
 }
 
-/// Fila de la tabla de órdenes: fecha, OT, tarea con la marca de su color, equipo, tipo y estado.
-fn fila_orden(ui: &mut egui::Ui, o: &Value, hoy: &str, ancho: f32, cols: &[(f32, f32); 6], elegida: bool, indice: usize) -> egui::Response {
-    let pal = tema::p();
-    let (r, resp) = ui.allocate_exact_size(Vec2::new(ancho, 30.0), Sense::click());
-    if elegida || resp.hovered() {
-        ui.painter().rect_filled(r, 0.0, if elegida { pal.acento_fondo } else { pal.realce });
-        ui.painter().line_segment([r.left_bottom(), r.right_bottom()], egui::Stroke::new(1.0_f32, pal.realce));
-    } else {
-        ui::fondo_fila(ui, r, indice);
+/// Chip del estado de una orden: gris claro si está pendiente, oscuro si es de hoy y con punto de color si está vencida o cerrada.
+fn chip_estado(ui: &mut egui::Ui, estado: &str, color: Color32) -> egui::Response {
+    match estado {
+        "pendiente" => ui::chip(ui, estado, false),
+        "hoy" => ui::chip(ui, estado, true),
+        _ => ui::etiqueta(ui, estado, color),
     }
+}
+
+/// Fila de la tabla de órdenes: fecha, OT, tarea, equipo, tipo y estado.
+///
+/// Returns:
+///     true si se pulsó la fila (también sobre los chips).
+fn fila_orden(ui: &mut egui::Ui, o: &Value, hoy: &str, ancho: f32, cols: &[(f32, f32); 6], elegida: bool) -> bool {
+    let pal = tema::p();
+    let (r, resp) = ui.allocate_exact_size(Vec2::new(ancho, ALTO_FILA), Sense::click());
+    if elegida || ui.rect_contains_pointer(r) {
+        ui.painter().rect_filled(r, 0.0, if elegida { pal.acento_fondo } else { pal.realce });
+    }
+    ui::fondo_fila(ui, r, 0);
     let centro = |i: usize| Pos2::new(r.left() + cols[i].0, r.center().y);
     let recorte = |i: usize| ui.painter().with_clip_rect(Rect::from_min_size(Pos2::new(r.left() + cols[i].0, r.top()), Vec2::new(cols[i].1 - 6.0, r.height())));
     let l = egui::Align2::LEFT_CENTER;
-    ui.painter().text(centro(0), l, texto(o, "fecha"), tema::fuente_mono(12.5), pal.texto_2);
+    ui.painter().text(centro(0), l, texto(o, "fecha"), tema::fuente_mono(12.5), pal.texto);
     ui.painter().text(centro(1), l, texto(o, "id"), tema::fuente_mono(12.5), pal.texto);
-    ui.painter().rect_filled(Rect::from_center_size(Pos2::new(centro(2).x + 4.0, r.center().y), Vec2::splat(8.0)), 2.0, color_orden(o));
-    recorte(2).text(Pos2::new(centro(2).x + 18.0, r.center().y), l, texto(o, "nombre"), egui::FontId::proportional(13.0), pal.texto);
-    recorte(3).text(centro(3), l, texto(o, "equipo"), tema::fuente_mono(12.0), pal.texto);
+    recorte(2).text(centro(2), l, texto(o, "nombre"), egui::FontId::proportional(13.0), pal.texto);
     recorte(4).text(centro(4), l, tipo_orden(o), egui::FontId::proportional(13.0), pal.texto);
     let (estado, color) = estado_orden(o, hoy);
-    if estado == "pendiente" {
-        ui.painter().text(centro(5), l, estado, egui::FontId::proportional(12.0), color);
-    } else {
-        pildora(ui.painter(), centro(5), estado, color);
-    }
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    let mut pulsada = resp.clicked();
+    let mut celda = |i: usize, contenido: &dyn Fn(&mut egui::Ui) -> egui::Response| {
+        let area = Rect::from_min_size(Pos2::new(r.left() + cols[i].0, r.top()), Vec2::new(cols[i].1, r.height()));
+        let mut hijo = ui.new_child(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        pulsada |= contenido(&mut hijo).clicked();
+    };
+    celda(3, &|ui| ui::chip(ui, texto(o, "equipo"), false));
+    celda(5, &|ui| chip_estado(ui, estado, color));
+    pulsada
 }
 
 /// Cuadrícula de equipos por semana con una marca por orden, la línea de hoy y el número de órdenes de cada equipo.
@@ -1735,26 +1816,23 @@ fn cuadricula_semanal(ui: &mut egui::Ui, equipos: &[Value], ordenes: &[Value], l
     let col_eq = 170.0_f32.min(ancho * 0.26);
     let col_ot = 44.0;
     let ancho_semanas = ancho - col_eq - col_ot;
-    let dias_totales = (7 * SEMANAS) as f32;
-    let dia_w = ancho_semanas / dias_totales;
+    let dia_w = ancho_semanas / (7 * SEMANAS) as f32;
     let linea = egui::Stroke::new(1.0_f32, pal.linea);
-    let suave = egui::Stroke::new(1.0_f32, pal.realce);
-    let (cab, _) = ui.allocate_exact_size(Vec2::new(ancho, 28.0), Sense::hover());
+    let (cab, _) = ui.allocate_exact_size(Vec2::new(ancho, 30.0), Sense::hover());
     let p = ui.painter();
-    p.rect_filled(cab, 0.0, pal.campo_alt);
-    p.line_segment([cab.left_top(), cab.right_top()], linea);
-    p.line_segment([cab.left_bottom(), cab.right_bottom()], linea);
-    p.text(Pos2::new(cab.left() + 16.0, cab.center().y), egui::Align2::LEFT_CENTER, ui::mayusculas("Equipo"), tema::fuente_semi(10.5), pal.texto_2);
+    p.rect_filled(cab, 0.0, pal.campo);
+    p.line_segment([cab.left_bottom(), cab.right_bottom()], egui::Stroke::new(1.0_f32, pal.borde));
+    p.text(Pos2::new(cab.left() + 16.0, cab.center().y), egui::Align2::LEFT_CENTER, "Equipo", tema::fuente_semi(12.0), pal.texto);
     for s in 0..SEMANAS {
         let (_, m, d) = civil_desde_dias(lunes + 7 * s);
         let x = cab.left() + col_eq + dia_w * 7.0 * s as f32;
-        p.line_segment([Pos2::new(x, cab.top() + 6.0), Pos2::new(x, cab.bottom() - 6.0)], suave);
+        p.line_segment([Pos2::new(x, cab.top() + 7.0), Pos2::new(x, cab.bottom() - 7.0)], linea);
         p.text(Pos2::new(x + 4.0, cab.center().y), egui::Align2::LEFT_CENTER, format!("{d} {}", MESES_CORTOS[m as usize - 1]), tema::fuente_mono(10.0), pal.texto_2);
     }
-    p.text(Pos2::new(cab.right() - col_ot / 2.0, cab.center().y), egui::Align2::CENTER_CENTER, "OT", tema::fuente_semi(10.5), pal.texto_2);
+    p.text(Pos2::new(cab.right() - col_ot / 2.0, cab.center().y), egui::Align2::CENTER_CENTER, "OT", tema::fuente_semi(12.0), pal.texto);
     let disponible = ui.available_height().max(60.0);
     let filas = equipos.len() as f32;
-    let alto_fila = (disponible / filas).clamp(36.0, 90.0);
+    let alto_fila = (disponible / filas).clamp(40.0, 90.0);
     egui::ScrollArea::vertical().id_salt("plan_desplazable_9").auto_shrink([false, false]).max_height(disponible).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         let (cuerpo, _) = ui.allocate_exact_size(Vec2::new(ancho, alto_fila * filas), Sense::hover());
@@ -1762,12 +1840,7 @@ fn cuadricula_semanal(ui: &mut egui::Ui, equipos: &[Value], ordenes: &[Value], l
         for (k, e) in equipos.iter().enumerate() {
             let y = cuerpo.top() + alto_fila * k as f32;
             let fila = Rect::from_min_size(Pos2::new(cuerpo.left(), y), Vec2::new(ancho, alto_fila));
-            if k % 2 == 1 {
-                p.rect_filled(fila, 0.0, pal.campo_alt);
-            }
-            if k > 0 {
-                p.line_segment([fila.left_top(), fila.right_top()], suave);
-            }
+            p.line_segment([fila.left_bottom(), fila.right_bottom()], linea);
             let codigo = texto(e, "codigo");
             p.text(Pos2::new(fila.left() + 16.0, fila.center().y - 8.0), egui::Align2::LEFT_CENTER, codigo, tema::fuente_mono(13.0), pal.texto);
             p.with_clip_rect(Rect::from_min_size(Pos2::new(fila.left() + 16.0, y), Vec2::new(col_eq - 24.0, alto_fila))).text(
@@ -1786,26 +1859,40 @@ fn cuadricula_semanal(ui: &mut egui::Ui, equipos: &[Value], ordenes: &[Value], l
                 }
                 cuenta += 1;
                 let centro = Pos2::new(cuerpo.left() + col_eq + dia_w * (desfase as f32 + 0.5), fila.center().y);
-                let marca = Rect::from_center_size(centro, Vec2::new(12.0, (alto_fila - 12.0).min(22.0)));
+                let marca = Rect::from_center_size(centro, Vec2::splat(14.0));
                 let resp = ui.interact(marca, ui.id().with(("ot", texto(o, "id"))), Sense::click()).on_hover_text(format!("{} · {}\n{} · {}", texto(o, "id"), texto(o, "nombre"), texto(o, "fecha"), texto(o, "estado")));
                 let color = color_orden(o);
-                p.rect_filled(marca, 3.0, if texto(o, "estado") == "cerrada" { color.gamma_multiply(0.4) } else { color });
+                ui::dibujar_muestra(p, marca, if texto(o, "estado") == "cerrada" { color.gamma_multiply(0.4) } else { color }, ui::muestra_tipo(texto(o, "nombre")));
                 if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     acciones.push(Accion::AbrirOrden(texto(o, "id").to_string()));
                 }
             }
-            p.text(Pos2::new(cuerpo.right() - col_ot / 2.0, fila.center().y), egui::Align2::CENTER_CENTER, cuenta.to_string(), tema::fuente_mono(12.0), pal.texto_2);
+            p.text(Pos2::new(cuerpo.right() - col_ot / 2.0, fila.center().y), egui::Align2::CENTER_CENTER, cuenta.to_string(), tema::fuente_mono(12.0), pal.texto);
         }
         for s in 0..SEMANAS {
             let x = cuerpo.left() + col_eq + dia_w * 7.0 * s as f32;
-            p.line_segment([Pos2::new(x, cuerpo.top()), Pos2::new(x, cuerpo.bottom())], suave);
+            p.line_segment([Pos2::new(x, cuerpo.top()), Pos2::new(x, cuerpo.bottom())], linea);
         }
         let desfase = hoy - lunes;
         if (0..7 * SEMANAS).contains(&desfase) {
             let x = cuerpo.left() + col_eq + dia_w * (desfase as f32 + 0.5);
             p.rect_filled(Rect::from_min_max(Pos2::new(x - 1.0, cuerpo.top()), Pos2::new(x + 1.0, cuerpo.bottom())), 0.0, pal.acento);
+            let g = p.layout_no_wrap("hoy".into(), tema::fuente_semi(10.0), pal.texto);
+            let origen = Pos2::new(x + 4.0, cuerpo.top() + 2.0);
+            p.rect_filled(Rect::from_min_size(origen - Vec2::new(3.0, 0.0), g.size() + Vec2::new(6.0, 0.0)), 0.0, pal.panel);
+            p.galley(origen, g, pal.texto);
         }
     });
+}
+
+/// Fila de la ficha de una orden: etiqueta gris a la izquierda, el contenido a la derecha y una línea inferior.
+fn fila_dato(ui: &mut egui::Ui, etiqueta: &str, valor: impl FnOnce(&mut egui::Ui)) {
+    let pal = tema::p();
+    let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::hover());
+    ui.painter().text(Pos2::new(r.left(), r.center().y), egui::Align2::LEFT_CENTER, etiqueta, egui::FontId::proportional(13.0), pal.texto_2);
+    let mut hijo = ui.new_child(egui::UiBuilder::new().max_rect(r).layout(egui::Layout::right_to_left(egui::Align::Center)));
+    valor(&mut hijo);
+    ui.painter().line_segment([r.left_bottom(), r.right_bottom()], egui::Stroke::new(1.0_f32, pal.linea));
 }
 
 fn campo(ui: &mut egui::Ui, v: &mut Value, k: &str, ancho: f32) {
