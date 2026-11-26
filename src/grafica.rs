@@ -55,6 +55,8 @@ pub struct Fig2D {
     pub log_x: bool,
     pub log_y: bool,
     pub vista: Option<[f64; 4]>,
+    /// Texto sobre el área de la gráfica; explica, por ejemplo, por qué faltan series
+    pub nota: String,
 }
 
 #[derive(Clone)]
@@ -153,6 +155,7 @@ impl Figura {
             log_x: v["log_x"].as_bool().unwrap_or(false),
             log_y: v["log_y"].as_bool().unwrap_or(false),
             vista: None,
+            nota: texto(v, "nota"),
         })
     }
 
@@ -498,6 +501,12 @@ impl Fig2D {
                     }
                 }
             }
+        }
+        if !self.nota.is_empty() {
+            let g = ui.fonts_mut(|f| f.layout(self.nota.clone(), FontId::proportional(12.5), pal.texto_2, (area.width() * 0.8).max(120.0)));
+            let caja = Rect::from_center_size(area.center(), g.size() + Vec2::new(24.0, 16.0));
+            pa.rect(caja, tema::radio() as f32, pal.campo, Stroke::new(1.0_f32, pal.linea), egui::StrokeKind::Inside);
+            pa.galley(caja.min + Vec2::new(12.0, 8.0), g, pal.texto_2);
         }
         for m in &deco.marcas {
             let x = px(self.tx(m.x));
@@ -1116,7 +1125,7 @@ mod pruebas {
     }
 
     fn figura(series: Vec<Serie>) -> Fig2D {
-        Fig2D { titulo: String::new(), xlabel: "Tiempo [s]".into(), ylabel: String::new(), series, lineas_h: vec![], log_x: false, log_y: false, vista: None }
+        Fig2D { titulo: String::new(), xlabel: "Tiempo [s]".into(), ylabel: String::new(), series, lineas_h: vec![], log_x: false, log_y: false, vista: None, nota: String::new() }
     }
 
     #[test]

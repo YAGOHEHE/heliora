@@ -1,4 +1,4 @@
-# Estado de Heliora (2026-11-25)
+# Estado de Heliora (2026-11-26)
 
 ## Dónde estamos
 
@@ -6,6 +6,9 @@
 - Interfaz con el rediseño de `diseno/rediseno/` en las 11 pantallas (rejilla de 12 columnas, herramientas
   en pestañas, fichas, parámetros a la derecha). Diferencias con el diseño y su motivo en
   `historial/2026-11-25.md`.
+- Paneles con separadores ajustables que se recuerdan entre sesiones.
+- KPIs de planta con el paso de cada inversor, cobertura y resultados parciales; la validación guardada se
+  marca como histórica si cambió el banco o el motor.
 - Instaladores con Python incluido (Windows `.exe`, macOS `.dmg`) generados por la CI; sin firma digital.
 - Auditoría de todos los módulos resuelta en lo grave: importar tablas desde archivo, evaluador seguro,
   guardado sin pérdidas, mantenimiento editable, aplicar modelo, CEC. Detalle en `historial/2026-11-25.md`.
@@ -23,6 +26,11 @@
   bien; escrituras atómicas.
 - La escritura al motor ocurre en un hilo con cola acotada; una `simular` reenviada tras un reinicio se
   rechaza si dependía del espacio de trabajo.
+
+## Verificado (2026-11-26, Windows)
+
+- Paneles ajustables y mejoras de KPIs, muestra SCADA y validación histórica: clippy limpio,
+  `cargo test` 53/53, `validar_todo.py` 133/133, capturas revisadas. Detalle en `historial/2026-11-26.md`.
 
 ## Verificado (2026-11-25, Windows)
 

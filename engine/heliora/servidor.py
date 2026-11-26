@@ -517,10 +517,15 @@ class Motor:
 
     # ---------------------------------------------------------------- validación
     def pruebas(self):
-        """Catálogo del banco: cada fase con sus pruebas (el mismo conjunto que ejecuta validar)."""
+        """Catálogo del banco: cada fase con sus pruebas (el mismo conjunto que ejecuta validar).
+
+        `huella` identifica el banco y el motor actuales, para saber si la última validación guardada
+        sigue valiendo.
+        """
         from .validacion import banco
         f = banco.fases()
-        return {"total": sum(x["total"] for x in f), "fases": f}
+        return {"total": sum(x["total"] for x in f), "fases": f,
+                "huella": {"sha256": banco.huella_pruebas(), "sha256_motor": banco.huella_motor(), "version": _version()}}
 
     def validar(self, hasta_fase=4, _informe=None):
         """Atiende la orden `validar`: ejecuta el banco de pruebas hasta `hasta_fase` y devuelve el resultado."""
@@ -531,7 +536,7 @@ class Motor:
             warnings.simplefilter("ignore")
             fases = banco.ejecutar(int(hasta_fase), CANCELAR.is_set, lambda f, n: _informe(f, n) if _informe else None)
         r = {"cuando": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "fases": _limpiar(fases),
-             "procedencia": procedencia(sha=banco.huella_pruebas())}
+             "procedencia": {**procedencia(sha=banco.huella_pruebas()), "sha256_motor": banco.huella_motor()}}
         # Se guarda para mostrarlo sin repetir las pruebas la próxima vez
         try:
             with open(os.path.join(self.raiz, "ultima_validacion.json"), "w", encoding="utf8") as f:

@@ -54,10 +54,16 @@ def serie(x, y, nombre="", tipo="linea", color=None):
     return d
 
 
-def figura(titulo="", xlabel="", ylabel="", series=None, lineas_h=None, log_x=False, log_y=False):
-    """Construye una figura 2D con su título, etiquetas de ejes, series, líneas horizontales y ejes logarítmicos opcionales."""
-    return {"clase": "2d", "titulo": titulo, "xlabel": xlabel, "ylabel": ylabel, "series": series or [],
-            "lineas_h": lineas_h or [], "log_x": log_x, "log_y": log_y}
+def figura(titulo="", xlabel="", ylabel="", series=None, lineas_h=None, log_x=False, log_y=False, nota=""):
+    """Construye una figura 2D con su título, etiquetas de ejes, series, líneas horizontales y ejes logarítmicos opcionales.
+
+    `nota` se dibuja sobre el área de la gráfica: explica, por ejemplo, por qué faltan series.
+    """
+    r = {"clase": "2d", "titulo": titulo, "xlabel": xlabel, "ylabel": ylabel, "series": series or [],
+         "lineas_h": lineas_h or [], "log_x": log_x, "log_y": log_y}
+    if nota:
+        r["nota"] = nota
+    return r
 
 
 def figura3d(titulo="", X=None, Y=None, Z=None, xlabel="x", ylabel="y", zlabel="z", tipo="superficie"):

@@ -580,7 +580,7 @@ impl Editor {
                             let a = |k: &str| -> Vec<f64> { t[k].as_array().map(|v| v.iter().map(|x| x.as_f64().unwrap_or(f64::NAN)).collect()).unwrap_or_default() };
                             series.push(Serie { x: a("x"), y: a("y"), nombre: t["nombre"].as_str().unwrap_or("").into(), tipo: TipoSerie::Linea, color: None, visible: true });
                         }
-                        self.resultado.push((et.clone(), Figura::D2(Fig2D { titulo: et, xlabel: "Tiempo [s]".into(), ylabel: String::new(), series, lineas_h: vec![], log_x: false, log_y: false, vista: None })));
+                        self.resultado.push((et.clone(), Figura::D2(Fig2D { titulo: et, xlabel: "Tiempo [s]".into(), ylabel: String::new(), series, lineas_h: vec![], log_x: false, log_y: false, vista: None, nota: String::new() })));
                     }
                 }
                 let e = &valor["estadisticas"];

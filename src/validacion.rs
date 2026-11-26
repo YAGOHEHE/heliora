@@ -96,6 +96,15 @@ impl Validacion {
         }
     }
 
+    /// Motivo por el que la última validación ya no describe el código actual, o None si sigue valiendo
+    /// (o aún no se sabe: sin resultado o sin la huella actual del motor).
+    pub fn historica(&self) -> Option<&'static str> {
+        if self.resultado.is_null() {
+            return None;
+        }
+        motivo_historica(&self.procedencia, &self.catalogo["huella"])
+    }
+
     /// Resumen de cada fase para la portada: título, estado y pruebas superadas sobre el total.
     pub fn resumen_fases(&self) -> Vec<ResumenFase> {
         let fases = self.resultado.as_array();
@@ -130,6 +139,9 @@ impl Validacion {
             });
             if !self.error.is_empty() {
                 tema::estado(ui, tema::Nivel::Falla, &self.error.clone());
+            }
+            if let Some(m) = self.historica() {
+                tema::estado(ui, tema::Nivel::Alerta, &format!("Resultados históricos: {m} desde esta ejecución. Vuelve a validar para comprobar la versión actual."));
             }
             let resumen = self.resumen_fases();
             ui::fila(ui, &[2, 2, 2, 2, 4], 84.0, |i, ui| {
@@ -177,7 +189,11 @@ impl Validacion {
                             ui.label(egui::RichText::new(&self.cuando).font(tema::fuente_mono(16.0)).color(pal.texto));
                             if let Some(h) = self.procedencia["sha256"].as_str() {
                                 let linea = format!("banco {} · motor {}", &h[..h.len().min(12)], self.procedencia["version"].as_str().unwrap_or("?"));
-                                ui.label(egui::RichText::new(linea).font(tema::fuente_mono(11.0)).color(pal.texto_3)).on_hover_text(h);
+                                let (linea, color, ayuda) = match self.historica() {
+                                    Some(m) => (format!("{linea} · histórica"), pal.alerta, format!("{m}\n{h}")),
+                                    None => (linea, pal.texto_3, h.to_string()),
+                                };
+                                ui.label(egui::RichText::new(linea).font(tema::fuente_mono(11.0)).color(color)).on_hover_text(ayuda);
                             }
                         }
                     });
@@ -186,7 +202,7 @@ impl Validacion {
                             if ui.button("■ Detener").clicked() {
                                 motor.llamar("cancelar", json!({}));
                             }
-                        } else if tema::boton_principal(ui, "▶ Ejecutar todas").clicked() {
+                        } else if tema::boton_principal(ui, if self.historica().is_some() { "▶ Volver a validar" } else { "▶ Ejecutar todas" }).clicked() {
                             self.ejecutar(motor, 4);
                         }
                     });
@@ -363,6 +379,22 @@ impl Validacion {
 }
 
 /// Resumen de una fase para la portada.
+/// Compara la procedencia de una validación guardada con la huella actual del banco y del motor.
+///
+/// Returns:
+///     El motivo si ya no corresponde al código actual; None si coincide o si falta la huella actual.
+pub fn motivo_historica(procedencia: &Value, actual: &Value) -> Option<&'static str> {
+    let actual_banco = actual["sha256"].as_str()?;
+    let actual_motor = actual["sha256_motor"].as_str()?;
+    if procedencia["sha256"].as_str() != Some(actual_banco) {
+        Some("el banco de pruebas cambió")
+    } else if procedencia["sha256_motor"].as_str() != Some(actual_motor) {
+        Some("el motor cambió")
+    } else {
+        None
+    }
+}
+
 pub struct ResumenFase {
     pub titulo: String,
     /// None si la fase no se ha ejecutado
@@ -534,4 +566,22 @@ fn medidas(ui: &mut egui::Ui, p: &Value) {
     let x_tol = area.left() + x0 + (1.0 / escala) as f32 * (ancho - x0);
     pt.extend(egui::Shape::dashed_line(&[Pos2::new(x_tol, area.top()), Pos2::new(x_tol, area.bottom())], Stroke::new(1.0_f32, pal.texto_2), 3.0, 2.0));
     ui.label(egui::RichText::new("La línea discontinua marca la tolerancia: a su derecha, la prueba falla.").size(11.0).color(pal.texto_3));
+}
+
+#[cfg(test)]
+mod pruebas {
+    use super::motivo_historica;
+    use serde_json::json;
+
+    #[test]
+    fn la_validacion_guardada_es_historica_si_cambia_el_banco_o_el_motor() {
+        let actual = json!({"sha256": "b1", "sha256_motor": "m1"});
+        assert_eq!(motivo_historica(&json!({"sha256": "b1", "sha256_motor": "m1"}), &actual), None);
+        assert_eq!(motivo_historica(&json!({"sha256": "b0", "sha256_motor": "m1"}), &actual), Some("el banco de pruebas cambió"));
+        assert_eq!(motivo_historica(&json!({"sha256": "b1", "sha256_motor": "m0"}), &actual), Some("el motor cambió"));
+        // Una validación anterior a la huella del motor no puede confirmar que siga valiendo
+        assert_eq!(motivo_historica(&json!({"sha256": "b1"}), &actual), Some("el motor cambió"));
+        // Sin la huella actual (motor aún arrancando) no se marca nada
+        assert_eq!(motivo_historica(&json!({"sha256": "b0"}), &json!(null)), None);
+    }
 }

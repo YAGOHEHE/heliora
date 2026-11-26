@@ -30,6 +30,8 @@ def prueba(fase, nombre, referencia=""):
 
 
 class Medidor:
+    """Acumula las medidas de una prueba: cada una con su valor, referencia, error y tolerancia."""
+
     def __init__(self):
         self.medidas = []
 
@@ -53,6 +55,7 @@ class Medidor:
         return ok
 
     def verdad(self, nombre, cond, detalle=""):
+        """Registra una condición lógica como medida que pasa si `cond` es verdadera."""
         self.medidas.append({"nombre": nombre, "valor": 1.0 if cond else 0.0, "referencia": 1.0,
                              "error": 0.0 if cond else 1.0, "tolerancia": 0.0, "unidad": detalle,
                              "relativo": False, "ok": bool(cond)})
@@ -95,6 +98,26 @@ def huella_pruebas():
         if nombre.endswith(".py"):
             with open(os.path.join(carpeta, nombre), "rb") as f:
                 h.update(nombre.encode() + b"\0" + f.read())
+    return h.hexdigest()
+
+
+def huella_motor():
+    """SHA-256 del código Python del motor (todo el paquete, banco incluido).
+
+    Cambia con cualquier edición del motor; con ella se sabe si una validación guardada se hizo
+    sobre el código que corre ahora.
+    """
+    import hashlib
+    import os
+    h = hashlib.sha256()
+    paquete = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    archivos = []
+    for base, carpetas, nombres in os.walk(paquete):
+        carpetas[:] = sorted(c for c in carpetas if c != "__pycache__")
+        archivos += [os.path.join(base, n) for n in nombres if n.endswith(".py")]
+    for a in sorted(archivos, key=lambda a: os.path.relpath(a, paquete).replace(os.sep, "/")):
+        with open(a, "rb") as f:
+            h.update(os.path.relpath(a, paquete).replace(os.sep, "/").encode() + b"\0" + f.read())
     return h.hexdigest()
 
 

@@ -1049,7 +1049,8 @@ impl App {
                 for (i, (e, v, u)) in kpis.iter().take(6).enumerate() {
                     let r = Rect::from_min_size(Pos2::new(area.left() + (i % 2) as f32 * (w + hueco), area.top() + (i / 2) as f32 * (h + hueco)), Vec2::new(w, h));
                     let mut hijo = ui.new_child(egui::UiBuilder::new().max_rect(r));
-                    ui::ficha_kpi(&mut hijo, e, v, u, "", None);
+                    let (u, nota) = herramientas::unidad_o_nota(u);
+                    ui::ficha_kpi(&mut hijo, e, v, u, nota, None);
                 }
                 ui.allocate_rect(Rect::from_min_size(area.min, Vec2::new(area.width(), 3.0 * h + 2.0 * hueco)), Sense::hover());
             },
@@ -1065,6 +1066,7 @@ impl App {
         let resumen = self.validacion.resumen_fases();
         let cuando = self.validacion.cuando.clone();
         let ocupada = self.validacion.ocupada();
+        let historica = self.validacion.historica();
         let mut ir_validacion = false;
         let mut ejecutar = false;
         ui::tarjeta_con_titulo(
@@ -1080,6 +1082,8 @@ impl App {
                 let bloqueadas = resumen.iter().filter(|r| matches!(r.nivel, Some(tema::Nivel::Alerta))).count();
                 let (nivel, texto) = if ejecutadas == 0 {
                     (None, "Sin ejecutar".to_string())
+                } else if let Some(m) = historica {
+                    (Some(tema::Nivel::Alerta), format!("Histórica · {m}"))
                 } else if falla > 0 {
                     (Some(tema::Nivel::Falla), format!("{falla} {} con fallos", if falla == 1 { "fase" } else { "fases" }))
                 } else if bloqueadas > 0 {
@@ -1097,7 +1101,7 @@ impl App {
                 for f in &resumen {
                     let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 38.0), Sense::hover());
                     ui.painter().line_segment([r.left_bottom(), r.right_bottom()], egui::Stroke::new(1.0_f32, pal.realce));
-                    let c = f.nivel.map_or(pal.texto_3, |n| n.color());
+                    let c = if historica.is_some() { pal.texto_3 } else { f.nivel.map_or(pal.texto_3, |n| n.color()) };
                     ui.painter().circle_filled(Pos2::new(r.left() + 5.0, r.center().y), 3.5, c);
                     ui.painter().text(Pos2::new(r.left() + 20.0, r.center().y), egui::Align2::LEFT_CENTER, &f.titulo, egui::FontId::proportional(13.0), pal.texto);
                     let cuenta = match (f.bien, f.total) {
@@ -1109,7 +1113,7 @@ impl App {
                 }
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(!ocupada && self.motor.listo, egui::Button::new("▶ Ejecutar")).clicked() {
+                    if ui.add_enabled(!ocupada && self.motor.listo, egui::Button::new(if historica.is_some() { "▶ Volver a validar" } else { "▶ Ejecutar" })).clicked() {
                         ejecutar = true;
                     }
                     if ui.link("Ver el error de cada prueba →").clicked() {

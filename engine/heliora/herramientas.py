@@ -966,13 +966,32 @@ def ml_predecir(c, origen, variable, ruta, tabla, salida):
 ], "Datos SCADA", limites={"nombre": dict(obligatorio=True), "dias": dict(min=1), "inversores": dict(min=1), "p_nom": dict(min=0, abierto_min=True),
                            "lat": dict(min=-90, max=90), "lon": dict(min=-180, max=180)})
 def mt_muestra(c, nombre, dias, inversores, p_nom, lat, lon):
-    """Crea datos sintéticos con fallas conocidas para aprender el flujo de análisis."""
+    """Crea datos sintéticos con fallas conocidas para aprender el flujo de análisis.
+
+    El informe enumera solo los eventos que contienen los días generados, para poder comprobar con
+    ellos si la detección los encuentra.
+    """
     d, v = mt.generar_scada(dias=dias, inversores=inversores, p_nom_kw=p_nom, lat=lat, lon=lon)
     c.guardar_salida(nombre, d)
     q = mt.resumen_calidad(d)
     c.kv("Datos generados", [("Filas", q["filas"]), ("Inversores", q["inversores"]), ("Desde", q["desde"]), ("Hasta", q["hasta"]), ("Paso", q["paso_min"], "min")])
-    c.texto("Fallas inyectadas, para comprobar el análisis: degradación de 0.7 %/año, suciedad de 0.2 %/día con lluvias, "
-            "el string 3 de INV-2 caído del día 200 al 215, sobretemperatura de IGBT en INV-1 del día 400 al 412, y paradas al azar.")
+    eventos = []
+    if v["string_caido"]:
+        s = v["string_caido"]
+        eventos.append(["String caído", s["inversor"], f"string {s['string']}", s["desde"], s["hasta"]])
+    if v["igbt"]:
+        s = v["igbt"]
+        eventos.append(["Sobretemperatura IGBT", s["inversor"], f"+{s['exceso_c']:.0f} °C", s["desde"], s["hasta"]])
+    for p in v["paradas"]:
+        eventos.append(["Parada", p["inversor"], f"{p['horas']:.1f} h", p["inicio"], str(pd.Timestamp(p["inicio"]) + pd.Timedelta(hours=p["horas"]))])
+    if eventos:
+        c.tabla("Eventos inyectados en estos datos", ["Tipo", "Inversor", "Magnitud", "Desde", "Hasta"], eventos)
+    else:
+        c.texto("Estos datos no contienen paradas, strings caídos ni sobretemperaturas.")
+    efectos = f"En todo el periodo: degradación de {100 * v['degradacion_anual']:.1f} %/año y suciedad de {100 * v['suciedad_dia']:.1f} %/día que se limpia con lluvia."
+    if dias < 60:
+        efectos += " Con menos de 60 días no se pueden estimar: la detección los dará por no disponibles."
+    c.texto(efectos)
     return c.informe("Datos SCADA de muestra")
 
 
@@ -1006,20 +1025,41 @@ def mt_kpi(c, tabla, p_nom, gamma):
     d = c.df(tabla)
     mt.requerir_scada(d)
     tot, t = mt.kpis(d, p_nom, gamma)
-    c.kv("Planta", [("Performance Ratio", _pct(tot["PR"])), ("Disponibilidad", _pct(tot["disponibilidad"])), ("Energía producida", tot["energia_kwh"] / 1000, "MWh"),
-                   ("Energía perdida", tot["energia_perdida_kwh"] / 1000, "MWh"), ("Rendimiento del inversor", _pct(tot["eta_inversor"]))])
-    c.tabla("Por inversor", ["Inversor", "PR", "Disponibilidad", "Energía [MWh]", "Perdida [MWh]", "Por paradas [MWh]", "η inversor"],
-            [[f["inversor"], _pct(f["PR"]), _pct(f["disponibilidad"]), f["energia_kwh"] / 1000, f["energia_perdida_kwh"] / 1000, f["perdida_parada_kwh"] / 1000, _pct(f["eta_inversor"])] for _, f in t.iterrows()])
-    ser = []
+    eta = (_pct(tot["eta_inversor"]),) if tot["hay_dc"] else ("No disponible", "falta potencia DC")
+    c.kv("Planta", [("Performance Ratio", _pct(tot["PR"]) if np.isfinite(tot["PR"]) else "No disponible"), ("Disponibilidad", _pct(tot["disponibilidad"])),
+                   ("Energía producida", tot["energia_kwh"] / 1000, "MWh"), ("Energía perdida", tot["energia_perdida_kwh"] / 1000, "MWh"), ("Rendimiento del inversor", *eta)])
+    pasos = tot["pasos_min"]
+    paso_txt = f"{next(iter(pasos.values())):g} min" if len(set(pasos.values())) == 1 else " · ".join(f"{k} {p:g} min" for k, p in pasos.items())
+    c.kv("Cobertura de los datos", [("Lecturas en el periodo", _pct(tot["cobertura"])), ("Paso de registro", paso_txt),
+                                    ("Paso regular", "sí" if tot["paso_regular"] else "no")])
+    if tot["cobertura"] < 0.999:
+        c.aviso("alerta", f"Las lecturas cubren el {_pct(tot['cobertura'])} del periodo. La energía solo cuenta lo medido: "
+                          f"la de los huecos ({_pct(1 - tot['cobertura'])} del periodo) no se estima.")
+    if not tot["paso_regular"]:
+        c.aviso("alerta", "El intervalo entre lecturas no es regular en algún inversor: cada lectura se integra con el paso mediano de su inversor, "
+                          "así que la energía es aproximada.")
+    if not tot["hay_dc"]:
+        c.texto("Sin potencia DC no se calcula el rendimiento del inversor; el resto de KPIs no la necesita.")
+    c.tabla("Por inversor", ["Inversor", "PR", "Disponibilidad", "Energía [MWh]", "Perdida [MWh]", "Por paradas [MWh]", "η inversor", "Paso [min]", "Cobertura"],
+            [[f["inversor"], _pct(f["PR"]), _pct(f["disponibilidad"]), f["energia_kwh"] / 1000, f["energia_perdida_kwh"] / 1000, f["perdida_parada_kwh"] / 1000,
+              _pct(f["eta_inversor"]) if tot["hay_dc"] else "—", f["paso_min"], _pct(f["cobertura"])] for _, f in t.iterrows()])
+    ser, sin_dias = [], []
     for nombre, g in d.groupby("inversor"):
         r = mt.pr_diario(g, p_nom, gamma)
+        if r.empty:
+            sin_dias.append(str(nombre))
+            continue
         ser.append(serie(np.asarray((r.index - r.index[0]).days, dtype=float), r.to_numpy(), str(nombre)))
-    c.grafica(figura("Razón diaria medido/esperado", "Día", "Por unidad", ser))
-    d2 = d.assign(_mes=d["fecha"].dt.to_period("M").astype(str)).groupby("_mes")
-    h = mt._horas_paso(d)
+    nota = ""
+    if sin_dias:
+        nota = (f"Sin días válidos para {', '.join(sin_dias)}: cada día necesita al menos 4 lecturas con irradiancia "
+                "mayor de 300 W/m² y el inversor en servicio.")
+    c.grafica(figura("Razón diaria medido/esperado", "Día", "Por unidad", ser, nota=nota))
+    hl = mt.horas_por_lectura(d)
+    d2 = d.assign(_mes=d["fecha"].dt.to_period("M").astype(str), _e=d["p_ac_kw"] * hl, _h=d["irradiancia_wm2"] * hl).groupby("_mes")
     ni = d["inversor"].nunique()
-    E = d2["p_ac_kw"].sum() * h / 1000
-    H = d2["irradiancia_wm2"].sum() * h / 1000 / ni
+    E = d2["_e"].sum() / 1000
+    H = d2["_h"].sum() / 1000 / ni
     pr = E * 1000 / (p_nom * ni * H)
     x = np.arange(len(E))
     c.grafica(figura("Energía mensual", "Mes", "MWh", [serie(x, E.to_numpy(), "Energía", "barras")]))

@@ -229,7 +229,7 @@ def importar_scada(ruta):
     """
     d, info = _normalizar(leer_tabla(ruta))
     q = resumen_calidad(d)
-    if not q["paso_min"] > 0:
+    if len(q["pasos_min"]) < q["inversores"]:
         raise ValueError("No se puede determinar el paso temporal: hace falta más de una lectura por inversor con fechas distintas")
     q.update(info)
     return d, q
@@ -238,37 +238,53 @@ def importar_scada(ruta):
 def resumen_calidad(d):
     """Resume filas, inversores, fechas, paso de muestreo, faltantes, columnas y cobertura temporal.
 
-    La cobertura compara las lecturas existentes con las esperadas entre la primera y la última
-    fecha de cada inversor al paso mediano; un salto de más de 1.5 pasos es un hueco.
+    Cada inversor se mide con su propio paso mediano: la cobertura compara sus lecturas con las
+    esperadas entre su primera y su última fecha, y un salto de más de 1.5 pasos es un hueco.
 
     Returns:
-        Diccionario con `cobertura` (0 a 1), `esperadas`, `huecos_total` y `huecos` (hasta 20, con
+        Diccionario con `paso_min` (el paso común si todos coinciden; si no, el mayor), `pasos_min`
+        (por inversor), `paso_regular` (False si en algún inversor menos del 90 % de los saltos son
+        su paso), `cobertura` (0 a 1), `esperadas`, `huecos_total` y `huecos` (hasta 20, con
         `inversor`, `desde`, `hasta` y `perdidas`).
     """
-    paso = d.groupby("inversor")["fecha"].diff().median()
     faltan = {c: int(d[c].isna().sum()) for c in d.columns if d[c].isna().any()}
-    paso_min = float(paso.total_seconds() / 60.0) if pd.notna(paso) else 0.0
-    esperadas, huecos = 0, []
-    if paso_min > 0:
-        for nombre, g in d.groupby("inversor"):
-            f = g["fecha"].sort_values().reset_index(drop=True)
-            esperadas += int(round((f.iloc[-1] - f.iloc[0]) / paso)) + 1
-            saltos = f.diff()
-            for i in np.flatnonzero(saltos > paso * 1.5):
-                huecos.append({"inversor": str(nombre), "desde": str(f.iloc[i - 1]), "hasta": str(f.iloc[i]),
-                               "perdidas": int(round(saltos.iloc[i] / paso)) - 1})
+    esperadas, huecos, pasos, regular = 0, [], {}, True
+    for nombre, g in d.groupby("inversor"):
+        f = g["fecha"].sort_values().reset_index(drop=True)
+        saltos = f.diff().dropna()
+        paso = saltos.median() if len(saltos) else pd.NaT
+        if pd.isna(paso) or paso.total_seconds() <= 0:
+            continue
+        pasos[str(nombre)] = float(paso.total_seconds() / 60.0)
+        regular &= bool((abs(saltos - paso) <= paso * 0.1).mean() >= 0.9)
+        esperadas += int(round((f.iloc[-1] - f.iloc[0]) / paso)) + 1
+        for i in np.flatnonzero(f.diff() > paso * 1.5):
+            huecos.append({"inversor": str(nombre), "desde": str(f.iloc[i - 1]), "hasta": str(f.iloc[i]),
+                           "perdidas": int(round((f.iloc[i] - f.iloc[i - 1]) / paso)) - 1})
     return {"filas": int(len(d)), "inversores": int(d["inversor"].nunique()), "desde": str(d["fecha"].min()),
-            "hasta": str(d["fecha"].max()), "paso_min": paso_min, "faltantes": faltan, "columnas": [str(c) for c in d.columns],
+            "hasta": str(d["fecha"].max()), "paso_min": max(pasos.values()) if pasos else 0.0, "pasos_min": pasos,
+            "paso_regular": regular, "faltantes": faltan, "columnas": [str(c) for c in d.columns],
             "esperadas": esperadas, "cobertura": float(min(len(d) / esperadas, 1.0)) if esperadas else 0.0,
             "huecos_total": len(huecos), "huecos": huecos[:20]}
 
 
-def _horas_paso(d):
-    """Paso mediano de muestreo en horas; falla si no es positivo (evita divisiones por cero en los KPI)."""
-    paso = d.groupby("inversor")["fecha"].diff().median()
-    if pd.isna(paso) or paso.total_seconds() <= 0:
-        raise ValueError("No se puede determinar el paso temporal de los datos (fechas repetidas o una sola lectura por inversor)")
-    return paso.total_seconds() / 3600.0
+def horas_por_lectura(d):
+    """Horas que representa cada lectura: el paso mediano de su propio inversor.
+
+    Un inversor que registra cada 20 minutos aporta 1/3 h por lectura aunque otro registre cada 10.
+
+    Returns:
+        Serie alineada con `d`.
+
+    Raises:
+        ValueError: si algún inversor no tiene un paso positivo (fechas repetidas o una sola lectura).
+    """
+    paso = d.sort_values("fecha").groupby("inversor")["fecha"].diff().groupby(d["inversor"]).median()
+    malos = [str(n) for n, p in paso.items() if pd.isna(p) or p.total_seconds() <= 0]
+    if malos:
+        raise ValueError("No se puede determinar el paso temporal de " + ", ".join(malos)
+                         + " (fechas repetidas o una sola lectura)")
+    return d["inversor"].map(paso.dt.total_seconds() / 3600.0).astype(float)
 
 
 def generar_scada(inicio="2024-01-01", dias=730, paso_min=30, inversores=2, p_nom_kw=500.0, semilla=7, lat=40.4, lon=-3.7,
@@ -277,7 +293,8 @@ def generar_scada(inicio="2024-01-01", dias=730, paso_min=30, inversores=2, p_no
 
     Inyecta: degradación anual, suciedad en diente de sierra con lluvias, un string caído,
     episodios de sobretemperatura de IGBT y paradas de inversor.
-    Devuelve (datos, verdad), donde verdad describe lo inyectado.
+    Devuelve (datos, verdad), donde verdad describe lo inyectado: solo los eventos que caen dentro
+    de los días generados (con muestras cortas no hay string caído ni sobretemperatura).
     """
     from .fotovoltaica import irradiancia_poa, temperatura_modulo
 
@@ -307,9 +324,11 @@ def generar_scada(inicio="2024-01-01", dias=730, paso_min=30, inversores=2, p_no
         nombre = f"INV-{iv + 1}"
         deg = (1 - degradacion_anual) ** (dia / 365.25)
         factor_strings = np.ones((t.size, 4))
-        if fallas and iv == 1:
+        if fallas and iv == 1 and dias > 200:
             factor_strings[(dia >= 200) & (dia < 215), 2] = 0.0
-            verdad["string_caido"] = {"inversor": nombre, "string": 3, "dia_ini": 200, "dia_fin": 215}
+            verdad["string_caido"] = {"inversor": nombre, "string": 3, "dia_ini": 200, "dia_fin": min(215, dias),
+                                      "desde": str(t[0].normalize() + pd.Timedelta(days=200)),
+                                      "hasta": str(t[0].normalize() + pd.Timedelta(days=min(215, dias)))}
         P_dc = p_nom_kw * (G / 1000.0) * (1 + gamma * (Tc - 25.0)) * s[dia] * deg * factor_strings.mean(axis=1)
         servicio = np.ones(t.size, dtype=bool)
         if fallas:
@@ -332,10 +351,12 @@ def generar_scada(inicio="2024-01-01", dias=730, paso_min=30, inversores=2, p_no
         V_ac = np.where(servicio, 400 + rng.normal(0, 1.0, t.size), 0.0)
         I_ac = np.where(V_ac > 0, 1000 * P_ac / (np.sqrt(3) * np.maximum(V_ac, 1)), 0.0)
         T_igbt = Ta + 8.0 + 0.09 * P_ac + rng.normal(0, 0.8, t.size)
-        if fallas and iv == 0:
+        if fallas and iv == 0 and dias > 400:
             sel = (dia >= 400) & (dia < 412)
             T_igbt = np.where(sel, T_igbt + 28.0, T_igbt)
-            verdad["igbt"] = {"inversor": nombre, "dia_ini": 400, "dia_fin": 412, "exceso_c": 28.0}
+            verdad["igbt"] = {"inversor": nombre, "dia_ini": 400, "dia_fin": min(412, dias), "exceso_c": 28.0,
+                              "desde": str(t[0].normalize() + pd.Timedelta(days=400)),
+                              "hasta": str(t[0].normalize() + pd.Timedelta(days=min(412, dias)))}
         alarma = np.where(~servicio, "E101-parada", np.where(T_igbt > 95, "W210-temp-igbt", ""))
         d = {"fecha": t, "inversor": nombre, "irradiancia_wm2": G, "temp_amb_c": Ta, "temp_modulo_c": Tc, "p_dc_kw": P_dc,
              "p_ac_kw": P_ac, "v_dc_v": V_dc, "i_dc_a": I_dc, "v_ac_v": V_ac, "i_ac_a": I_ac, "temp_igbt_c": T_igbt,
@@ -354,28 +375,46 @@ def potencia_esperada(d, p_nom_kw, gamma=-0.0037, eta_inv=0.975):
 
 
 def kpis(d, p_nom_kw, gamma=-0.0037, g_min=50.0, eta_inv=0.975):
-    """KPIs globales de la planta y por inversor. p_nom_kw es la potencia por inversor."""
+    """KPIs globales de la planta y por inversor. p_nom_kw es la potencia por inversor.
+
+    La energía integra cada lectura con el paso de su inversor. La energía de los huecos no se
+    estima: solo cuenta lo medido, y `cobertura` dice qué fracción del periodo representa.
+    Sin potencia DC, `eta_inversor` es NaN.
+
+    Returns:
+        (totales, tabla por inversor). Los totales añaden `cobertura`, `paso_regular`, `pasos_min`
+        y `hay_dc`.
+    """
     requerir_columnas(d, ["fecha", "inversor", "irradiancia_wm2", "p_ac_kw"])
-    h = _horas_paso(d)
+    hl = horas_por_lectura(d)
+    q = resumen_calidad(d)
+    hay_dc = "p_dc_kw" in d.columns and d["p_dc_kw"].notna().any()
     filas = []
     for nombre, g in d.groupby("inversor"):
-        H = g["irradiancia_wm2"].sum() * h / 1000.0  # kWh/m²
-        E_ac = g["p_ac_kw"].sum() * h
-        E_dc = g["p_dc_kw"].sum() * h if "p_dc_kw" in g else float("nan")
+        h = hl.loc[g.index]
+        H = (g["irradiancia_wm2"] * h).sum() / 1000.0  # kWh/m²
+        E_ac = (g["p_ac_kw"] * h).sum()
+        E_dc = (g["p_dc_kw"] * h).sum() if hay_dc else float("nan")
+        q_inv = resumen_calidad(g)
         sol = g["irradiancia_wm2"] > g_min
         serv = (g["en_servicio"] > 0) if "en_servicio" in g else (g["p_ac_kw"] > 0)
         esp = potencia_esperada(g, p_nom_kw, gamma, eta_inv)
         perdida = np.maximum(esp - g["p_ac_kw"], 0.0)
         filas.append({"inversor": nombre, "PR": E_ac / (p_nom_kw * H) if H > 0 else 0.0,
                       "disponibilidad": float(serv[sol].mean()) if sol.any() else 0.0,
-                      "energia_kwh": float(E_ac), "energia_perdida_kwh": float(perdida.sum() * h),
-                      "perdida_parada_kwh": float(perdida[~serv].sum() * h),
-                      "eta_inversor": float(E_ac / E_dc) if E_dc else float("nan"),
-                      "insolacion_kwh_m2": float(H)})
+                      "energia_kwh": float(E_ac), "energia_perdida_kwh": float((perdida * h).sum()),
+                      "perdida_parada_kwh": float((perdida * h)[~serv].sum()),
+                      "eta_inversor": float(E_ac / E_dc) if hay_dc and E_dc else float("nan"),
+                      "insolacion_kwh_m2": float(H), "paso_min": q["pasos_min"].get(str(nombre), float("nan")),
+                      "cobertura": q_inv["cobertura"], "energia_dc_kwh": float(E_dc)})
     t = pd.DataFrame(filas)
-    tot = {"PR": float((t["PR"] * t["insolacion_kwh_m2"]).sum() / t["insolacion_kwh_m2"].sum()),
+    H_tot = t["insolacion_kwh_m2"].sum()
+    E_dc_tot = t["energia_dc_kwh"].sum() if hay_dc else float("nan")
+    tot = {"PR": float((t["PR"] * t["insolacion_kwh_m2"]).sum() / H_tot) if H_tot > 0 else float("nan"),
            "disponibilidad": float(t["disponibilidad"].mean()), "energia_kwh": float(t["energia_kwh"].sum()),
-           "energia_perdida_kwh": float(t["energia_perdida_kwh"].sum()), "eta_inversor": float(t["energia_kwh"].sum() / d["p_dc_kw"].sum() / h) if "p_dc_kw" in d else float("nan")}
+           "energia_perdida_kwh": float(t["energia_perdida_kwh"].sum()),
+           "eta_inversor": float(t["energia_kwh"].sum() / E_dc_tot) if hay_dc and E_dc_tot else float("nan"),
+           "cobertura": q["cobertura"], "paso_regular": q["paso_regular"], "pasos_min": q["pasos_min"], "hay_dc": bool(hay_dc)}
     return tot, t
 
 
@@ -533,9 +572,10 @@ def tiempos_de_eventos(d):
     requerir_columnas(d, ["fecha", "inversor"])
     if "en_servicio" not in d.columns:
         requerir_columnas(d, ["p_ac_kw"])
-    h = _horas_paso(d)
+    hl = horas_por_lectura(d)
     tbf, ttr, ev = [], [], []
     for nombre, g in d.groupby("inversor"):
+        h = float(hl.loc[g.index].iloc[0])
         s = (g["en_servicio"].to_numpy() > 0) if "en_servicio" in g else (g["p_ac_kw"].to_numpy() > 0)
         f = g["fecha"].to_numpy()
         cambios = np.flatnonzero(np.diff(s.astype(int)))

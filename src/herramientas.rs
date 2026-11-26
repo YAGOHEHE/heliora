@@ -742,6 +742,13 @@ impl Ficha {
     fn nueva(etiqueta: &str, valor: &str, unidad: &str, nota: &str) -> Ficha {
         Ficha { etiqueta: etiqueta.into(), valor: valor.into(), unidad: unidad.into(), nota: nota.into() }
     }
+
+    /// Ficha de un par del informe. Una «unidad» con espacios es una frase (por ejemplo, «falta
+    /// potencia DC» junto a «No disponible») y se muestra como nota bajo el valor.
+    fn de_kv(etiqueta: &str, valor: &str, unidad: &str) -> Ficha {
+        let (unidad, nota) = unidad_o_nota(unidad);
+        Ficha::nueva(etiqueta, valor, unidad, nota)
+    }
 }
 
 /// Contenido de la tarjeta grande de la zona de resultados.
@@ -859,7 +866,7 @@ impl Vista {
                 Seccion::Grafica(f) => figuras.push((i, f.titulo().to_string())),
             }
         }
-        v.fichas = items.iter().take(6).map(|(a, b, u)| Ficha::nueva(a, b, u, "")).collect();
+        v.fichas = items.iter().take(6).map(|(a, b, u)| Ficha::de_kv(a, b, u)).collect();
         if items.len() > 6 {
             v.secundarias.extend(kvs.iter().map(|i| Secundaria::Kv(*i)));
         }
@@ -947,11 +954,16 @@ impl Vista {
         }
     }
 
-    /// KPIs de la planta: sexta ficha con el número de inversores y sus nombres, tomados de la tabla por inversor.
+    /// KPIs de la planta: los cinco de «Planta», la cobertura como nota de la energía y una sexta
+    /// ficha con el número de inversores y sus nombres, tomados de la tabla por inversor.
     fn kpis_planta(&mut self, inf: &Informe) {
         let Some((_, _, fil)) = inf.tabla("Por inversor") else { return };
-        if self.fichas.len() != 5 {
+        if self.fichas.len() < 5 {
             return;
+        }
+        self.fichas.truncate(5);
+        if let (Some(c), Some(f)) = (inf.kv("Cobertura de los datos", "Lecturas en el periodo"), self.fichas.iter_mut().find(|f| f.etiqueta == "Energía producida")) {
+            f.nota = format!("lecturas en el {} del periodo", c.1);
         }
         let nombres: Vec<&str> = fil.iter().filter_map(|f| f.first().map(String::as_str)).take(4).collect();
         self.fichas.push(Ficha::nueva("Inversores", &fil.len().to_string(), "", &nombres.join(" · ")));
@@ -980,6 +992,18 @@ impl Vista {
             Ficha::nueva("Modelo", &m.1, "", &nota_modelo),
             Ficha::nueva("n usado / total", &n.1, "", &nota_n),
         ];
+    }
+}
+
+/// Separa una unidad de verdad («MWh») de una frase explicativa («falta potencia DC»).
+///
+/// Returns:
+///     (unidad, nota): la frase va en la nota y la unidad queda vacía.
+pub fn unidad_o_nota(unidad: &str) -> (&str, &str) {
+    if unidad.contains(' ') {
+        ("", unidad)
+    } else {
+        (unidad, "")
     }
 }
 
