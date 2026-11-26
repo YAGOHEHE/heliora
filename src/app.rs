@@ -214,7 +214,7 @@ impl App {
     pub fn nueva(cc: &eframe::CreationContext, op: Opciones) -> App {
         // El modo se guarda entre sesiones; --modo lo fija para las capturas
         let guardado = cc.storage.and_then(|s| s.get_string("modo"));
-        let modo = tema::Modo::desde(op.modo.as_deref().or(guardado.as_deref()).unwrap_or("oscuro"));
+        let modo = tema::Modo::desde(op.modo.as_deref().or(guardado.as_deref()).unwrap_or("claro"));
         tema::aplicar(&cc.egui_ctx, modo);
         let modulo = match op.modulo.as_deref() {
             Some("calculo") => Modulo::Calculo,
@@ -978,16 +978,16 @@ impl App {
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
-                    let (color, texto) = if self.editor.ultima.is_none() {
-                        (pal.texto_3, "Sin simular".to_string())
+                    let (con_avisos, texto) = if self.editor.ultima.is_none() {
+                        (false, "Sin simular".to_string())
                     } else if self.editor.avisos.is_empty() && self.editor.error.is_none() {
-                        (pal.ok, "Sin avisos".to_string())
+                        (false, "Sin avisos".to_string())
                     } else {
-                        (pal.alerta, format!("{} avisos", self.editor.avisos.len() + usize::from(self.editor.error.is_some())))
+                        (true, format!("{} avisos", self.editor.avisos.len() + usize::from(self.editor.error.is_some())))
                     };
-                    ui::chip(ui, &texto, Some(color));
-                    ui::chip(ui, &format!("{} bloques", self.editor.diagrama.sistema.bloques.len()), None);
-                    ui::chip(ui, &self.editor.resumen_solver().split(" · ").next().unwrap_or("").to_lowercase(), None);
+                    ui::chip(ui, &texto, con_avisos);
+                    ui::chip(ui, &format!("{} bloques", self.editor.diagrama.sistema.bloques.len()), false);
+                    ui::chip(ui, &self.editor.resumen_solver().split(" · ").next().unwrap_or("").to_lowercase(), false);
                 });
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
@@ -1148,7 +1148,7 @@ impl App {
                 }
                 for (n, texto) in cuentas.iter().rev() {
                     if let Some(n) = n {
-                        ui::chip(ui, &format!("{n} {texto}"), None);
+                        ui::chip(ui, &format!("{n} {texto}"), false);
                     }
                 }
             },

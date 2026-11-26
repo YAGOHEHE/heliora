@@ -1322,8 +1322,8 @@ impl Editor {
         marco().show(&mut der, |ui| {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
-                interfaz::leyenda(ui, pal.electrica, "eléctrica", false);
-                interfaz::leyenda(ui, pal.senal, "señal", false);
+                interfaz::leyenda(ui, pal.electrica, "eléctrica", interfaz::Muestra::Linea);
+                interfaz::leyenda(ui, pal.senal, "señal", interfaz::Muestra::Discontinua);
                 if ui.add(egui::Button::new(egui::RichText::new(format!("{:.0} %", self.zoom * 100.0)).font(tema::fuente_mono(12.0)).color(pal.texto_3)).frame(false)).on_hover_text("Volver al 100 %").clicked() {
                     self.zoom = 1.0;
                 }

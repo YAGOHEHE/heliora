@@ -1,7 +1,8 @@
-//! Componentes del rediseño: rejilla de 12 columnas, tarjetas con título, fichas de resultados,
-//! filas de parámetros, barras de pestañas, chips y leyendas. Leen los colores de `tema::p()`.
+//! Componentes del estilo FLACS: rejilla de 12 columnas, cinta, esquema del proyecto, tarjetas,
+//! fichas, panel de parámetros, pestañas, chips, leyendas y avisos. Leen los colores de `tema::p()`.
+use crate::iconos::{self, Icono};
 use crate::tema;
-use egui::{Align2, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2};
+use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2};
 
 /// Columnas de la rejilla.
 pub const COLUMNAS: usize = 12;
@@ -178,40 +179,64 @@ pub fn pagina<R>(ui: &mut Ui, contenido: impl FnOnce(&mut Ui) -> R) -> R {
         .inner
 }
 
-/// Fondo y borde de una tarjeta sobre el rectángulo completo del `Ui`.
+/// Fondo y borde de una tarjeta sobre el rectángulo completo del `Ui`: borde de 1 px, sin radio.
 fn fondo_tarjeta(ui: &Ui, r: Rect) {
     let pal = tema::p();
-    ui.painter().rect(r, tema::radio_ventana() as f32, pal.panel, Stroke::new(1.0_f32, pal.linea), StrokeKind::Inside);
+    ui.painter().rect(r, 0.0, pal.panel, Stroke::new(1.0_f32, pal.borde), StrokeKind::Inside);
 }
 
-/// Texto en mayúsculas, 11 px, semibold, con espaciado, para títulos de tarjeta.
+/// Texto en mayúsculas con espaciado fino (chips y títulos de sección).
 pub fn mayusculas(t: &str) -> String {
     let txt: String = t.to_uppercase().chars().flat_map(|c| [c, '\u{200A}']).collect();
     txt.trim_end().to_string()
 }
 
-/// Tarjeta que ocupa todo el `Ui`, con título en mayúsculas, acciones a la derecha y contenido.
+/// Título de sección en mayúsculas de 12 px, peso medio y gris («GUARDAR EN EL ESPACIO DE TRABAJO»).
+pub fn titulo_seccion(ui: &mut Ui, t: &str) {
+    ui.label(egui::RichText::new(mayusculas(t)).family(tema::semi()).size(12.0).color(tema::p().texto_2));
+}
+
+/// Título de pantalla: 22 px en negrita y, a su derecha, el subtítulo en gris de 13 px.
+pub fn titulo_pantalla(ui: &mut Ui, titulo: &str, subtitulo: &str) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 12.0;
+        ui.label(egui::RichText::new(titulo).font(tema::fuente_negrita(22.0)).color(tema::p().texto));
+        if !subtitulo.is_empty() {
+            ui.label(egui::RichText::new(subtitulo).size(13.0).color(tema::p().texto_2));
+        }
+    });
+}
+
+/// Tarjeta que ocupa todo el `Ui`: cabecera de 44 px con el título de 15 px en peso medio y, a la
+/// derecha, la leyenda y las acciones; debajo, una línea separadora y el contenido.
 /// El contenido se recorta también por el área visible del contenedor (p. ej. una zona desplazable).
 ///
 /// Args:
 ///     ui: celda de la rejilla.
-///     titulo: título de la tarjeta (se muestra en mayúsculas); vacío para no mostrarlo.
-///     acciones: botones o datos alineados a la derecha del título.
+///     titulo: título de la tarjeta; vacío para no mostrar cabecera.
+///     acciones: leyenda y botones pequeños alineados a la derecha del título.
 ///     contenido: cuerpo de la tarjeta, con márgenes de 16 px.
 pub fn tarjeta_con_titulo<R>(ui: &mut Ui, titulo: &str, acciones: impl FnOnce(&mut Ui), contenido: impl FnOnce(&mut Ui) -> R) -> R {
+    let pal = tema::p();
     let r = ui.max_rect();
     fondo_tarjeta(ui, r);
-    let dentro = r.shrink2(Vec2::new(16.0, 14.0));
-    let mut hijo = ui.new_child(UiBuilder::new().max_rect(dentro).layout(egui::Layout::top_down(egui::Align::Min)));
-    hijo.set_clip_rect(r.shrink(1.0).intersect(ui.clip_rect()));
+    let recorte = r.shrink(1.0).intersect(ui.clip_rect());
+    let mut arriba = r.top();
     if !titulo.is_empty() {
-        hijo.horizontal(|ui| {
-            ui.set_min_height(22.0);
-            ui.label(egui::RichText::new(mayusculas(titulo)).family(tema::semi()).size(11.0).color(tema::p().texto_2));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), acciones);
+        let cabecera = Rect::from_min_size(r.min, Vec2::new(r.width(), 44.0));
+        let mut c = ui.new_child(UiBuilder::new().max_rect(cabecera.shrink2(Vec2::new(16.0, 0.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        c.set_clip_rect(recorte);
+        c.label(egui::RichText::new(titulo).family(tema::semi()).size(15.0).color(pal.texto));
+        c.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            acciones(ui);
         });
-        hijo.add_space(6.0);
+        ui.painter().with_clip_rect(recorte).line_segment([Pos2::new(r.left(), cabecera.bottom()), Pos2::new(r.right(), cabecera.bottom())], Stroke::new(1.0_f32, pal.linea));
+        arriba = cabecera.bottom();
     }
+    let dentro = Rect::from_min_max(Pos2::new(r.left() + 16.0, arriba + 12.0), Pos2::new(r.right() - 16.0, r.bottom() - 10.0));
+    let mut hijo = ui.new_child(UiBuilder::new().max_rect(dentro).layout(egui::Layout::top_down(egui::Align::Min)));
+    hijo.set_clip_rect(recorte);
     contenido(&mut hijo)
 }
 
@@ -224,63 +249,369 @@ pub fn tarjeta_plena<R>(ui: &mut Ui, contenido: impl FnOnce(&mut Ui) -> R) -> R 
     contenido(&mut hijo)
 }
 
-/// Ficha de resultado: etiqueta arriba, valor en monoespaciada de 22 px con la unidad en gris y una nota.
+/// Ficha de resultado: etiqueta de 12 px en gris, valor en monoespaciada de 20 px, unidad y nota en gris.
 ///
-/// Ocupa todo el `Ui` (una celda de 2 columnas). Si `activa` es Some, la ficha se puede pulsar
-/// (se usa como filtro) y la activa se marca con el fondo y el borde de acento.
+/// Ocupa todo el `Ui`. Si `activa` es Some, la ficha se puede pulsar (filtros de Órdenes, fases de
+/// Validación); la seleccionada lleva borde negro de 2 px y fondo gris.
 pub fn ficha_kpi(ui: &mut Ui, etiqueta: &str, valor: &str, unidad: &str, nota: &str, activa: Option<bool>) -> egui::Response {
     let pal = tema::p();
     let r = ui.max_rect();
     let resp = ui.interact(r, ui.id().with(("ficha", etiqueta, r.min.x as i32, r.min.y as i32)), if activa.is_some() { Sense::click() } else { Sense::hover() });
     let marcada = activa == Some(true);
-    let fondo = if marcada {
-        pal.acento_fondo
-    } else if activa.is_some() && resp.hovered() {
-        pal.realce
-    } else {
-        pal.panel
-    };
-    ui.painter().rect(r, tema::radio_ventana() as f32, fondo, Stroke::new(1.0_f32, if marcada { pal.acento } else { pal.linea }), StrokeKind::Inside);
-    let p = ui.painter_at(r.shrink(1.0));
-    let x = r.left() + 14.0;
-    p.text(Pos2::new(x, r.top() + 12.0), Align2::LEFT_TOP, etiqueta, FontId::proportional(12.5), if marcada { pal.acento_texto } else { pal.texto_2 });
-    let g = p.layout_no_wrap(valor.to_string(), tema::fuente_mono(22.0), pal.texto);
+    let fondo = if marcada || (activa.is_some() && resp.hovered()) { pal.campo } else { pal.panel };
+    let borde = if marcada { Stroke::new(2.0_f32, pal.acento) } else { Stroke::new(1.0_f32, pal.borde) };
+    ui.painter().rect(r, 0.0, fondo, borde, StrokeKind::Inside);
+    let p = ui.painter_at(r.shrink(2.0));
+    let x = r.left() + 12.0;
+    p.text(Pos2::new(x, r.top() + 11.0), Align2::LEFT_TOP, etiqueta, FontId::proportional(12.0), pal.texto_2);
+    let g = p.layout_no_wrap(valor.to_string(), FontId::new(20.0, egui::FontFamily::Name("dato".into())), pal.acento);
     let y_valor = r.top() + 32.0;
     let ancho_valor = g.size().x;
-    p.galley(Pos2::new(x, y_valor), g, pal.texto);
+    p.galley(Pos2::new(x, y_valor), g, pal.acento);
     if !unidad.is_empty() {
-        p.text(Pos2::new(x + ancho_valor + 6.0, y_valor + 22.0), Align2::LEFT_BOTTOM, unidad, FontId::proportional(13.0), pal.texto_2);
+        p.text(Pos2::new(x + ancho_valor + 4.0, y_valor + 21.0), Align2::LEFT_BOTTOM, unidad, tema::fuente_mono(12.0), pal.texto_2);
     }
     if !nota.is_empty() {
-        p.text(Pos2::new(x, r.bottom() - 12.0), Align2::LEFT_BOTTOM, nota, FontId::proportional(11.5), pal.texto_2);
+        p.text(Pos2::new(x, r.bottom() - 9.0), Align2::LEFT_BOTTOM, nota, FontId::proportional(11.0), pal.texto_2);
     }
     resp.on_hover_text(format!("{etiqueta}: {valor} {unidad}"))
 }
 
-/// Fila de parámetro en tres columnas: etiqueta a la izquierda, valor en monoespaciada alineado a
-/// la derecha y unidad en su propia columna.
+/// Fila de parámetro en rejilla de tres columnas: etiqueta | campo de 128 px con el valor en
+/// monoespaciada alineado a la derecha | unidad.
 pub fn fila_parametro(ui: &mut Ui, etiqueta: &str, valor: &mut String, unidad: &str) -> egui::Response {
     let pal = tema::p();
     let ancho = ui.available_width();
-    let (r, _) = ui.allocate_exact_size(Vec2::new(ancho, 30.0), Sense::hover());
-    let col_unidad = 36.0;
-    let col_valor = (ancho * 0.38).clamp(90.0, 160.0);
-    let r_valor = Rect::from_min_size(Pos2::new(r.right() - col_unidad - col_valor, r.top() + 1.0), Vec2::new(col_valor, 28.0));
-    ui.painter().with_clip_rect(Rect::from_min_max(r.min, Pos2::new(r_valor.left() - 8.0, r.bottom()))).text(
-        Pos2::new(r.left(), r.center().y),
-        Align2::LEFT_CENTER,
-        etiqueta,
-        FontId::proportional(13.0),
-        pal.texto,
-    );
-    let resp = ui.put(r_valor, egui::TextEdit::singleline(valor).font(tema::fuente_mono(12.5)).horizontal_align(egui::Align::Max).margin(egui::Margin::symmetric(8, 4)));
+    let col_unidad = 40.0;
+    let col_valor = 128.0_f32.min((ancho - col_unidad - 16.0) * 0.6);
+    let col_etiqueta = (ancho - col_valor - col_unidad - 16.0).max(10.0);
+    let galeria = ui.painter().layout(etiqueta.to_string(), FontId::proportional(13.0), pal.texto, col_etiqueta);
+    let alto = (galeria.size().y + 6.0).max(36.0);
+    let (r, _) = ui.allocate_exact_size(Vec2::new(ancho, alto), Sense::hover());
+    let r_valor = Rect::from_min_size(Pos2::new(r.left() + col_etiqueta + 8.0, r.center().y - 15.0), Vec2::new(col_valor, 30.0));
+    ui.painter().galley(Pos2::new(r.left(), r.center().y - galeria.size().y / 2.0), galeria, pal.texto);
+    let resp = ui.put(r_valor, egui::TextEdit::singleline(valor).font(tema::fuente_mono(12.0)).horizontal_align(egui::Align::Max).margin(egui::Margin::symmetric(8, 6)));
     if !unidad.is_empty() {
-        ui.painter().text(Pos2::new(r_valor.right() + 8.0, r.center().y), Align2::LEFT_CENTER, unidad, FontId::proportional(12.5), pal.texto_2);
+        ui.painter().text(Pos2::new(r_valor.right() + 8.0, r.center().y), Align2::LEFT_CENTER, unidad, tema::fuente_mono(12.0), pal.texto_2);
     }
     resp.on_hover_text(etiqueta)
 }
 
-/// Barra de pestañas de 40 px con subrayado de acento en la activa y acciones a la derecha.
+/// Desplegable a todo el ancho, con la etiqueta encima.
+///
+/// Returns:
+///     true si cambió la opción elegida.
+pub fn desplegable(ui: &mut Ui, etiqueta: &str, opciones: &[String], elegida: &mut String) -> bool {
+    let antes = elegida.clone();
+    if !etiqueta.is_empty() {
+        ui.label(egui::RichText::new(etiqueta).size(13.0).color(tema::p().texto));
+    }
+    egui::ComboBox::from_id_salt(("desplegable", etiqueta))
+        .width(ui.available_width() - 8.0)
+        .selected_text(egui::RichText::new(elegida.as_str()).size(13.0))
+        .show_ui(ui, |ui| {
+            for o in opciones {
+                ui.selectable_value(elegida, o.clone(), o);
+            }
+        });
+    antes != *elegida
+}
+
+/// Fila «Guardar en el espacio de trabajo»: casilla, descripción y nombre de la variable (128 px).
+pub fn fila_guardar(ui: &mut Ui, activo: &mut bool, etiqueta: &str, nombre: &mut String) {
+    let ancho = ui.available_width();
+    let (r, _) = ui.allocate_exact_size(Vec2::new(ancho, 34.0), Sense::hover());
+    let casilla = Rect::from_min_size(Pos2::new(r.left(), r.center().y - 9.0), Vec2::splat(18.0));
+    ui.put(casilla, egui::Checkbox::without_text(activo));
+    let campo = Rect::from_min_size(Pos2::new(r.right() - 128.0, r.center().y - 14.0), Vec2::new(128.0, 28.0));
+    ui.painter().with_clip_rect(Rect::from_min_max(Pos2::new(casilla.right() + 8.0, r.top()), Pos2::new(campo.left() - 8.0, r.bottom()))).text(
+        Pos2::new(casilla.right() + 8.0, r.center().y),
+        Align2::LEFT_CENTER,
+        etiqueta,
+        FontId::proportional(13.0),
+        tema::p().texto,
+    );
+    ui.put(campo, egui::TextEdit::singleline(nombre).font(tema::fuente_mono(12.0)).margin(egui::Margin::symmetric(8, 5)));
+}
+
+/// Panel de parámetros (360 px) al estilo de un «Scenario Manager»: título «Parámetros» con
+/// «Opciones» a la derecha, nombre y descripción de la herramienta, contenido desplazable y un pie
+/// fijo con borde superior para las acciones («Exportar informe», «Calcular»).
+///
+/// Args:
+///     ui: rectángulo completo del panel.
+///     titulo: título del panel («Parámetros», «Detalle de la orden»...).
+///     herramienta: nombre de la herramienta (14 px, peso medio); vacío para omitirlo.
+///     descripcion: texto gris bajo el nombre.
+///     contenido: filas de parámetros.
+///     pie: acciones del pie; si no dibuja nada, el pie no ocupa sitio.
+///
+/// Returns:
+///     true si se pulsó «Opciones».
+pub fn panel_parametros(ui: &mut Ui, titulo: &str, herramienta: &str, descripcion: &str, contenido: impl FnOnce(&mut Ui), pie: Option<&mut dyn FnMut(&mut Ui)>) -> bool {
+    let pal = tema::p();
+    let r = ui.max_rect();
+    ui.painter().rect_filled(r, 0.0, pal.panel);
+    let alto_pie = if pie.is_some() { 68.0 } else { 0.0 };
+    let cuerpo = Rect::from_min_max(r.min + Vec2::new(20.0, 18.0), Pos2::new(r.right() - 20.0, r.bottom() - alto_pie));
+    let mut opciones = false;
+    let mut c = ui.new_child(UiBuilder::new().max_rect(cuerpo).layout(egui::Layout::top_down(egui::Align::Min)));
+    c.set_clip_rect(Rect::from_min_max(r.min, Pos2::new(r.right(), r.bottom() - alto_pie)).intersect(ui.clip_rect()));
+    c.spacing_mut().item_spacing.y = 6.0;
+    c.horizontal(|ui| {
+        ui.label(egui::RichText::new(titulo).font(tema::fuente_negrita(20.0)).color(pal.texto));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            opciones = boton_texto(ui, Some(Icono::Ajustes), "Opciones").clicked();
+        });
+    });
+    if !herramienta.is_empty() {
+        c.add_space(4.0);
+        c.label(egui::RichText::new(herramienta).family(tema::semi()).size(14.0).color(pal.texto));
+    }
+    if !descripcion.is_empty() {
+        c.label(egui::RichText::new(descripcion).size(12.0).color(pal.texto_2));
+        c.add_space(4.0);
+    }
+    egui::ScrollArea::vertical().id_salt(("panel_parametros", titulo)).auto_shrink([false, false]).show(&mut c, |ui| {
+        ui.set_width(ui.available_width());
+        contenido(ui);
+    });
+    if let Some(pie) = pie {
+        let zona = Rect::from_min_max(Pos2::new(r.left(), r.bottom() - alto_pie), r.max);
+        ui.painter().line_segment([zona.left_top(), zona.right_top()], Stroke::new(1.0_f32, pal.linea));
+        let mut p = ui.new_child(UiBuilder::new().max_rect(zona.shrink2(Vec2::new(20.0, 16.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
+        p.spacing_mut().item_spacing.x = 12.0;
+        pie(&mut p);
+    }
+    opciones
+}
+
+/// Estilo de un botón: principal (negro), secundario (contorno negro) o de cinta/texto (sin marco).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EstiloBoton {
+    Principal,
+    Secundario,
+}
+
+/// Botón rectangular sin radio, de 34 px (28 px si `pequeno`), con icono opcional y un atajo en
+/// monoespaciada gris detrás del texto.
+pub fn boton(ui: &mut Ui, estilo: EstiloBoton, icono: Option<Icono>, texto: &str, atajo: &str, pequeno: bool) -> egui::Response {
+    let pal = tema::p();
+    let (fondo, tinta, borde) = match estilo {
+        EstiloBoton::Principal => (pal.acento, pal.sobre_acento, pal.acento),
+        EstiloBoton::Secundario => (pal.panel, pal.texto, pal.acento),
+    };
+    let tam = if pequeno { 12.0 } else { 14.0 };
+    let alto = if pequeno { 28.0 } else { 34.0 };
+    let g = ui.painter().layout_no_wrap(texto.to_string(), FontId::new(tam, tema::semi()), tinta);
+    let ga = (!atajo.is_empty()).then(|| ui.painter().layout_no_wrap(atajo.to_string(), tema::fuente_mono(11.0), pal.borde));
+    let lado_icono = if pequeno { 16.0 } else { 18.0 };
+    let ancho = 28.0 + g.size().x + icono.map_or(0.0, |_| lado_icono + 8.0) + ga.as_ref().map_or(0.0, |a| a.size().x + 8.0);
+    let (r, resp) = ui.allocate_exact_size(Vec2::new(ancho, alto), Sense::click());
+    let fondo = if resp.hovered() && estilo == EstiloBoton::Secundario { pal.campo } else { fondo };
+    ui.painter().rect(r, 0.0, fondo, Stroke::new(1.0_f32, borde), StrokeKind::Inside);
+    let mut x = r.left() + 14.0;
+    if let Some(i) = icono {
+        iconos::dibujar(ui.painter(), Rect::from_min_size(Pos2::new(x, r.center().y - lado_icono / 2.0), Vec2::splat(lado_icono)), i, tinta);
+        x += lado_icono + 8.0;
+    }
+    let ancho_texto = g.size().x;
+    ui.painter().galley(Pos2::new(x, r.center().y - g.size().y / 2.0), g, tinta);
+    if let Some(a) = ga {
+        let color = if estilo == EstiloBoton::Principal { pal.borde } else { pal.texto_2 };
+        ui.painter().galley_with_override_text_color(Pos2::new(x + ancho_texto + 8.0, r.center().y - a.size().y / 2.0), a, color);
+    }
+    resp
+}
+
+/// Botón sin marco con icono opcional y texto de 13 px (barra superior, «Opciones», «Ver todas →»).
+pub fn boton_texto(ui: &mut Ui, icono: Option<Icono>, texto: &str) -> egui::Response {
+    let pal = tema::p();
+    let g = ui.painter().layout_no_wrap(texto.to_string(), FontId::proportional(13.0), pal.texto);
+    let ancho = g.size().x + icono.map_or(0.0, |_| 24.0) + 8.0;
+    let (r, resp) = ui.allocate_exact_size(Vec2::new(ancho, 30.0), Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(r, 0.0, pal.realce);
+    }
+    let mut x = r.left() + 4.0;
+    if let Some(i) = icono {
+        iconos::dibujar(ui.painter(), Rect::from_min_size(Pos2::new(x, r.center().y - 9.0), Vec2::splat(18.0)), i, pal.texto);
+        x += 24.0;
+    }
+    ui.painter().galley(Pos2::new(x, r.center().y - g.size().y / 2.0), g, pal.texto);
+    resp
+}
+
+/// Botón de icono de 30 × 30 px sin marco (guardar, deshacer, rehacer, cerrar pestaña).
+pub fn boton_icono(ui: &mut Ui, icono: Icono, lado_icono: f32, ayuda: &str) -> egui::Response {
+    let pal = tema::p();
+    let lado = (lado_icono + 12.0).max(22.0);
+    let (r, resp) = ui.allocate_exact_size(Vec2::splat(lado), Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(r, 0.0, pal.realce);
+    }
+    iconos::dibujar(ui.painter(), Rect::from_center_size(r.center(), Vec2::splat(lado_icono)), icono, pal.texto);
+    resp.on_hover_text(ayuda)
+}
+
+/// Alto de la cinta de opciones.
+pub const ALTO_CINTA: f32 = 94.0;
+
+/// Grupo de la cinta: botones en una fila de 66 px, el nombre del grupo debajo en gris y una línea
+/// vertical a la derecha.
+pub fn grupo_cinta(ui: &mut Ui, nombre: &str, contenido: impl FnOnce(&mut Ui)) {
+    let pal = tema::p();
+    let inicio = ui.cursor().min.x;
+    let arriba = ui.max_rect().top();
+    let r = ui
+        .vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            ui.add_space(0.0);
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.set_height(66.0);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), contenido);
+                ui.add_space(12.0);
+            });
+        })
+        .response
+        .rect;
+    let derecha = r.right().max(inicio);
+    ui.painter().text(Pos2::new((inicio + derecha) / 2.0, arriba + 76.0), Align2::CENTER_CENTER, nombre, FontId::proportional(12.0), pal.texto_2);
+    ui.painter().line_segment([Pos2::new(derecha, arriba), Pos2::new(derecha, arriba + ALTO_CINTA - 12.0)], Stroke::new(1.0_f32, pal.linea));
+}
+
+/// Botón grande de la cinta: icono de 24 px sobre el texto (hasta dos líneas de 12 px). El activo
+/// lleva fondo de selección y borde.
+pub fn boton_cinta(ui: &mut Ui, icono: Icono, texto: &str, activo: bool) -> egui::Response {
+    let pal = tema::p();
+    let fuente = if activo { FontId::new(12.0, tema::semi()) } else { FontId::proportional(12.0) };
+    let ancho_texto = ui.painter().layout_no_wrap(texto.to_string(), fuente.clone(), pal.texto).size().x;
+    let ancho = (ancho_texto + 12.0).clamp(64.0, 96.0);
+    let g = ui.painter().layout(texto.to_string(), fuente, pal.texto, ancho - 8.0);
+    let (r, resp) = ui.allocate_exact_size(Vec2::new(ancho, 62.0), Sense::click());
+    if activo {
+        ui.painter().rect(r, 0.0, pal.realce, Stroke::new(1.0_f32, pal.borde), StrokeKind::Inside);
+    } else if resp.hovered() {
+        ui.painter().rect_filled(r, 0.0, pal.campo);
+    }
+    iconos::dibujar(ui.painter(), Rect::from_min_size(Pos2::new(r.center().x - 12.0, r.top() + 6.0), Vec2::splat(24.0)), icono, pal.texto);
+    let g_ancho = g.size().x;
+    ui.painter().galley(Pos2::new(r.center().x - g_ancho / 2.0, r.top() + 36.0), g, pal.texto);
+    resp.on_hover_text(texto)
+}
+
+/// Columna de botones pequeños de la cinta (icono de 14 px y texto de 12 px, 20 px de alto).
+///
+/// Returns:
+///     Índice del botón pulsado.
+pub fn columna_cinta(ui: &mut Ui, botones: &[(Icono, &str, bool)]) -> Option<usize> {
+    let pal = tema::p();
+    let mut pulsado = None;
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 1.0;
+        ui.add_space(4.0);
+        for (i, (icono, texto, habilitado)) in botones.iter().enumerate() {
+            let tinta = if *habilitado { pal.texto } else { pal.texto_2.gamma_multiply(0.7) };
+            let g = ui.painter().layout_no_wrap(texto.to_string(), FontId::proportional(12.0), tinta);
+            let (r, resp) = ui.allocate_exact_size(Vec2::new(g.size().x + 33.0, 20.0), if *habilitado { Sense::click() } else { Sense::hover() });
+            if resp.hovered() && *habilitado {
+                ui.painter().rect_filled(r, 0.0, pal.campo);
+            }
+            iconos::dibujar(ui.painter(), Rect::from_min_size(Pos2::new(r.left() + 4.0, r.center().y - 7.0), Vec2::splat(14.0)), *icono, tinta);
+            ui.painter().galley(Pos2::new(r.left() + 25.0, r.center().y - g.size().y / 2.0), g, tinta);
+            if resp.clicked() {
+                pulsado = Some(i);
+            }
+        }
+    });
+    pulsado
+}
+
+/// Estado de un nodo del esquema del proyecto.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EstadoNodo {
+    /// Listo o sin avisos: punto verde.
+    Listo,
+    /// Pendiente o con aviso: punto rojo.
+    Pendiente,
+    /// Sin ejecutar: círculo hueco gris.
+    SinEjecutar,
+    /// Sin punto de estado (carpetas, tablas).
+    Ninguno,
+}
+
+/// Punto de estado de 10 px del esquema del proyecto.
+pub fn punto_estado(pt: &egui::Painter, centro: Pos2, e: EstadoNodo) {
+    let pal = tema::p();
+    match e {
+        EstadoNodo::Listo => {
+            pt.circle_filled(centro, 5.0, pal.ok);
+        }
+        EstadoNodo::Pendiente => {
+            pt.circle_filled(centro, 5.0, pal.falla);
+        }
+        EstadoNodo::SinEjecutar => {
+            pt.circle_stroke(centro, 4.5, Stroke::new(1.0_f32, pal.texto_2));
+        }
+        EstadoNodo::Ninguno => {}
+    }
+}
+
+/// Fila de 28 px del esquema del proyecto: conmutador redondo (⊕ / ⊖) si `abierto` es Some, punto
+/// de estado, icono opcional, texto y sufijo gris de 11 px. La fila activa lleva fondo de selección.
+///
+/// Returns:
+///     Respuesta de la fila y true si se pulsó el conmutador.
+#[allow(clippy::too_many_arguments)]
+pub fn nodo_arbol(ui: &mut Ui, nivel: usize, abierto: Option<bool>, estado: EstadoNodo, icono: Option<Icono>, texto: &str, sufijo: &str, activo: bool) -> (egui::Response, bool) {
+    let pal = tema::p();
+    let ancho = ui.available_width();
+    let (r, resp) = ui.allocate_exact_size(Vec2::new(ancho, 28.0), Sense::click());
+    if activo {
+        ui.painter().rect_filled(r, 0.0, pal.realce);
+    } else if resp.hovered() {
+        ui.painter().rect_filled(r, 0.0, pal.campo);
+    }
+    let mut x = r.left() + 12.0 + 18.0 * nivel as f32;
+    let mut conmutado = false;
+    if let Some(a) = abierto {
+        let c = Pos2::new(x + 7.0, r.center().y);
+        let zona = Rect::from_center_size(c, Vec2::splat(18.0));
+        let rc = ui.interact(zona, ui.id().with(("conmutador", texto, nivel, r.top() as i32)), Sense::click());
+        conmutado = rc.clicked();
+        ui.painter().circle_filled(Pos2::new(c.x - 9.0, c.y), 1.5, pal.acento);
+        ui.painter().circle_filled(c, 6.5, pal.acento);
+        ui.painter().line_segment([c - Vec2::new(3.5, 0.0), c + Vec2::new(3.5, 0.0)], Stroke::new(1.6_f32, pal.sobre_acento));
+        if !a {
+            ui.painter().line_segment([c - Vec2::new(0.0, 3.5), c + Vec2::new(0.0, 3.5)], Stroke::new(1.6_f32, pal.sobre_acento));
+        }
+        x += 20.0;
+    }
+    if estado != EstadoNodo::Ninguno {
+        punto_estado(ui.painter(), Pos2::new(x + 5.0, r.center().y), estado);
+        x += 19.0;
+    }
+    if let Some(i) = icono {
+        iconos::dibujar(ui.painter(), Rect::from_min_size(Pos2::new(x, r.center().y - 8.0), Vec2::splat(16.0)), i, pal.texto);
+        x += 25.0;
+    }
+    let fuente = if abierto.is_some() { FontId::new(13.0, tema::semi()) } else { FontId::proportional(13.0) };
+    let gs = (!sufijo.is_empty()).then(|| ui.painter().layout_no_wrap(sufijo.to_string(), FontId::proportional(11.0), pal.texto_2));
+    let reserva = gs.as_ref().map_or(0.0, |g| g.size().x + 14.0);
+    let limite = r.right() - 8.0 - reserva;
+    let g = ui.painter().layout_no_wrap(texto.to_string(), fuente, pal.texto);
+    let ancho_texto = g.size().x.min(limite - x);
+    ui.painter().with_clip_rect(Rect::from_min_max(Pos2::new(x, r.top()), Pos2::new(limite, r.bottom()))).galley(Pos2::new(x, r.center().y - g.size().y / 2.0), g, pal.texto);
+    if let Some(gs) = gs {
+        ui.painter().galley(Pos2::new(x + ancho_texto + 8.0, r.center().y - gs.size().y / 2.0), gs, pal.texto_2);
+    }
+    (resp.on_hover_text(texto), conmutado)
+}
+
+/// Pestañas con subrayado negro de 2 px en la activa (texto de 14 px) y acciones a la derecha;
+/// se usa para «Esquema del proyecto | Opciones», «Diagnóstico | Consola» y similares.
 ///
 /// Returns:
 ///     true si cambió la pestaña activa.
@@ -289,15 +620,16 @@ pub fn barra_pestanas(ui: &mut Ui, pestanas: &[&str], activa: &mut usize, accion
     let antes = *activa;
     ui.horizontal(|ui| {
         ui.set_min_height(40.0);
-        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.spacing_mut().item_spacing.x = 0.0;
         for (i, t) in pestanas.iter().enumerate() {
             let on = i == *activa;
-            let g = ui.painter().layout_no_wrap(t.to_string(), FontId::proportional(13.0), pal.texto);
-            let (r, resp) = ui.allocate_exact_size(Vec2::new(g.size().x + 20.0, 40.0), Sense::click());
+            let fuente = if on { FontId::new(14.0, tema::semi()) } else { FontId::proportional(14.0) };
+            let g = ui.painter().layout_no_wrap(t.to_string(), fuente.clone(), pal.texto);
+            let (r, resp) = ui.allocate_exact_size(Vec2::new(g.size().x + 28.0, 40.0), Sense::click());
             if resp.hovered() && !on {
-                ui.painter().rect_filled(r.shrink2(Vec2::new(0.0, 6.0)), tema::radio() as f32, pal.realce);
+                ui.painter().rect_filled(r, 0.0, pal.campo);
             }
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, *t, FontId::proportional(13.0), if on { pal.texto } else { pal.texto_2 });
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, *t, fuente, pal.texto);
             if on {
                 ui.painter().rect_filled(Rect::from_min_max(Pos2::new(r.left(), r.bottom() - 2.0), r.right_bottom()), 0.0, pal.acento);
             }
@@ -310,61 +642,167 @@ pub fn barra_pestanas(ui: &mut Ui, pestanas: &[&str], activa: &mut usize, accion
     antes != *activa
 }
 
-/// Chip redondeado con texto; con color, lleva un punto de ese color delante.
-pub fn chip(ui: &mut Ui, texto: &str, color: Option<Color32>) -> egui::Response {
+/// Pestañas de documento (34 px) sobre fondo gris: la activa en blanco con borde superior negro de
+/// 2 px; cada una con su icono y, si `cerrables`, una cruz.
+///
+/// Returns:
+///     Índice de la pestaña cuya cruz se pulsó.
+pub fn pestanas_documento(ui: &mut Ui, pestanas: &[(Icono, &str)], activa: &mut usize, cerrables: bool) -> Option<usize> {
     let pal = tema::p();
-    let g = ui.painter().layout_no_wrap(texto.to_string(), FontId::proportional(12.0), pal.texto);
-    let extra = if color.is_some() { 14.0 } else { 0.0 };
-    let (r, resp) = ui.allocate_exact_size(Vec2::new(g.size().x + 16.0 + extra, 24.0), Sense::click());
-    ui.painter().rect(r, CornerRadius::same(12), pal.panel, Stroke::new(1.0_f32, pal.linea), StrokeKind::Inside);
-    let mut x = r.left() + 8.0;
-    if let Some(c) = color {
-        ui.painter().circle_filled(Pos2::new(x + 3.5, r.center().y), 3.5, c);
-        x += extra;
+    let ancho = ui.available_width();
+    let (franja, _) = ui.allocate_exact_size(Vec2::new(ancho, 35.0), Sense::hover());
+    ui.painter().rect_filled(franja, 0.0, pal.campo);
+    ui.painter().line_segment([franja.left_bottom(), franja.right_bottom()], Stroke::new(1.0_f32, pal.linea));
+    let mut x = franja.left();
+    let mut cerrar = None;
+    for (i, (icono, texto)) in pestanas.iter().enumerate() {
+        let on = i == *activa;
+        let g = ui.painter().layout_no_wrap(texto.to_string(), FontId::proportional(13.0), pal.texto);
+        let w = 12.0 + 16.0 + 8.0 + g.size().x + if cerrables { 30.0 } else { 14.0 };
+        let r = Rect::from_min_size(Pos2::new(x, franja.top()), Vec2::new(w, 34.0));
+        let resp = ui.interact(r, ui.id().with(("pestana_documento", i)), Sense::click());
+        ui.painter().rect_filled(r, 0.0, if on { pal.panel } else if resp.hovered() { pal.realce } else { pal.campo });
+        if on {
+            ui.painter().rect_filled(Rect::from_min_size(r.min, Vec2::new(w, 2.0)), 0.0, pal.acento);
+        }
+        ui.painter().line_segment([r.right_top(), r.right_bottom()], Stroke::new(1.0_f32, pal.linea));
+        iconos::dibujar(ui.painter(), Rect::from_min_size(Pos2::new(r.left() + 12.0, r.center().y - 8.0), Vec2::splat(16.0)), *icono, pal.texto);
+        ui.painter().galley(Pos2::new(r.left() + 36.0, r.center().y - g.size().y / 2.0), g, pal.texto);
+        if cerrables {
+            let zona = Rect::from_center_size(Pos2::new(r.right() - 18.0, r.center().y), Vec2::splat(22.0));
+            let rc = ui.interact(zona, ui.id().with(("cerrar_documento", i)), Sense::click());
+            if rc.hovered() {
+                ui.painter().rect_filled(zona, 0.0, pal.realce);
+            }
+            iconos::dibujar(ui.painter(), Rect::from_center_size(zona.center(), Vec2::splat(14.0)), Icono::Cerrar, pal.texto);
+            if rc.clicked() {
+                cerrar = Some(i);
+            }
+        }
+        if resp.clicked() {
+            *activa = i;
+        }
+        x += w;
     }
-    ui.painter().galley(Pos2::new(x, r.center().y - g.size().y / 2.0), g, pal.texto);
+    cerrar
+}
+
+/// Chip de 22 px en mayúsculas de 11 px, sin radio: gris claro o gris oscuro con texto blanco
+/// (activo o identificador de un equipo).
+pub fn chip(ui: &mut Ui, texto: &str, oscuro: bool) -> egui::Response {
+    let pal = tema::p();
+    let (fondo, tinta) = if oscuro { (pal.chip_activo, pal.sobre_chip_activo) } else { (pal.chip, pal.texto) };
+    let g = ui.painter().layout_no_wrap(mayusculas(texto), FontId::new(11.0, tema::semi()), tinta);
+    let (r, resp) = ui.allocate_exact_size(Vec2::new(g.size().x + 18.0, 22.0), Sense::click());
+    ui.painter().rect_filled(r, 0.0, fondo);
+    ui.painter().galley(Pos2::new(r.left() + 9.0, r.center().y - g.size().y / 2.0), g, tinta);
     resp
 }
 
-/// Fondo de una fila de tabla: las impares con el fondo secundario suave, todas con su línea inferior.
-pub fn fondo_fila(ui: &Ui, r: Rect, indice: usize) {
-    let pal = tema::p();
-    if indice % 2 == 1 {
-        ui.painter().rect_filled(r, 0.0, pal.campo_alt);
-    }
-    ui.painter().line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0_f32, pal.realce));
+/// Fondo de una fila de tabla: todas con su línea inferior de separación.
+pub fn fondo_fila(ui: &Ui, r: Rect, _indice: usize) {
+    ui.painter().line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0_f32, tema::p().linea));
 }
 
-/// Etiqueta pequeña (radio de 4 px) con fondo del color dado aclarado y texto del mismo color.
+/// Etiqueta de estado o categoría: un chip claro con un punto del color dado delante.
 pub fn etiqueta(ui: &mut Ui, texto: &str, color: Color32) -> egui::Response {
-    let g = ui.painter().layout_no_wrap(texto.to_string(), FontId::proportional(11.5), color);
-    let (r, resp) = ui.allocate_exact_size(Vec2::new(g.size().x + 12.0, 20.0), Sense::hover());
-    ui.painter().rect_filled(r, tema::RADIO_FICHA, color.gamma_multiply(0.14));
-    ui.painter().galley(Pos2::new(r.left() + 6.0, r.center().y - g.size().y / 2.0), g, color);
+    let pal = tema::p();
+    let g = ui.painter().layout_no_wrap(mayusculas(texto), FontId::new(11.0, tema::semi()), pal.texto);
+    let (r, resp) = ui.allocate_exact_size(Vec2::new(g.size().x + 30.0, 22.0), Sense::hover());
+    ui.painter().rect_filled(r, 0.0, pal.chip);
+    ui.painter().circle_filled(Pos2::new(r.left() + 11.0, r.center().y), 3.5, color);
+    ui.painter().galley(Pos2::new(r.left() + 20.0, r.center().y - g.size().y / 2.0), g, pal.texto);
     resp
 }
 
-/// Marca cuadrada de 8 px con el color del tipo de orden de mantenimiento.
-pub fn marca_tipo(ui: &mut Ui, tipo: &str) {
-    let (r, _) = ui.allocate_exact_size(Vec2::new(8.0, 16.0), Sense::hover());
-    ui.painter().rect_filled(Rect::from_center_size(r.center(), Vec2::splat(8.0)), 2.0, tema::color_tipo_orden(tipo));
+/// Forma de una marca de leyenda o de un tipo de orden.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Muestra {
+    Linea,
+    Discontinua,
+    Rayada,
+    Cuadrado,
+    CuadradoContorno,
+    Rombo,
 }
 
-/// Muestra de leyenda: trazo de 14 px (continuo o discontinuo) y texto.
-pub fn leyenda(ui: &mut Ui, color: Color32, texto: &str, discontinua: bool) {
+/// Dibuja una marca de leyenda centrada en `r`.
+pub fn dibujar_muestra(pt: &egui::Painter, r: Rect, color: Color32, m: Muestra) {
+    let pal = tema::p();
+    let c = r.center();
+    match m {
+        Muestra::Linea => {
+            pt.line_segment([Pos2::new(r.left(), c.y), Pos2::new(r.right(), c.y)], Stroke::new(2.0_f32, color));
+        }
+        Muestra::Discontinua => {
+            pt.extend(egui::Shape::dashed_line(&[Pos2::new(r.left(), c.y), Pos2::new(r.right(), c.y)], Stroke::new(2.0_f32, color), 4.0, 2.0));
+        }
+        Muestra::Rayada => {
+            let caja = Rect::from_center_size(c, Vec2::new(14.0, 10.0));
+            pt.rect(caja, 0.0, pal.campo, Stroke::new(1.0_f32, pal.borde), StrokeKind::Inside);
+            let pt2 = pt.with_clip_rect(caja.shrink(1.0));
+            for i in -3..5 {
+                let x = caja.left() + i as f32 * 4.0;
+                pt2.line_segment([Pos2::new(x, caja.bottom()), Pos2::new(x + 10.0, caja.top())], Stroke::new(1.5_f32, pal.borde));
+            }
+        }
+        Muestra::Cuadrado => {
+            pt.rect_filled(Rect::from_center_size(c, Vec2::splat(9.0)), 0.0, color);
+        }
+        Muestra::CuadradoContorno => {
+            pt.rect(Rect::from_center_size(c, Vec2::splat(9.0)), 0.0, color.gamma_multiply(0.35), Stroke::new(1.5_f32, color), StrokeKind::Inside);
+        }
+        Muestra::Rombo => {
+            let d = 5.5;
+            pt.add(egui::Shape::convex_polygon(vec![c + Vec2::new(0.0, -d), c + Vec2::new(d, 0.0), c + Vec2::new(0.0, d), c + Vec2::new(-d, 0.0)], color, Stroke::NONE));
+        }
+    }
+}
+
+/// Muestra de leyenda (18 px) y texto de 12 px.
+pub fn leyenda(ui: &mut Ui, color: Color32, texto: &str, m: Muestra) {
     let pal = tema::p();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        let (r, _) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), Sense::hover());
-        let a = Pos2::new(r.left(), r.center().y);
-        let b = Pos2::new(r.right(), r.center().y);
-        if discontinua {
-            ui.painter().extend(egui::Shape::dashed_line(&[a, b], Stroke::new(2.0_f32, color), 3.0, 2.0));
-        } else {
-            ui.painter().line_segment([a, b], Stroke::new(2.0_f32, color));
-        }
-        ui.label(egui::RichText::new(texto).size(12.0).color(pal.texto_2));
+        let (r, _) = ui.allocate_exact_size(Vec2::new(18.0, 14.0), Sense::hover());
+        dibujar_muestra(ui.painter(), r, color, m);
+        ui.label(egui::RichText::new(texto).size(12.0).color(pal.texto));
     });
+}
+
+/// Forma con la que se distingue un tipo de orden de mantenimiento además de su color.
+pub fn muestra_tipo(tipo: &str) -> Muestra {
+    let t = tipo.to_lowercase();
+    if t.contains("ensayo") || t.contains("curva") {
+        Muestra::CuadradoContorno
+    } else if t.contains("anual") {
+        Muestra::Rombo
+    } else {
+        Muestra::Cuadrado
+    }
+}
+
+/// Marca de 9 px con el color y la forma del tipo de orden de mantenimiento.
+pub fn marca_tipo(ui: &mut Ui, tipo: &str) {
+    let (r, _) = ui.allocate_exact_size(Vec2::new(10.0, 16.0), Sense::hover());
+    dibujar_muestra(ui.painter(), r, tema::color_tipo_orden(tipo), muestra_tipo(tipo));
+}
+
+/// Aviso en una barra negra con texto blanco y un botón blanco «Ocultar».
+///
+/// Returns:
+///     true si se pulsó «Ocultar».
+pub fn aviso_negro(ui: &mut Ui, texto: &str) -> bool {
+    let ancho = ui.available_width();
+    let g = ui.painter().layout(texto.to_string(), FontId::proportional(13.0), Color32::WHITE, ancho - 140.0);
+    let (r, _) = ui.allocate_exact_size(Vec2::new(ancho, (g.size().y + 20.0).max(44.0)), Sense::hover());
+    ui.painter().rect_filled(r, 0.0, tema::NEGRO);
+    ui.painter().galley(Pos2::new(r.left() + 16.0, r.center().y - g.size().y / 2.0), g, Color32::WHITE);
+    let b = Rect::from_min_size(Pos2::new(r.right() - 96.0, r.center().y - 14.0), Vec2::new(82.0, 28.0));
+    let resp = ui.interact(b, ui.id().with("ocultar_aviso"), Sense::click());
+    ui.painter().rect_filled(b, 0.0, if resp.hovered() { Color32::from_gray(230) } else { Color32::WHITE });
+    ui.painter().text(b.center(), Align2::CENTER_CENTER, "Ocultar", FontId::new(12.0, tema::semi()), tema::NEGRO);
+    resp.clicked()
 }
 
 /// Estado vacío centrado: un texto que explica qué falta y el botón de la acción que lo genera.
@@ -377,7 +815,7 @@ pub fn estado_vacio(ui: &mut Ui, texto: &str, accion: &str) -> bool {
     ui.vertical_centered(|ui| {
         ui.add_space((ui.available_height() / 2.0 - 30.0).max(8.0));
         ui.label(egui::RichText::new(texto).color(pal.texto_2));
-        if !accion.is_empty() && ui.button(accion).clicked() {
+        if !accion.is_empty() && boton(ui, EstiloBoton::Secundario, None, accion, "", true).clicked() {
             pulsado = true;
         }
     });
