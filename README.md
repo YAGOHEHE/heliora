@@ -17,6 +17,8 @@ en una sola aplicación de escritorio, sin conexión a internet.
 ![Python](https://img.shields.io/badge/Python-3.12-3776ab?logo=python&logoColor=white)
 [![Licencia MIT](https://img.shields.io/badge/licencia-MIT-2ea44f)](LICENSE)
 
+**Español** · [English](README.en.md) · [简体中文](README.zh-CN.md)
+
 [Instalar](#instalar) · [Funcionalidades](#funcionalidades) · [Arquitectura](#arquitectura) ·
 [Desarrollo](#desarrollo) · [Documentación](#documentación)
 
