@@ -62,8 +62,12 @@ def _residuo_relativo(A, z, c):
     return float(np.max(r / np.maximum(np.abs(A) @ np.abs(z) + np.abs(c), 1e-300)))
 
 
-def _resolver_o_aproximar(A, c):
-    """Solución de A·z = c; si A es singular (almacenes unidos rígidamente), la de mínimos cuadrados."""
+def _resolver_o_aproximar(A, c, aproximar):
+    """Solución de A·z = c.
+
+    Si A es singular y `aproximar` es cierto (hay almacenes que pueden estar unidos rígidamente), devuelve
+    la de mínimos cuadrados; si no, la red no tiene solución única y se lanza `MENSAJE_SINGULAR`.
+    """
     if not A.size:
         return np.zeros(0)
     try:
@@ -72,6 +76,8 @@ def _resolver_o_aproximar(A, c):
             return z
     except np.linalg.LinAlgError:
         pass
+    if not aproximar:
+        raise ValueError(MENSAJE_SINGULAR)
     return np.linalg.lstsq(A, c, rcond=None)[0]
 
 
@@ -450,16 +456,19 @@ class Red(Bloque):
             if error < TOL_NO_LINEAL:
                 break
         else:
-            # Se agotaron las iteraciones: el último iterado solo vale si cumple las ecuaciones
-            residuo = self._residuo_escalado(z, b, t, x, u)
-            if residuo > TOL_RESIDUO:
-                raise ValueError(
-                    f"La red no lineal no convergió en t = {t:.6g} s: tras {MAX_ITER_NO_LINEAL} iteraciones el último "
-                    f"cambio es {error:.3g} y el residuo escalado de sus ecuaciones {residuo:.3g} "
-                    f"(tolerancia {TOL_RESIDUO:g}). Elementos no lineales: "
-                    + ", ".join(e.etiqueta for e in self.din if e.no_lineal)[:300])
+            self._exigir_convergencia(z, b, t, x, u, error)
         self._clave_resolver = clave
         return z
+
+    def _exigir_convergencia(self, z, b, t, x, u, cambio):
+        """Lanza un error diagnóstico si el último iterado de la red no lineal no cumple sus ecuaciones."""
+        residuo = self._residuo_escalado(z, b, t, x, u)
+        if residuo > TOL_RESIDUO:
+            raise ValueError(
+                f"La red no lineal no convergió en t = {t:.6g} s: tras {MAX_ITER_NO_LINEAL} iteraciones el último "
+                f"cambio es {cambio:.3g} y el residuo escalado de sus ecuaciones {residuo:.3g} "
+                f"(tolerancia {TOL_RESIDUO:g}). Elementos no lineales: "
+                + ", ".join(e.etiqueta for e in self.din if e.no_lineal)[:300])
 
     def _estampar_din(self, z, b, t, x, u):
         """Matriz y término independiente con las estampas que dependen de la solución z."""
@@ -605,7 +614,7 @@ class Red(Bloque):
         for _ in range(MAX_ITER_NO_LINEAL if self.hay_no_lineal else 1):
             M, bb = self._estampar_din(z, b, t, xf, u) if self.din else (self.M, b)
             A, c = M[:-1, :-1], bb[:-1]
-            nuevo = _resolver_o_aproximar(A, c)
+            nuevo = _resolver_o_aproximar(A, c, aproximar=bool(self.almacen))
             if A.size and self.almacen and _residuo_relativo(A, nuevo, c) > 1e-9:
                 if not hasattr(self, "_pesos"):
                     self._pesos = self._pesos_almacen(t, xf, u)
@@ -616,6 +625,12 @@ class Red(Bloque):
             self._comprobar_finita(z, t)
             if cambio < TOL_NO_LINEAL * max(1.0, float(np.max(np.abs(nuevo))) if nuevo.size else 1.0):
                 break
+        else:
+            # Proyectada, la red no cumple sus ecuaciones por construcción (ni siquiera fuera de los
+            # almacenes: el par de un engranaje entre inercias queda indeterminado), así que el residuo
+            # no sirve para juzgar la convergencia.
+            if self.hay_no_lineal and not proyectado:
+                self._exigir_convergencia(z, b, t, xf, u, cambio)
         if proyectado and _residuo_relativo(A, z[:-1], c) > 1e-6:
             self.avisos_dae.add(
                 "Hay almacenes unidos rígidamente (condensadores en paralelo, inercias por un engranaje) con "

@@ -29,7 +29,7 @@ from __future__ import annotations
 import numpy as np
 import scipy.linalg
 
-from .solvers import Cancelado, ErrorSolver, _Eventos, _cruza, localizar_cruce
+from .solvers import Cancelado, ErrorSolver, _bucle_dopri, _Eventos, _cruza, localizar_cruce
 
 SEGURIDAD = 0.8
 CRECIMIENTO_MAX = 2.0
@@ -185,14 +185,17 @@ def bucle_dae(modelo, t, tf, rtol, atol, hmax, hmin, h_ini, cancelar=None, infor
     nx = S.nx
     x0 = modelo.iniciar(t, preparar=S.coherente)
     y = S.y_actual(x0)
-    if S.n == 0:
-        return x0, 0, 0
-    # Perturbación de las diferencias finitas: √eps·max(|y|, 1). Con un suelo menor, una corriente pequeña
-    # (mA) cambia una ecuación de nodo con términos de 1e5 menos que su redondeo y su entrada se pierde.
-    escala = np.ones(S.n)
     mayor = modelo.paso_mayor
     limite = modelo.proximo_evento
     cruces = modelo.cruces if modelo.hay_cruces else None
+    if S.n == 0:
+        # Sin estados ni red no hay ecuaciones implícitas: el diagrama de señal avanza como siempre y sus
+        # osciloscopios registran cada paso, no solo el instante inicial.
+        return _bucle_dopri(modelo.f, t, tf, x0, rtol, atol, hmax, hmin, h_ini, mayor, limite, cancelar,
+                            informe, cruces, stats)
+    # Perturbación de las diferencias finitas: √eps·max(|y|, 1). Con un suelo menor, una corriente pequeña
+    # (mA) cambia una ecuación de nodo con términos de 1e5 menos que su redondeo y su entrada se pierde.
+    escala = np.ones(S.n)
     eventos = _Eventos()
     t0 = t
     pasos = rechazos = 0
@@ -295,6 +298,9 @@ def bucle_dae(modelo, t, tf, rtol, atol, hmax, hmin, h_ini, cancelar=None, infor
                             Jy += np.outer(Fn - F - alfa * (S.Jp @ dy) - Jy @ dy, dy) / dd
                             lu = _factorizar(Jy + alfa * S.Jp) or lu
                     F = Fn
+                    # Un incremento pequeño no basta: el punto debe cumplir unas ecuaciones finitas
+                    if not np.all(np.isfinite(Fn)):
+                        break
                     if nd <= 1e-2 * TOL_NEWTON:
                         convergio = True
                         break
@@ -326,7 +332,9 @@ def bucle_dae(modelo, t, tf, rtol, atol, hmax, hmin, h_ini, cancelar=None, infor
         err = _norma(k_err * (y1 - pred)[S.dif], w_tol[S.dif]) if np.any(S.dif) else 0.0
         if not np.isfinite(err):
             err = 1e12
-        if err > 1.0 and hp > hminimo:
+        if err > 1.0:
+            if hp <= hminimo:
+                raise ErrorSolver(f"No se alcanza la tolerancia en t={t:.6g} con paso {hp:.3g}")
             rechazos += 1
             h = max(hminimo, hp * max(REDUCCION_MIN, SEGURIDAD * err ** (-1.0 / (orden + 1))))
             continue
