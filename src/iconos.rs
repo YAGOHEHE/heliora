@@ -185,16 +185,37 @@ pub fn registrar(ctx: &egui::Context) {
         );
         ctx.include_bytes(uri(i), svg.into_bytes());
     }
+    let invertido = LOGO.replace("#000000", "#PROVISIONAL").replace("#FFFFFF", "#000000").replace("#PROVISIONAL", "#FFFFFF");
+    ctx.include_bytes(uri_logo(false), LOGO.as_bytes().to_vec());
+    ctx.include_bytes(uri_logo(true), invertido.into_bytes());
+}
+
+/// SVG del logotipo de la barra superior, tal como está en el diseño.
+const LOGO: &str = include_str!("../diseno/icono/heliora_icono_pequeno.svg");
+
+/// Dirección del logotipo; la variante invertida se usa en tema oscuro.
+fn uri_logo(invertido: bool) -> &'static str {
+    if invertido { "bytes://heliora/logo_invertido.svg" } else { "bytes://heliora/logo.svg" }
+}
+
+/// Dibuja el logotipo en `r` (cuadrado), rasterizado al tamaño exacto en píxeles.
+pub fn logo(pt: &Painter, r: Rect, invertido: bool) {
+    dibujar_uri(pt, r, uri_logo(invertido), Color32::WHITE);
 }
 
 /// Dibuja `icono` centrado en `r`, rasterizado al tamaño exacto en píxeles y teñido de `color`.
 pub fn dibujar(pt: &Painter, r: Rect, icono: Icono, color: Color32) {
+    dibujar_uri(pt, r, &uri(icono), color);
+}
+
+/// Rasteriza la imagen registrada en `uri` al tamaño de `r` y la pinta teñida de `color`.
+fn dibujar_uri(pt: &Painter, r: Rect, uri: &str, color: Color32) {
     let lado = r.width().min(r.height());
     let cuadro = Rect::from_center_size(r.center(), egui::Vec2::splat(lado));
     let ppp = pt.ctx().pixels_per_point();
     let px = (lado * ppp).round().max(1.0) as u32;
     let pista = egui::SizeHint::Size { width: px, height: px, maintain_aspect_ratio: true };
-    match pt.ctx().try_load_texture(&uri(icono), TextureOptions::LINEAR, pista) {
+    match pt.ctx().try_load_texture(uri, TextureOptions::LINEAR, pista) {
         Ok(egui::load::TexturePoll::Ready { texture }) => {
             let uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
             pt.image(texture.id, cuadro, uv, color);
@@ -215,6 +236,10 @@ mod pruebas {
         for i in TODOS {
             let r = ctx.try_load_texture(&uri(i), TextureOptions::LINEAR, egui::SizeHint::Size { width: 24, height: 24, maintain_aspect_ratio: true });
             assert!(r.is_ok(), "{i:?}: {:?}", r.err());
+        }
+        for invertido in [false, true] {
+            let r = ctx.try_load_texture(uri_logo(invertido), TextureOptions::LINEAR, egui::SizeHint::Size { width: 22, height: 22, maintain_aspect_ratio: true });
+            assert!(r.is_ok(), "logo {invertido}: {:?}", r.err());
         }
     }
 }

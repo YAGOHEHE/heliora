@@ -392,30 +392,10 @@ pub fn cuadrado(pt: &egui::Painter, centro: Pos2, color: Color32) {
     pt.rect_filled(Rect::from_center_size(centro, Vec2::splat(8.0)), 2.0, color);
 }
 
-/// El logotipo de `diseno/icono/heliora_icono_pequeno.svg`: sol naciente sobre un panel, en un
-/// cuadrado negro (blanco en tema oscuro). Se dibuja en una rejilla de 512 unidades.
+/// El logotipo: `diseno/icono/heliora_icono_pequeno.svg` en tema claro y la misma imagen con blanco
+/// y negro intercambiados en tema oscuro.
 pub fn logo(pt: &egui::Painter, r: Rect) {
-    let s = r.width().min(r.height()) / 512.0;
-    let o = r.center() - Vec2::splat(256.0 * s);
-    let q = |x: f32, y: f32| Pos2::new(o.x + x * s, o.y + y * s);
-    let (fondo, trazo) = if modo() == Modo::Claro { (NEGRO, Color32::WHITE) } else { (Color32::WHITE, NEGRO) };
-    pt.rect_filled(Rect::from_min_max(q(16.0, 16.0), q(496.0, 496.0)), 0.0, fondo);
-    let mut medio_disco = vec![q(160.0, 292.0)];
-    medio_disco.extend((0..=24).map(|i| {
-        let a = std::f32::consts::PI * (1.0 + i as f32 / 24.0);
-        q(256.0 + 96.0 * a.cos(), 292.0 + 96.0 * a.sin())
-    }));
-    pt.add(egui::Shape::convex_polygon(medio_disco, trazo, Stroke::NONE));
-    let rayo = Stroke::new(32.0 * s, trazo);
-    for (a, b) in [((157.3, 220.3), (118.5, 192.1)), ((256.0, 170.0), (256.0, 122.0)), ((354.7, 220.3), (393.5, 192.1))] {
-        pt.line_segment([q(a.0, a.1), q(b.0, b.1)], rayo);
-    }
-    let panel = vec![q(170.0, 322.0), q(342.0, 322.0), q(402.0, 420.0), q(110.0, 420.0)];
-    pt.add(egui::Shape::closed_line(panel, Stroke::new(26.0 * s, trazo)));
-    let fino = Stroke::new(16.0 * s, trazo);
-    for (a, b) in [((140.0, 371.0), (372.0, 371.0)), ((227.0, 322.0), (207.0, 420.0)), ((285.0, 322.0), (305.0, 420.0))] {
-        pt.line_segment([q(a.0, a.1), q(b.0, b.1)], fino);
-    }
+    crate::iconos::logo(pt, r, modo() == Modo::Oscuro);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
