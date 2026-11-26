@@ -184,7 +184,6 @@ heliora/
 │   └── validar_todo.py  banco de pruebas completo
 ├── packaging/           instaladores de Windows y macOS
 ├── docs/                documentación técnica y capturas
-├── historial/           estado del proyecto y registro de cada sesión
 └── MECHANICS.md         origen de cada valor del modelo
 ```
 
@@ -195,7 +194,6 @@ heliora/
 | [docs/desarrollo.md](docs/desarrollo.md) | Entorno local, mapa de archivos, pruebas, procedencia de resultados, proyectos y Git, CI |
 | [MECHANICS.md](MECHANICS.md) | De dónde sale cada valor del modelo y cuáles son estimados |
 | [docs/diseno_motor_dae.md](docs/diseno_motor_dae.md) | Diseño propuesto del motor DAE (sin construir) |
-| [historial/ESTADO.md](historial/ESTADO.md) | Estado actual: qué está verificado y qué no |
 
 ## Licencia
 

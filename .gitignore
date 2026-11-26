@@ -14,3 +14,8 @@ engine/ultima_validacion.json
 
 # Sistema
 .DS_Store
+
+# Asistentes de IA y registro de trabajo (locales, no se publican)
+.claude/
+CLAUDE.md
+historial/
