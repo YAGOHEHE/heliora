@@ -35,6 +35,17 @@ pub fn apilar(ancho: f32, spans: &[usize]) -> bool {
     ancho < ANCHO_APILAR && spans.len() > 1 && spans.iter().all(|&s| s >= 4)
 }
 
+/// Marca la rueda del ratón como usada en este cuadro.
+///
+/// El lienzo y las gráficas la usan para el zoom; sin esto, la zona desplazable que los contiene
+/// (páginas apiladas en ventanas estrechas) también se movería con el mismo giro.
+pub fn consumir_rueda(ui: &Ui) {
+    ui.ctx().input_mut(|i| {
+        i.smooth_scroll_delta = Vec2::ZERO;
+        i.raw_scroll_delta = Vec2::ZERO;
+    });
+}
+
 /// Coloca una fila de celdas de la rejilla dentro del espacio disponible.
 ///
 /// Cada celda recibe su propio `Ui` con el rectángulo exacto (ancho por columnas, alto `alto`).
