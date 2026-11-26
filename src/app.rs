@@ -243,6 +243,7 @@ impl App {
         let guardado = cc.storage.and_then(|s| s.get_string("modo"));
         let modo = tema::Modo::desde(op.modo.as_deref().or(guardado.as_deref()).unwrap_or("claro"));
         tema::aplicar(&cc.egui_ctx, modo);
+        crate::iconos::registrar(&cc.egui_ctx);
         let modulo = match op.modulo.as_deref() {
             Some("calculo") => Modulo::Calculo,
             Some("bloques") => Modulo::Bloques,
@@ -532,7 +533,7 @@ impl App {
             ui.add_space(8.0);
             ocupado = ocupado.union(ui.add(egui::ProgressBar::new(self.editor.avance).desired_width(80.0).desired_height(10.0).corner_radius(0)).rect);
         } else {
-            let b = ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::Simular), "Simular", "F5", true);
+            let b = ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::SimularLleno), "Simular", "F5", true);
             if b.clicked() {
                 self.simular();
             }
@@ -1356,7 +1357,7 @@ impl App {
                 ir_bloques = true;
             }
             if let Some(g) = &guion {
-                if ui::boton(&mut fila, ui::EstiloBoton::Secundario, Some(Icono::Informe), g, "", false).clicked() {
+                if ui::boton(&mut fila, ui::EstiloBoton::Secundario, Some(Icono::Documento), g, "", false).clicked() {
                     ir_calculo = true;
                 }
             }
@@ -1497,7 +1498,7 @@ impl App {
                 let mut pie = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(Pos2::new(r.left() + 14.0, r.bottom() - 48.0), Pos2::new(r.right() - 14.0, r.bottom() - 14.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
                 pie.spacing_mut().item_spacing.x = 14.0;
                 let texto_boton = if historica.is_some() { "Volver a validar" } else { "Ejecutar" };
-                if pie.add_enabled_ui(!ocupada && listo, |ui| ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::Simular), texto_boton, "", false)).inner.clicked() {
+                if pie.add_enabled_ui(!ocupada && listo, |ui| ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::SimularLleno), texto_boton, "", false)).inner.clicked() {
                     ejecutar = true;
                 }
                 if enlace(&mut pie, "Ver el error de cada prueba").clicked() {
@@ -1607,7 +1608,7 @@ impl App {
                 p.rect(r, 0.0, if resp.hovered() { pal.campo } else { pal.panel }, egui::Stroke::new(1.0_f32, pal.borde), egui::StrokeKind::Inside);
                 let caja = Rect::from_min_size(Pos2::new(x_icono, r.center().y - 15.0), Vec2::splat(30.0));
                 p.rect_filled(caja, 0.0, pal.chip);
-                crate::iconos::dibujar(p, Rect::from_center_size(caja.center(), Vec2::splat(16.0)), Icono::Informe, pal.texto);
+                crate::iconos::dibujar(p, Rect::from_center_size(caja.center(), Vec2::splat(16.0)), Icono::Orden, pal.texto);
                 let nombre = o["nombre"].as_str().unwrap_or("");
                 let id = o["id"].as_str().unwrap_or("");
                 let mut job = egui::text::LayoutJob::default();

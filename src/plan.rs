@@ -201,11 +201,11 @@ fn icono_pestana(p: Pestana) -> Icono {
     match p {
         Pestana::Analisis => Icono::Grafica,
         Pestana::Tablero => Icono::Calendario,
-        Pestana::Ordenes => Icono::Lista,
-        Pestana::Catalogo => Icono::Tabla,
-        Pestana::Planes => Icono::Informe,
-        Pestana::Amef => Icono::Raices,
-        Pestana::Historial => Icono::Deshacer,
+        Pestana::Ordenes => Icono::Orden,
+        Pestana::Catalogo => Icono::Equipos,
+        Pestana::Planes => Icono::Lista,
+        Pestana::Amef => Icono::Amef,
+        Pestana::Historial => Icono::Historial,
     }
 }
 
@@ -401,7 +401,7 @@ impl Mantenimiento {
                     ui.close();
                 }
             });
-            match ui::columna_cinta(ui, &[(Icono::NuevoDocumento, &archivo, false), (Icono::Guardar, "Guardar", plan_abierto), (Icono::Nuevo, "Plan de ejemplo", true)]) {
+            match ui::columna_cinta(ui, &[(Icono::Documento, &archivo, false), (Icono::Guardar, "Guardar", plan_abierto), (Icono::NuevoDocumento, "Plan de ejemplo", true)]) {
                 Some(1) => self.cinta_pendiente = Some(AccionCinta::Guardar(false)),
                 Some(2) => self.cinta_pendiente = Some(AccionCinta::Pedir(Continuar::Ejemplo)),
                 _ => {}
@@ -1055,7 +1055,7 @@ impl Mantenimiento {
     fn panel_calendario(&mut self, ui: &mut egui::Ui, ordenes: &[Value], acciones: &mut Vec<Accion>) {
         let pal = tema::p();
         Self::pie_panel(ui, "pie_calendario", |ui| {
-            if ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::Mas), "Nueva orden", "", false).clicked() {
+            if ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::Nuevo), "Nueva orden", "", false).clicked() {
                 acciones.push(Accion::NuevaOrden);
             }
         });
@@ -1248,7 +1248,7 @@ impl Mantenimiento {
                     ui.label(egui::RichText::new(format!("{total} órdenes")).size(12.0).color(pal.texto_2));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
-                        if ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::Mas), "Nueva orden", "", true).clicked() {
+                        if ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::Nuevo), "Nueva orden", "", true).clicked() {
                             acciones.push(Accion::NuevaOrden);
                         }
                         let mut cambio = fecha_filtro(ui, "Hasta", &mut self.f_hasta);
@@ -1466,7 +1466,7 @@ impl Mantenimiento {
                     }
                 }
                 ui.add_space(10.0);
-                if ui::boton_texto(ui, Some(Icono::Cerrar), "Borrar orden").clicked() {
+                if ui::boton_texto(ui, Some(Icono::Borrar), "Borrar orden").clicked() {
                     boton = Some(Accion::Confirmar(Confirmar::BorrarOrden(id.clone())));
                 }
             });

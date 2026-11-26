@@ -208,7 +208,7 @@ impl Validacion {
             }
         } else {
             let texto = if self.historica().is_some() { "Volver a validar" } else { "Ejecutar todas" };
-            if ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::Simular), texto, "", false).clicked() {
+            if ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::SimularLleno), texto, "", false).clicked() {
                 self.ejecutar(motor, 4);
             }
         }

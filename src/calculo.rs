@@ -113,11 +113,11 @@ impl Calculo {
             }
         });
         interfaz::grupo_cinta(ui, "Espacio de trabajo", |ui| {
-            if interfaz::boton_cinta(ui, Icono::Descargar, "Importar datos", false).clicked() {
+            if interfaz::boton_cinta(ui, Icono::Importar, "Importar datos", false).clicked() {
                 self.pide_importar = true;
             }
             let con_seleccion = self.seleccion.is_some();
-            match interfaz::columna_cinta(ui, &[(Icono::Descargar, "Exportar variable", con_seleccion), (Icono::Cerrar, "Borrar todo", true)]) {
+            match interfaz::columna_cinta(ui, &[(Icono::Descargar, "Exportar variable", con_seleccion), (Icono::Borrar, "Borrar todo", true)]) {
                 Some(0) => {
                     if let Some(nombre) = self.seleccion.clone() {
                         Calculo::exportar_variable(motor, &nombre);
@@ -299,7 +299,7 @@ impl Calculo {
             en_celda(ui, script, "calculo_script", |ui| {
                 let titulo = format!("Script · {}", self.guiones.get(self.activo).map_or("", |g| g.nombre.as_str()));
                 let acciones = |ui: &mut egui::Ui| {
-                    ejecutar |= interfaz::boton(ui, interfaz::EstiloBoton::Principal, Some(Icono::Simular), "Ejecutar", "F9", true).clicked();
+                    ejecutar |= interfaz::boton(ui, interfaz::EstiloBoton::Principal, Some(Icono::SimularLleno), "Ejecutar", "F9", true).clicked();
                     ui.add(egui::Label::new(egui::RichText::new("Python · np, pd, linalg, optimize, interpolate, signal, stats").size(12.0).color(pal.texto_2)).truncate());
                 };
                 interfaz::tarjeta_con_titulo(ui, &titulo, acciones, |ui| self.editor(ui));
@@ -325,8 +325,8 @@ impl Calculo {
             en_celda(ui, espacio, "calculo_espacio", |ui| {
                 let (mut borrar, mut importar) = (false, false);
                 let acciones = |ui: &mut egui::Ui| {
-                    borrar = interfaz::boton_icono(ui, Icono::Cerrar, 16.0, "Borrar todo el espacio de trabajo").clicked();
-                    importar = interfaz::boton(ui, interfaz::EstiloBoton::Secundario, Some(Icono::Descargar), "Importar datos", "", true).on_hover_text("CSV, TSV, TXT o Parquet").clicked();
+                    borrar = interfaz::boton_icono(ui, Icono::Borrar, 16.0, "Borrar todo el espacio de trabajo").clicked();
+                    importar = interfaz::boton(ui, interfaz::EstiloBoton::Secundario, Some(Icono::Importar), "Importar datos", "", true).on_hover_text("CSV, TSV, TXT o Parquet").clicked();
                 };
                 interfaz::tarjeta_con_titulo(ui, "Espacio de trabajo", acciones, |ui| self.variables(ui, motor, c));
                 self.atender_acciones_variables(motor, c, borrar, importar);
