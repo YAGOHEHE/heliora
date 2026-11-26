@@ -101,6 +101,48 @@ fn color_hex(s: &str) -> Option<Color32> {
     tema::color_hex(s)
 }
 
+/// Botón «Ampliar» en la esquina superior derecha de `zona` y, si está activo, ventana grande con
+/// la misma gráfica dibujada por `dibujar`. Se cierra con «Cerrar», Esc o un clic fuera.
+///
+/// Returns:
+///     La acción pedida desde la ventana grande (exportar), si la hay.
+fn ampliar(ui: &mut egui::Ui, zona: Rect, titulo: &str, mut dibujar: impl FnMut(&mut egui::Ui, f32) -> Option<Accion>) -> Option<Accion> {
+    let pal = tema::p();
+    let id = ui.id().with(("ampliar_grafica", titulo, zona.min.x as i32, zona.min.y as i32));
+    let boton = Rect::from_min_size(Pos2::new(zona.right() - 26.0, zona.top() + 4.0), Vec2::splat(22.0));
+    if zona.width() > 80.0 && zona.height() > 30.0 {
+        let r = ui.interact(boton, id.with("boton"), Sense::click()).on_hover_text("Ampliar la gráfica");
+        // Fondo y borde propios: sobre series densas el icono solo no se distinguiría
+        ui.painter().rect(boton, 0.0, if r.hovered() { pal.realce } else { pal.panel }, Stroke::new(1.0_f32, pal.borde), egui::StrokeKind::Inside);
+        crate::iconos::dibujar(ui.painter(), boton.shrink(4.0), crate::iconos::Icono::Encuadrar, pal.texto);
+        if r.clicked() {
+            ui.ctx().data_mut(|d| d.insert_temp(id, true));
+        }
+    }
+    if !ui.ctx().data(|d| d.get_temp::<bool>(id)).unwrap_or(false) {
+        return None;
+    }
+    let pantalla = ui.ctx().content_rect();
+    let tam = Vec2::new(pantalla.width() * 0.88, pantalla.height() * 0.84);
+    let mut accion = None;
+    let mut cerrar = false;
+    let modal = egui::Modal::new(id.with("ventana")).show(ui.ctx(), |ui| {
+        ui.set_width(tam.x);
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(if titulo.is_empty() { "Gráfica" } else { titulo }).family(tema::semi()).size(15.0).color(pal.texto));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                cerrar = crate::ui::boton(ui, crate::ui::EstiloBoton::Secundario, Some(crate::iconos::Icono::Cerrar), "Cerrar", "Esc", true).clicked();
+            });
+        });
+        ui.add_space(8.0);
+        accion = dibujar(ui, (tam.y - 60.0).max(200.0));
+    });
+    if cerrar || modal.should_close() {
+        ui.ctx().data_mut(|d| d.remove::<bool>(id));
+    }
+    accion
+}
+
 impl Figura {
     /// Construye la figura a partir del JSON del motor.
     pub fn desde_json(v: &Value) -> Figura {
@@ -389,7 +431,18 @@ impl Fig2D {
     }
 
     /// Como `mostrar_con`, con franjas sombreadas bajo las series y marcas verticales sobre ellas.
+    /// Lleva un botón «Ampliar» que abre la misma gráfica en una ventana grande.
     pub fn mostrar_decorada(&mut self, ui: &mut egui::Ui, alto: f32, cabecera: bool, leyenda: bool, deco: &Decoracion) -> Option<Accion> {
+        let (mut accion, rect) = self.dibujar_decorada(ui, alto, cabecera, leyenda, deco);
+        let titulo = self.titulo.clone();
+        if let Some(a) = ampliar(ui, rect, &titulo, |ui, alto| self.dibujar_decorada(ui, alto, true, true, deco).0) {
+            accion = Some(a);
+        }
+        accion
+    }
+
+    /// Dibuja la gráfica y devuelve la acción pedida y el rectángulo de la zona de trazado.
+    fn dibujar_decorada(&mut self, ui: &mut egui::Ui, alto: f32, cabecera: bool, leyenda: bool, deco: &Decoracion) -> (Option<Accion>, Rect) {
         let mut accion = None;
         if cabecera {
             self.cabecera(ui, &mut accion);
@@ -606,7 +659,7 @@ impl Fig2D {
         if let Some(Accion::Png(_)) = accion {
             accion = Some(Accion::Png(rect));
         }
-        accion
+        (accion, rect)
     }
 
     /// Título y botones de exportación encima de la gráfica.
@@ -818,7 +871,18 @@ impl Fig3D {
         (Pos2::new(centro.x + x1 * s, centro.y + y2 * s), prof)
     }
 
+    /// Dibuja la superficie con un botón «Ampliar» que la abre en una ventana grande.
     pub fn mostrar(&mut self, ui: &mut egui::Ui, alto: f32) -> Option<Accion> {
+        let (mut accion, rect) = self.dibujar(ui, alto);
+        let titulo = self.titulo.clone();
+        if let Some(a) = ampliar(ui, rect, &titulo, |ui, alto| self.dibujar(ui, alto).0) {
+            accion = Some(a);
+        }
+        accion
+    }
+
+    /// Dibuja la superficie y devuelve la acción pedida y el rectángulo de la zona de trazado.
+    fn dibujar(&mut self, ui: &mut egui::Ui, alto: f32) -> (Option<Accion>, Rect) {
         let mut accion = None;
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(&self.titulo).strong());
@@ -894,7 +958,7 @@ impl Fig3D {
         if let Some(Accion::Png(_)) = accion {
             accion = Some(Accion::Png(rect));
         }
-        accion
+        (accion, rect)
     }
 
     fn caras(&self, rx: [f64; 2], ry: [f64; 2], rz: [f64; 2]) -> Vec<([[f32; 3]; 4], Color32, f32)> {
@@ -1173,6 +1237,33 @@ mod pruebas {
 
     fn figura(series: Vec<Serie>) -> Fig2D {
         Fig2D { titulo: String::new(), xlabel: "Tiempo [s]".into(), ylabel: String::new(), series, lineas_h: vec![], log_x: false, log_y: false, vista: None, nota: String::new() }
+    }
+
+    #[test]
+    fn el_boton_ampliar_abre_la_grafica_en_una_ventana_y_esc_la_cierra() {
+        let ctx = egui::Context::default();
+        tema::aplicar(&ctx, tema::Modo::Claro);
+        crate::iconos::registrar(&ctx);
+        let mut f = figura(vec![serie("P", &[0.0, 1.0], &[0.0, 1.0])]);
+        let mut cuadro = |tiempo: f64, eventos: Vec<egui::Event>| {
+            let _ = ctx.run(egui::RawInput { events: eventos, time: Some(tiempo), screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 700.0))), ..Default::default() }, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    f.mostrar_con(ui, 300.0, false, false);
+                });
+            });
+            ctx.memory(|m| m.top_modal_layer()).is_some()
+        };
+        assert!(!cuadro(0.0, vec![]));
+        // El botón está en la esquina superior derecha de la zona de trazado
+        let boton = Pos2::new(ctx.content_rect().right() - 8.0 - 15.0, 8.0 + 15.0);
+        let pulsar = |pressed| egui::Event::PointerButton { pos: boton, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        cuadro(0.1, vec![egui::Event::PointerMoved(boton)]);
+        cuadro(0.2, vec![pulsar(true)]);
+        cuadro(0.3, vec![pulsar(false)]);
+        assert!(cuadro(0.4, vec![]), "la ventana ampliada no se abrió");
+        let esc = egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        cuadro(0.5, vec![esc]);
+        assert!(!cuadro(0.6, vec![]), "Esc no cerró la ventana ampliada");
     }
 
     #[test]

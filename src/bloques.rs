@@ -1179,16 +1179,21 @@ impl Editor {
     pub fn ui(&mut self, ui: &mut egui::Ui, motor: &mut Motor, c: &mut Compartido) {
         let pal = tema::p();
         self.atender_pedido(ui.ctx(), motor, c);
-        let ancho_lib = if self.lib_plegada { 40.0 } else { 260.0 };
-        egui::SidePanel::left("panel_libreria").exact_width(ancho_lib).resizable(false).frame(egui::Frame::new().fill(pal.panel)).show_inside(ui, |ui| {
+        // Plegada tiene ancho fijo; desplegada se ajusta arrastrando el borde y egui recuerda el ancho
+        let libreria = if self.lib_plegada {
+            egui::SidePanel::left("panel_libreria_plegada").exact_width(40.0).resizable(false)
+        } else {
+            egui::SidePanel::left("panel_libreria").default_width(260.0).width_range(200.0..=480.0).resizable(true)
+        };
+        libreria.frame(egui::Frame::new().fill(pal.panel)).show_inside(ui, |ui| {
             let r = ui.max_rect();
             ui.painter().line_segment([r.right_top(), r.right_bottom()], Stroke::new(1.0_f32, pal.linea));
             self.panel_libreria(ui);
         });
-        egui::SidePanel::right("panel_inspector").exact_width(360.0).resizable(false).frame(egui::Frame::new().fill(pal.panel)).show_inside(ui, |ui| {
+        egui::SidePanel::right("panel_inspector").default_width(360.0).width_range(280.0..=720.0).resizable(true).frame(egui::Frame::new().fill(pal.panel)).show_inside(ui, |ui| {
             let r = ui.max_rect();
             ui.painter().line_segment([r.left_top(), r.left_bottom()], Stroke::new(1.0_f32, pal.linea));
-            egui::TopBottomPanel::bottom("panel_diagnostico").exact_height(140.0).frame(egui::Frame::new().fill(pal.panel)).show_inside(ui, |ui| {
+            egui::TopBottomPanel::bottom("panel_diagnostico").default_height(140.0).height_range(80.0..=480.0).resizable(true).frame(egui::Frame::new().fill(pal.panel)).show_inside(ui, |ui| {
                 ui.painter().line_segment([ui.max_rect().left_top(), ui.max_rect().right_top()], Stroke::new(1.0_f32, pal.linea));
                 self.diagnostico_y_consola(ui);
             });
@@ -1223,7 +1228,9 @@ impl Editor {
             }
             if self.osc_visibles {
                 egui::TopBottomPanel::bottom("franja_osciloscopios")
-                    .exact_height(190.0)
+                    .default_height(190.0)
+                    .height_range(120.0..=640.0)
+                    .resizable(true)
                     .frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(20, 8)))
                     .show_inside(ui, |ui| {
                         let r = ui.max_rect();
@@ -2455,6 +2462,73 @@ fn dist_seg(p: Pos2, a: Pos2, b: Pos2) -> f32 {
     (a + ab * t).distance(p)
 }
 
+
+/// Agrupa las fichas por categoría, para la página de referencia.
+pub fn por_categoria(fichas: &HashMap<String, Ficha>) -> BTreeMap<String, Vec<Ficha>> {
+    let mut m: BTreeMap<String, Vec<Ficha>> = BTreeMap::new();
+    for f in fichas.values() {
+        m.entry(f.categoria.clone()).or_default().push(f.clone());
+    }
+    for v in m.values_mut() {
+        v.sort_by(|a, b| a.nombre.cmp(&b.nombre));
+    }
+    m
+}
+
+
+/// Ordena de forma estable un valor de diagrama: bloques por id y conexiones por extremos, en
+/// todos los niveles. Las claves ya salen ordenadas (los mapas de serde_json son ordenados).
+fn ordenar_canonico(v: &mut Value) {
+    match v {
+        Value::Object(m) => {
+            if let Some(Value::Array(b)) = m.get_mut("bloques") {
+                b.sort_by(|x, y| x["id"].as_str().unwrap_or("").cmp(y["id"].as_str().unwrap_or("")));
+            }
+            if let Some(Value::Array(c)) = m.get_mut("conexiones") {
+                let clave = |x: &Value| format!("{}\u{1}{}\u{1}{}\u{1}{}", x["de"][0].as_str().unwrap_or(""), x["de"][1].as_str().unwrap_or(""), x["a"][0].as_str().unwrap_or(""), x["a"][1].as_str().unwrap_or(""));
+                c.sort_by_key(clave);
+            }
+            for (_, x) in m.iter_mut() {
+                ordenar_canonico(x);
+            }
+        }
+        Value::Array(a) => {
+            for x in a.iter_mut() {
+                ordenar_canonico(x);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Texto JSON canónico de un diagrama: el mismo diagrama da siempre los mismos bytes.
+pub fn json_canonico(d: &Diagrama) -> Result<String, String> {
+    let mut v = serde_json::to_value(d).map_err(|e| e.to_string())?;
+    ordenar_canonico(&mut v);
+    let mut t = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
+    t.push('\n');
+    Ok(t)
+}
+
+/// Bloques y cables del nivel raíz con sus posiciones en el lienzo, para la vista previa de Inicio.
+pub struct VistaPrevia {
+    pub bloques: Vec<Rect>,
+    /// Pares (origen, destino) como índices de `bloques`.
+    pub cables: Vec<(usize, usize)>,
+}
+
+impl Editor {
+    /// Rectángulos de los bloques del nivel raíz (con el alto nominal de un bloque) y sus conexiones.
+    pub fn vista_previa(&self) -> VistaPrevia {
+        const ALTO: f32 = 56.0;
+        let s = &self.diagrama.sistema;
+        let bloques = s.bloques.iter().map(|b| Rect::from_min_size(Pos2::new(b.x, b.y), Vec2::new(ANCHO, ALTO))).collect();
+        let indice = |id: &str| s.bloques.iter().position(|b| b.id == id);
+        let cables = s.conexiones.iter().filter_map(|c| Some((indice(&c.de.0)?, indice(&c.a.0)?))).collect();
+        VistaPrevia { bloques, cables }
+    }
+}
+
 #[cfg(test)]
 mod pruebas {
     use super::*;
@@ -2651,71 +2725,5 @@ mod pruebas {
         let (p, _) = puertos_de(&b, &e.fichas);
         assert_eq!(p.iter().filter(|q| q.clase == Clase::Entrada).count(), 3);
         assert_eq!(p.iter().filter(|q| q.clase == Clase::Salida).count(), 1);
-    }
-}
-
-/// Agrupa las fichas por categoría, para la página de referencia.
-pub fn por_categoria(fichas: &HashMap<String, Ficha>) -> BTreeMap<String, Vec<Ficha>> {
-    let mut m: BTreeMap<String, Vec<Ficha>> = BTreeMap::new();
-    for f in fichas.values() {
-        m.entry(f.categoria.clone()).or_default().push(f.clone());
-    }
-    for v in m.values_mut() {
-        v.sort_by(|a, b| a.nombre.cmp(&b.nombre));
-    }
-    m
-}
-
-
-/// Ordena de forma estable un valor de diagrama: bloques por id y conexiones por extremos, en
-/// todos los niveles. Las claves ya salen ordenadas (los mapas de serde_json son ordenados).
-fn ordenar_canonico(v: &mut Value) {
-    match v {
-        Value::Object(m) => {
-            if let Some(Value::Array(b)) = m.get_mut("bloques") {
-                b.sort_by(|x, y| x["id"].as_str().unwrap_or("").cmp(y["id"].as_str().unwrap_or("")));
-            }
-            if let Some(Value::Array(c)) = m.get_mut("conexiones") {
-                let clave = |x: &Value| format!("{}\u{1}{}\u{1}{}\u{1}{}", x["de"][0].as_str().unwrap_or(""), x["de"][1].as_str().unwrap_or(""), x["a"][0].as_str().unwrap_or(""), x["a"][1].as_str().unwrap_or(""));
-                c.sort_by_key(clave);
-            }
-            for (_, x) in m.iter_mut() {
-                ordenar_canonico(x);
-            }
-        }
-        Value::Array(a) => {
-            for x in a.iter_mut() {
-                ordenar_canonico(x);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Texto JSON canónico de un diagrama: el mismo diagrama da siempre los mismos bytes.
-pub fn json_canonico(d: &Diagrama) -> Result<String, String> {
-    let mut v = serde_json::to_value(d).map_err(|e| e.to_string())?;
-    ordenar_canonico(&mut v);
-    let mut t = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
-    t.push('\n');
-    Ok(t)
-}
-
-/// Bloques y cables del nivel raíz con sus posiciones en el lienzo, para la vista previa de Inicio.
-pub struct VistaPrevia {
-    pub bloques: Vec<Rect>,
-    /// Pares (origen, destino) como índices de `bloques`.
-    pub cables: Vec<(usize, usize)>,
-}
-
-impl Editor {
-    /// Rectángulos de los bloques del nivel raíz (con el alto nominal de un bloque) y sus conexiones.
-    pub fn vista_previa(&self) -> VistaPrevia {
-        const ALTO: f32 = 56.0;
-        let s = &self.diagrama.sistema;
-        let bloques = s.bloques.iter().map(|b| Rect::from_min_size(Pos2::new(b.x, b.y), Vec2::new(ANCHO, ALTO))).collect();
-        let indice = |id: &str| s.bloques.iter().position(|b| b.id == id);
-        let cables = s.conexiones.iter().filter_map(|c| Some((indice(&c.de.0)?, indice(&c.a.0)?))).collect();
-        VistaPrevia { bloques, cables }
     }
 }

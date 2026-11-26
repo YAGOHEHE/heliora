@@ -980,7 +980,7 @@ impl App {
             });
             return;
         }
-        egui::SidePanel::left("esquema").exact_width(280.0).resizable(false).frame(egui::Frame::new().fill(pal.panel).stroke(egui::Stroke::new(1.0_f32, pal.linea))).show(ctx, |ui| {
+        egui::SidePanel::left("esquema").default_width(280.0).width_range(200.0..=520.0).resizable(true).frame(egui::Frame::new().fill(pal.panel).stroke(egui::Stroke::new(1.0_f32, pal.linea))).show(ctx, |ui| {
             egui::Frame::new().inner_margin(egui::Margin { left: 10, right: 6, top: 6, bottom: 0 }).show(ui, |ui| {
                 let mut pestana = self.pestana_esquema;
                 ui::barra_pestanas(ui, &["Esquema del proyecto", "Opciones"], &mut pestana, |ui| {
@@ -2143,6 +2143,45 @@ impl eframe::App for App {
     }
 }
 
+
+/// Fecha ISO como «25 nov».
+fn fecha_corta(f: &str) -> String {
+    const MESES: [&str; 12] = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+    let mut t = f.split('-');
+    match (t.next(), t.next().and_then(|m| m.parse::<usize>().ok()), t.next().and_then(|d| d.parse::<u32>().ok())) {
+        (Some(_), Some(m @ 1..=12), Some(d)) => format!("{d} {}", MESES[m - 1]),
+        _ => f.to_string(),
+    }
+}
+
+/// Dibuja la vista previa simplificada de un diagrama dentro de `r`, ajustada a su tamaño.
+fn dibujar_vista_previa(p: egui::Painter, r: Rect, v: &bloques::VistaPrevia) {
+    let pal = tema::p();
+    if v.bloques.is_empty() {
+        return;
+    }
+    let (mut min, mut max) = (Pos2::new(f32::MAX, f32::MAX), Pos2::new(f32::MIN, f32::MIN));
+    for b in &v.bloques {
+        min = Pos2::new(min.x.min(b.min.x), min.y.min(b.min.y));
+        max = Pos2::new(max.x.max(b.max.x), max.y.max(b.max.y));
+    }
+    let interior = r.shrink(14.0);
+    let tam = max - min;
+    let escala = (interior.width() / tam.x.max(1.0)).min(interior.height() / tam.y.max(1.0)).min(1.0);
+    let origen = interior.center() - tam * escala / 2.0;
+    let mapa = |q: Pos2| origen + (q - min) * escala;
+    for (a, b) in &v.cables {
+        let (ra, rb) = (v.bloques[*a], v.bloques[*b]);
+        let (pa, pb) = (mapa(Pos2::new(ra.right(), ra.center().y)), mapa(Pos2::new(rb.left(), rb.center().y)));
+        let xm = (pa.x + pb.x) / 2.0;
+        p.add(egui::Shape::line(vec![pa, Pos2::new(xm, pa.y), Pos2::new(xm, pb.y), pb], egui::Stroke::new(1.5_f32, pal.texto)));
+    }
+    for b in &v.bloques {
+        let rb = Rect::from_min_max(mapa(b.min), mapa(b.max));
+        p.rect(rb, 0.0, pal.panel, egui::Stroke::new(1.0_f32, pal.acento), egui::StrokeKind::Inside);
+    }
+}
+
 #[cfg(test)]
 mod pruebas {
     use super::*;
@@ -2218,43 +2257,5 @@ mod pruebas {
         let con_variable = json!({"variable": "d"}).as_object().unwrap().clone();
         assert_eq!(c.columnas_de(&con_variable), ["x"]);
         assert!(c.columnas_de(&json!({"variable": "otra"}).as_object().unwrap().clone()).is_empty());
-    }
-}
-
-/// Fecha ISO como «25 nov».
-fn fecha_corta(f: &str) -> String {
-    const MESES: [&str; 12] = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
-    let mut t = f.split('-');
-    match (t.next(), t.next().and_then(|m| m.parse::<usize>().ok()), t.next().and_then(|d| d.parse::<u32>().ok())) {
-        (Some(_), Some(m @ 1..=12), Some(d)) => format!("{d} {}", MESES[m - 1]),
-        _ => f.to_string(),
-    }
-}
-
-/// Dibuja la vista previa simplificada de un diagrama dentro de `r`, ajustada a su tamaño.
-fn dibujar_vista_previa(p: egui::Painter, r: Rect, v: &bloques::VistaPrevia) {
-    let pal = tema::p();
-    if v.bloques.is_empty() {
-        return;
-    }
-    let (mut min, mut max) = (Pos2::new(f32::MAX, f32::MAX), Pos2::new(f32::MIN, f32::MIN));
-    for b in &v.bloques {
-        min = Pos2::new(min.x.min(b.min.x), min.y.min(b.min.y));
-        max = Pos2::new(max.x.max(b.max.x), max.y.max(b.max.y));
-    }
-    let interior = r.shrink(14.0);
-    let tam = max - min;
-    let escala = (interior.width() / tam.x.max(1.0)).min(interior.height() / tam.y.max(1.0)).min(1.0);
-    let origen = interior.center() - tam * escala / 2.0;
-    let mapa = |q: Pos2| origen + (q - min) * escala;
-    for (a, b) in &v.cables {
-        let (ra, rb) = (v.bloques[*a], v.bloques[*b]);
-        let (pa, pb) = (mapa(Pos2::new(ra.right(), ra.center().y)), mapa(Pos2::new(rb.left(), rb.center().y)));
-        let xm = (pa.x + pb.x) / 2.0;
-        p.add(egui::Shape::line(vec![pa, Pos2::new(xm, pa.y), Pos2::new(xm, pb.y), pb], egui::Stroke::new(1.5_f32, pal.texto)));
-    }
-    for b in &v.bloques {
-        let rb = Rect::from_min_max(mapa(b.min), mapa(b.max));
-        p.rect(rb, 0.0, pal.panel, egui::Stroke::new(1.0_f32, pal.acento), egui::StrokeKind::Inside);
     }
 }

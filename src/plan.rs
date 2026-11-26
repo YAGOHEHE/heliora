@@ -672,7 +672,7 @@ impl Mantenimiento {
         let ordenes: Vec<Value> = self.estado["ordenes"].as_array().cloned().unwrap_or_default();
         if plan_abierto {
             if matches!(self.pestana, Pestana::Tablero | Pestana::Ordenes) {
-                egui::SidePanel::right("panel_mant").exact_width(360.0).resizable(false).frame(egui::Frame::new().fill(pal.panel).stroke(egui::Stroke::new(1.0_f32, pal.linea))).show_inside(ui, |ui| {
+                egui::SidePanel::right("panel_mant").default_width(360.0).width_range(280.0..=720.0).resizable(true).frame(egui::Frame::new().fill(pal.panel).stroke(egui::Stroke::new(1.0_f32, pal.linea))).show_inside(ui, |ui| {
                     ui.add_enabled_ui(!ocupado, |ui| {
                         if self.pestana == Pestana::Tablero {
                             self.panel_calendario(ui, &ordenes, &mut acciones);

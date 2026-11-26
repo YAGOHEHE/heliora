@@ -881,6 +881,14 @@ pub fn resaltar(texto: &str) -> LayoutJob {
     j
 }
 
+
+/// Dibuja `contenido` en un hijo de `ui` limitado al rectángulo `r`.
+fn en_celda(ui: &mut egui::Ui, r: Rect, id: &str, contenido: impl FnOnce(&mut egui::Ui)) {
+    let mut hijo = ui.new_child(egui::UiBuilder::new().id_salt(id).max_rect(r));
+    hijo.set_clip_rect(r.intersect(ui.clip_rect()));
+    contenido(&mut hijo);
+}
+
 #[cfg(test)]
 mod pruebas {
     use super::*;
@@ -918,11 +926,4 @@ mod pruebas {
         assert_eq!(c.guiones.len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
-}
-
-/// Dibuja `contenido` en un hijo de `ui` limitado al rectángulo `r`.
-fn en_celda(ui: &mut egui::Ui, r: Rect, id: &str, contenido: impl FnOnce(&mut egui::Ui)) {
-    let mut hijo = ui.new_child(egui::UiBuilder::new().id_salt(id).max_rect(r));
-    hijo.set_clip_rect(r.intersect(ui.clip_rect()));
-    contenido(&mut hijo);
 }

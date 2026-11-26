@@ -461,7 +461,7 @@ impl Pagina {
         let mut calcular = atajo && !self.ocupada();
         let lateral = ui.available_width() >= ui::ANCHO_APILAR;
         if lateral {
-            egui::SidePanel::right(egui::Id::new(("parametros_lateral", &self.modulo))).exact_width(360.0).resizable(false).frame(egui::Frame::new().fill(pal.panel)).show_inside(ui, |ui| {
+            egui::SidePanel::right(egui::Id::new(("parametros_lateral", &self.modulo))).default_width(360.0).width_range(280.0..=720.0).resizable(true).frame(egui::Frame::new().fill(pal.panel)).show_inside(ui, |ui| {
                 let r = ui.max_rect();
                 ui.painter().line_segment([r.left_top(), r.left_bottom()], Stroke::new(1.0_f32, pal.borde));
                 self.panel_derecho(ui, h, motor, c, inf.as_ref().zip(vista.as_ref()), &mut calcular);
