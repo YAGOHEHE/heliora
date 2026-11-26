@@ -83,7 +83,7 @@ used by the Control tools with "Plant: linearised model".
 ### Computing environment
 
 Python console and scripts, a workspace to view and export variables, import of CSV (including
-Spanish-locale Excel files: `;` separator, decimal comma and Windows-1252), TSV and Parquet, and plots
+CSV exported from Spanish-locale Excel: `;` separator, decimal comma and Windows-1252), TSV and Parquet, and plots
 exportable to PNG and SVG.
 
 ![Computing environment with a script, variables and a 3D surface](docs/capturas/calculo.png)
@@ -105,7 +105,7 @@ shading with bypass diodes and solar resource with pvlib. It also searches the p
 
 ### Statistics and machine learning
 
-Descriptive statistics, distributions, Weibull, hypothesis tests, regression, ANOVA, time series and
+Descriptive statistics, distribution fitting, Weibull, hypothesis tests, regression, ANOVA, time series and
 statistical process control. Regression and classification with random, time-based or hold-out
 validation, overfitting warnings, clustering, PCA, anomaly detection and "Apply model" with a trained
 or saved model.

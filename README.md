@@ -103,7 +103,7 @@ parcial con diodos de bypass y recurso solar con pvlib. Busca además en la base
 
 ### Estadística y aprendizaje automático
 
-Descriptiva, distribuciones, Weibull, pruebas de hipótesis, regresión, ANOVA, series temporales y
+Descriptiva, ajuste de distribuciones, Weibull, pruebas de hipótesis, regresión, ANOVA, series temporales y
 control estadístico de procesos. Regresión y clasificación con validación aleatoria, temporal o con
 conjunto de prueba, aviso de sobreajuste, clustering, PCA, anomalías y «Aplicar modelo» con un modelo
 entrenado o guardado.
