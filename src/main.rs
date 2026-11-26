@@ -8,12 +8,10 @@ mod calculo;
 mod comandos;
 mod grafica;
 mod herramientas;
-#[allow(dead_code)] // Se retira en la fase 7, cuando todas las pantallas usen el catálogo completo.
 mod iconos;
 mod motor;
 mod plan;
 mod tema;
-#[allow(dead_code)] // Se retira en la fase 7, cuando todas las pantallas usen los componentes.
 mod ui;
 mod validacion;
 

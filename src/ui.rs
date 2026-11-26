@@ -95,15 +95,6 @@ pub fn fila_ajustable(ui: &mut Ui, clave: impl std::hash::Hash, alto: f32, mut c
     }
 }
 
-/// Ajusta el alto de dos filas en una página con la separación habitual entre tarjetas.
-pub fn filas_ajustables(ui: &mut Ui, clave: impl std::hash::Hash, alturas: [f32; 2], minimos: [f32; 2]) -> [f32; 2] {
-    let alto = (alturas[0] + alturas[1]).max(minimos[0] + minimos[1]);
-    let ancho = ui.available_width();
-    let r = Rect::from_min_size(ui.next_widget_position(), Vec2::new(ancho, alto + HUECO));
-    let paneles = dividir(ui, clave, r, false, HUECO, alturas[0] / alturas.iter().sum::<f32>(), minimos);
-    [paneles[0].height(), paneles[1].height()]
-}
-
 /// Guarda la proporción de un separador en las preferencias de egui.
 pub fn dividir(
     ui: &Ui, clave: impl std::hash::Hash, r: Rect, lado_a_lado: bool, hueco: f32, inicial: f32, minimos: [f32; 2],
@@ -263,7 +254,8 @@ pub fn ficha_kpi(ui: &mut Ui, etiqueta: &str, valor: &str, unidad: &str, nota: &
     ui.painter().rect(r, 0.0, fondo, borde, StrokeKind::Inside);
     let p = ui.painter_at(r.shrink(2.0));
     let x = r.left() + 12.0;
-    p.text(Pos2::new(x, r.top() + 11.0), Align2::LEFT_TOP, etiqueta, FontId::proportional(12.0), pal.texto_2);
+    let ajustada = recortar_a(ui, etiqueta, FontId::proportional(12.0), r.width() - 24.0);
+    p.text(Pos2::new(x, r.top() + 11.0), Align2::LEFT_TOP, ajustada, FontId::proportional(12.0), pal.texto_2);
     let g = p.layout_no_wrap(valor.to_string(), FontId::new(20.0, egui::FontFamily::Name("dato".into())), pal.acento);
     let y_valor = r.top() + 32.0;
     let ancho_valor = g.size().x;
@@ -275,6 +267,23 @@ pub fn ficha_kpi(ui: &mut Ui, etiqueta: &str, valor: &str, unidad: &str, nota: &
         p.text(Pos2::new(x, r.bottom() - 9.0), Align2::LEFT_BOTTOM, nota, FontId::proportional(11.0), pal.texto_2);
     }
     resp.on_hover_text(format!("{etiqueta}: {valor} {unidad}"))
+}
+
+/// Recorta `texto` con puntos suspensivos para que quepa en `ancho` con la fuente dada.
+fn recortar_a(ui: &Ui, texto: &str, fuente: FontId, ancho: f32) -> String {
+    let mide = |t: &str| ui.painter().layout_no_wrap(t.to_string(), fuente.clone(), Color32::WHITE).size().x;
+    if mide(texto) <= ancho {
+        return texto.to_string();
+    }
+    let mut letras: Vec<char> = texto.chars().collect();
+    while !letras.is_empty() {
+        letras.pop();
+        let t: String = letras.iter().collect::<String>().trim_end().to_string() + "…";
+        if mide(&t) <= ancho {
+            return t;
+        }
+    }
+    "…".to_string()
 }
 
 /// Fila de parámetro en rejilla de tres columnas: etiqueta | campo de 128 px con el valor en
@@ -794,10 +803,13 @@ pub fn marca_tipo(ui: &mut Ui, tipo: &str) {
 ///     true si se pulsó «Ocultar».
 pub fn aviso_negro(ui: &mut Ui, texto: &str) -> bool {
     let ancho = ui.available_width();
-    let g = ui.painter().layout(texto.to_string(), FontId::proportional(13.0), Color32::WHITE, ancho - 140.0);
+    let g = ui.painter().layout(texto.to_string(), FontId::proportional(13.0), Color32::WHITE, ancho - 166.0);
     let (r, _) = ui.allocate_exact_size(Vec2::new(ancho, (g.size().y + 20.0).max(44.0)), Sense::hover());
-    ui.painter().rect_filled(r, 0.0, tema::NEGRO);
-    ui.painter().galley(Pos2::new(r.left() + 16.0, r.center().y - g.size().y / 2.0), g, Color32::WHITE);
+    // En tema oscuro el negro se confunde con el fondo: un borde separa la barra
+    let borde = if tema::modo() == tema::Modo::Oscuro { Stroke::new(1.0_f32, tema::p().borde) } else { Stroke::NONE };
+    ui.painter().rect(r, 0.0, tema::NEGRO, borde, StrokeKind::Inside);
+    iconos::dibujar(ui.painter(), Rect::from_min_size(Pos2::new(r.left() + 16.0, r.center().y - 9.0), Vec2::splat(18.0)), Icono::Aviso, Color32::WHITE);
+    ui.painter().galley(Pos2::new(r.left() + 44.0, r.center().y - g.size().y / 2.0), g, Color32::WHITE);
     let b = Rect::from_min_size(Pos2::new(r.right() - 96.0, r.center().y - 14.0), Vec2::new(82.0, 28.0));
     let resp = ui.interact(b, ui.id().with("ocultar_aviso"), Sense::click());
     ui.painter().rect_filled(b, 0.0, if resp.hovered() { Color32::from_gray(230) } else { Color32::WHITE });

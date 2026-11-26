@@ -1084,11 +1084,11 @@ impl Mantenimiento {
         let ancho = ui.available_width();
         let (cab, _) = ui.allocate_exact_size(Vec2::new(ancho, 30.0), Sense::hover());
         ui.painter().text(cab.center(), egui::Align2::CENTER_CENTER, format!("{} de {}", MESES[self.mes as usize - 1], self.anio), tema::fuente_semi(14.0), pal.texto);
-        let boton = |ui: &mut egui::Ui, r: Rect, t: &str| ui.put(r, egui::Button::new(egui::RichText::new(t).size(16.0)).frame(false)).clicked();
-        if boton(ui, Rect::from_min_size(cab.left_top(), Vec2::splat(30.0)), "‹") {
+        let boton = |ui: &mut egui::Ui, r: Rect, i: Icono, ayuda: &str| ui::boton_icono(&mut ui.new_child(egui::UiBuilder::new().max_rect(r)), i, 16.0, ayuda).clicked();
+        if boton(ui, Rect::from_min_size(cab.left_top(), Vec2::splat(30.0)), Icono::Anterior, "Mes anterior") {
             (self.anio, self.mes) = if self.mes == 1 { (self.anio - 1, 12) } else { (self.anio, self.mes - 1) };
         }
-        if boton(ui, Rect::from_min_size(Pos2::new(cab.right() - 92.0, cab.top()), Vec2::splat(30.0)), "›") {
+        if boton(ui, Rect::from_min_size(Pos2::new(cab.right() - 92.0, cab.top()), Vec2::splat(30.0)), Icono::Siguiente, "Mes siguiente") {
             (self.anio, self.mes) = if self.mes == 12 { (self.anio + 1, 1) } else { (self.anio, self.mes + 1) };
         }
         let mut zona_hoy = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(Pos2::new(cab.right() - 60.0, cab.top()), cab.right_bottom())).layout(egui::Layout::right_to_left(egui::Align::Center)));
@@ -1312,11 +1312,11 @@ impl Mantenimiento {
             let primera = if total == 0 { 0 } else { self.pagina * POR_PAGINA + 1 };
             ui.painter().text(Pos2::new(pie.left() + 16.0, pie.center().y), egui::Align2::LEFT_CENTER, format!("{primera}–{} de {total}", self.pagina * POR_PAGINA + pagina.len()), egui::FontId::proportional(12.0), pal.texto_2);
             let mut pie_ui = ui.new_child(egui::UiBuilder::new().max_rect(pie.shrink2(Vec2::new(16.0, 6.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
-            if pie_ui.add_enabled(self.pagina + 1 < paginas, egui::Button::new("›")).clicked() {
+            if pie_ui.add_enabled_ui(self.pagina + 1 < paginas, |ui| ui::boton_icono(ui, Icono::Siguiente, 16.0, "Página siguiente").clicked()).inner {
                 self.pagina += 1;
             }
             pie_ui.label(egui::RichText::new(format!("{} / {paginas}", self.pagina + 1)).family(tema::semi()).size(12.0));
-            if pie_ui.add_enabled(self.pagina > 0, egui::Button::new("‹")).clicked() {
+            if pie_ui.add_enabled_ui(self.pagina > 0, |ui| ui::boton_icono(ui, Icono::Anterior, 16.0, "Página anterior").clicked()).inner {
                 self.pagina -= 1;
             }
         });

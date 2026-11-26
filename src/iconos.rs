@@ -73,18 +73,15 @@ pub enum Icono {
     Flecha,
     Anterior,
     Siguiente,
-    Desplegable,
     Plegar,
     Desplegar,
     Terminal,
     Variable,
-    Llave,
-    Copiar,
     Mas,
 }
 
 /// Todas las variantes, para registrar sus SVG al arrancar.
-const TODOS: [Icono; 76] = [
+const TODOS: [Icono; 73] = [
     Icono::Inicio, Icono::Nuevo, Icono::NuevoDocumento, Icono::Abrir, Icono::Carpeta, Icono::Guardar, Icono::GuardarComo,
     Icono::Deshacer, Icono::Rehacer, Icono::Encuadrar, Icono::Codigo, Icono::Subsistema, Icono::Bloques, Icono::Diagrama,
     Icono::OrdenarCables, Icono::Simular, Icono::SimularLleno, Icono::Detener, Icono::Solver, Icono::Linealizar,
@@ -94,12 +91,12 @@ const TODOS: [Icono; 76] = [
     Icono::Brujula, Icono::Histograma, Icono::Grafica, Icono::Dispersion, Icono::Distribucion, Icono::Red,
     Icono::Clasificacion, Icono::Clustering, Icono::Pca, Icono::Anomalias, Icono::Calendario, Icono::Lista, Icono::Equipos,
     Icono::Amef, Icono::Historial, Icono::Validar, Icono::Correcto, Icono::Aviso, Icono::Filtro, Icono::Cerrar, Icono::Borrar,
-    Icono::Flecha, Icono::Anterior, Icono::Siguiente, Icono::Desplegable, Icono::Plegar, Icono::Desplegar, Icono::Terminal,
-    Icono::Variable, Icono::Llave, Icono::Copiar, Icono::Mas,
+    Icono::Flecha, Icono::Anterior, Icono::Siguiente, Icono::Plegar, Icono::Desplegar, Icono::Terminal,
+    Icono::Variable, Icono::Mas,
 ];
 
 /// Trazado SVG del icono en una caja de 24 × 24, copiado de los `.html` del diseño. Los pocos que
-/// el diseño no incluye (detener, desplegar, variable, llave, copiar, más) siguen su mismo estilo.
+/// el diseño no incluye (detener, desplegar, variable, más) siguen su mismo estilo.
 fn trazado(i: Icono) -> &'static str {
     match i {
         Icono::Inicio => r#"<path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/>"#,
@@ -165,13 +162,10 @@ fn trazado(i: Icono) -> &'static str {
         Icono::Flecha => r#"<path d="M4 12h15M13 6l6 6-6 6"/>"#,
         Icono::Anterior => r#"<path d="M15 6l-6 6 6 6"/>"#,
         Icono::Siguiente => r#"<path d="M9 6l6 6-6 6"/>"#,
-        Icono::Desplegable => r#"<path d="M6 9l6 6 6-6"/>"#,
         Icono::Plegar => r#"<path d="M12 6l-6 6 6 6M19 6l-6 6 6 6"/>"#,
         Icono::Desplegar => r#"<path d="M12 6l6 6-6 6M5 6l6 6-6 6"/>"#,
         Icono::Terminal => r#"<rect x="3" y="4" width="18" height="16"/><path d="M7 9l3 3-3 3M12 15h5"/>"#,
         Icono::Variable => r#"<path d="M8 4H6v16h2M16 4h2v16h-2M10 9l4 6M14 9l-4 6"/>"#,
-        Icono::Llave => r#"<circle cx="8" cy="16" r="4.5"/><path d="M11.2 12.8L20 4M16.5 7.5L19 10"/>"#,
-        Icono::Copiar => r#"<rect x="8" y="8" width="12" height="12"/><path d="M16 8V4H4v12h4"/>"#,
         Icono::Mas => r#"<path d="M12 5v14M5 12h14"/>"#,
     }
 }
