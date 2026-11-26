@@ -229,7 +229,7 @@ def bucle_dae(modelo, t, tf, rtol, atol, hmax, hmin, h_ini, cancelar=None, infor
         tope = min(limite(t), tf)
         if tope <= t:
             tope = tf
-        h = min(h, hmax)
+        h = min(hmax, max(hminimo, h))
         hp = tope - t if 1.1 * h >= tope - t else h
         orden = 2 if len(hist) >= 3 else 1
         # Coeficientes: ẏ₁ = α·y₁ + β
