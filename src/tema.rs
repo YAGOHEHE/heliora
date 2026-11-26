@@ -57,8 +57,6 @@ pub struct Paleta {
     pub sobre_acento: Color32,
     /// Fondo del módulo activo en el riel y de los elementos seleccionados.
     pub acento_fondo: Color32,
-    /// Texto sobre `acento_fondo` (pestaña lateral o fila activa).
-    pub acento_texto: Color32,
     /// Fondo secundario muy suave: filas alternas de las tablas.
     pub campo_alt: Color32,
     /// Enlaces.
@@ -96,7 +94,6 @@ pub const OSCURO: Paleta = Paleta {
     acento: c(255, 255, 255),       // #FFFFFF
     sobre_acento: c(0, 0, 0),       // #000000
     acento_fondo: c(42, 42, 42),    // #2A2A2A
-    acento_texto: c(237, 237, 237), // #EDEDED
     campo_alt: c(22, 22, 22),       // #161616
     acento_2: c(237, 237, 237),     // #EDEDED
     senal: c(163, 163, 163),        // #A3A3A3
@@ -127,7 +124,6 @@ pub const CLARO: Paleta = Paleta {
     acento: c(0, 0, 0),               // #000000
     sobre_acento: c(255, 255, 255),   // #FFFFFF
     acento_fondo: c(232, 232, 232),   // #E8E8E8
-    acento_texto: c(26, 26, 26),      // #1A1A1A
     campo_alt: c(250, 250, 250),      // #FAFAFA
     acento_2: c(26, 26, 26),          // #1A1A1A
     senal: c(92, 92, 92),             // #5C5C5C
