@@ -222,7 +222,14 @@ pub struct App {
     tipo_inicio: Option<String>,
     /// Próximas órdenes ordenadas por equipo en lugar de por fecha.
     orden_inicio_equipo: bool,
+    /// Tamaño de visualización elegido (factor de zoom de egui).
+    zoom: f32,
 }
+
+/// Límites y paso del tamaño de visualización.
+const ZOOM_MIN: f32 = 0.75;
+const ZOOM_MAX: f32 = 2.0;
+const ZOOM_PASO: f32 = 0.1;
 
 /// Módulos del menú, en orden.
 const MENU_MODULOS: [(Modulo, &str); 9] = [
@@ -243,6 +250,11 @@ impl App {
         let guardado = cc.storage.and_then(|s| s.get_string("modo"));
         let modo = tema::Modo::desde(op.modo.as_deref().or(guardado.as_deref()).unwrap_or("claro"));
         tema::aplicar(&cc.egui_ctx, modo);
+        // Las capturas fijan su propia escala; fuera de ellas se recupera la de la sesión anterior
+        let zoom = cc.storage.and_then(|s| s.get_string("zoom")).and_then(|z| z.parse::<f32>().ok()).filter(|z| z.is_finite()).unwrap_or(1.0).clamp(ZOOM_MIN, ZOOM_MAX);
+        if op.captura.is_none() {
+            cc.egui_ctx.set_zoom_factor(zoom);
+        }
         crate::iconos::registrar(&cc.egui_ctx);
         let modulo = match op.modulo.as_deref() {
             Some("calculo") => Modulo::Calculo,
@@ -308,6 +320,7 @@ impl App {
             filtro_inicio: "30".into(),
             tipo_inicio: None,
             orden_inicio_equipo: false,
+            zoom,
         }
     }
 
@@ -868,6 +881,8 @@ impl App {
             }
         });
         ui.separator();
+        self.control_zoom(ui);
+        ui.separator();
         ui::titulo_seccion(ui, "Tema");
         for m in [tema::Modo::Claro, tema::Modo::Oscuro] {
             if ui.radio(self.modo == m, m.nombre()).clicked() {
@@ -882,6 +897,31 @@ impl App {
         if ui.add_enabled(self.motor.listo, egui::Button::new("Reiniciar el motor")).clicked() {
             self.reiniciar_motor();
             ui.close();
+        }
+    }
+
+    /// Control del tamaño de visualización: reducir, porcentaje, ampliar y restablecer.
+    fn control_zoom(&mut self, ui: &mut egui::Ui) {
+        ui::titulo_seccion(ui, "Tamaño de visualización");
+        let mut z = ui.ctx().zoom_factor();
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            if ui.add_enabled(z > ZOOM_MIN + 1e-3, egui::Button::new("−")).on_hover_text("Reducir · Ctrl −").clicked() {
+                z -= ZOOM_PASO;
+            }
+            ui.add(egui::Slider::new(&mut z, ZOOM_MIN..=ZOOM_MAX).step_by(0.05).custom_formatter(|v, _| format!("{:.0} %", v * 100.0)).custom_parser(|t| t.trim().trim_end_matches('%').trim().parse::<f64>().ok().map(|v| v / 100.0)));
+            if ui.add_enabled(z < ZOOM_MAX - 1e-3, egui::Button::new("+")).on_hover_text("Ampliar · Ctrl +").clicked() {
+                z += ZOOM_PASO;
+            }
+            if ui.button("100 %").on_hover_text("Restablecer · Ctrl 0").clicked() {
+                z = 1.0;
+            }
+        });
+        let z = (z / 0.05).round() * 0.05;
+        let z = z.clamp(ZOOM_MIN, ZOOM_MAX);
+        if (z - ui.ctx().zoom_factor()).abs() > 1e-3 {
+            ui.ctx().set_zoom_factor(z);
+            self.zoom = z;
         }
     }
 
@@ -953,6 +993,8 @@ impl App {
             tema::separador(ui);
             if self.pestana_esquema == 1 {
                 egui::Frame::new().inner_margin(16).show(ui, |ui| {
+                    self.control_zoom(ui);
+                    ui.separator();
                     ui::titulo_seccion(ui, "Tema");
                     for m in [tema::Modo::Claro, tema::Modo::Oscuro] {
                         if ui.radio(self.modo == m, m.nombre()).clicked() {
@@ -1149,6 +1191,8 @@ impl App {
                 ui.add_space((ui.available_height() - 2.0 * 80.0).max(0.0));
                 let ajustes = boton_lateral(ui, Icono::Ajustes, "Ajustes", false);
                 egui::Popup::menu(&ajustes).show(|ui| {
+                    self.control_zoom(ui);
+                    ui.separator();
                     ui::titulo_seccion(ui, "Tema");
                     for m in [tema::Modo::Claro, tema::Modo::Oscuro] {
                         if ui.radio(self.modo == m, m.nombre()).clicked() {
@@ -2002,6 +2046,9 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.atender_motor();
         self.atender_capturas(ctx);
+        if self.captura.is_none() {
+            self.zoom = ctx.zoom_factor();
+        }
         self.logica_captura(ctx);
         // Hay trabajo en curso: seguir refrescando
         if !self.motor.listo || self.editor.id_sim.is_some() || self.validacion.ocupada() || self.instalando.is_some() {
@@ -2079,6 +2126,7 @@ impl eframe::App for App {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string("modo", self.modo.clave().to_string());
+        storage.set_string("zoom", format!("{:.2}", self.zoom));
         storage.set_string("recientes", self.editor.recientes.join(","));
     }
 
