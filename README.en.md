@@ -63,10 +63,16 @@ from the artifacts of the latest
 
 ### Home
 
-Access to the modules, the open project, plant KPIs, upcoming work orders and the validation status.
-If the engine or the test bench changed since the last validation, the result is marked as historical
-and the app offers to validate again. The top bar holds the command palette (`Ctrl K`) and
-"Simulate" (`F5`) from any module.
+Start page with a side bar (Home, New, Open, Reference, Settings): the open project and its diagram,
+plant KPIs, the validation status, upcoming work orders with filters and access to the modules. If the
+engine or the test bench changed since the last validation, the result is marked as historical and the
+app offers to validate again.
+
+The other modules share a workspace: top bar with the command palette (`Ctrl K`) and "Simulate"
+(`F5`), module menu, ribbon with each module's tools, project outline on the left (diagrams, scripts,
+data, analyses, maintenance plan and validation, with their status), parameter panel on the right and
+status bar. The interface is monochrome, with light and dark themes; colour is kept for status and
+charts.
 
 ![Home](docs/capturas/inicio.png)
 
@@ -161,7 +167,7 @@ flowchart LR
 
 | Component | Technology |
 |---|---|
-| Window | Rust, [egui/eframe](https://github.com/emilk/egui) 0.33 |
+| Window | Rust, [egui/eframe](https://github.com/emilk/egui) 0.33; SVG icons via `egui_extras`; Roboto and Roboto Mono (OFL) |
 | Computation engine | Python 3.12 with NumPy, SciPy, pandas, scikit-learn, statsmodels and pvlib |
 | Project format | Folder with canonical JSON, CSV or Parquet and `.py` scripts, designed for Git |
 | Installers | python-build-standalone, Inno Setup (Windows), `.app`/`.dmg` (macOS) |
