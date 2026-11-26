@@ -894,21 +894,9 @@ impl App {
                         Modulo::Estadistica => self.estadistica.cinta(ui, &herr),
                         Modulo::Aprendizaje => self.aprendizaje.cinta(ui, &herr),
                         Modulo::Mantenimiento => self.mantenimiento.cinta(ui, &herr),
-                        Modulo::Bloques => self.cinta_bloques(ui),
-                        Modulo::Calculo => {
-                            ui::grupo_cinta(ui, "Ejecutar", |ui| {
-                                if ui::boton_cinta(ui, Icono::Simular, "Ejecutar script", false).clicked() {
-                                    self.calculo.correr_guion(&mut self.motor);
-                                }
-                            });
-                        }
-                        Modulo::Validacion => {
-                            ui::grupo_cinta(ui, "Ejecutar", |ui| {
-                                if ui::boton_cinta(ui, Icono::Simular, "Ejecutar todas", false).clicked() && !self.validacion.ocupada() {
-                                    self.validacion.ejecutar(&mut self.motor, 4);
-                                }
-                            });
-                        }
+                        Modulo::Bloques => self.editor.cinta(ui, &mut self.motor),
+                        Modulo::Calculo => self.calculo.cinta(ui, &mut self.motor),
+                        Modulo::Validacion => self.validacion.cinta(ui, &mut self.motor),
                         Modulo::Inicio | Modulo::Referencia => {
                             ui::grupo_cinta(ui, "Proyecto", |ui| {
                                 if ui::boton_cinta(ui, Icono::NuevoDocumento, "Nuevo proyecto", false).clicked() {
@@ -925,28 +913,6 @@ impl App {
                     }
                 });
             });
-    }
-
-    /// Cinta de Bloques: diagrama y simulación.
-    fn cinta_bloques(&mut self, ui: &mut egui::Ui) {
-        ui::grupo_cinta(ui, "Diagrama", |ui| {
-            if ui::boton_cinta(ui, Icono::NuevoDocumento, "Nuevo diagrama", false).clicked() {
-                self.editor.nuevo_diagrama();
-            }
-            match ui::columna_cinta(ui, &[(Icono::Abrir, "Abrir", true), (Icono::Guardar, "Guardar", true)]) {
-                Some(0) => self.editor.abrir_diagrama(),
-                Some(_) => self.editor.guardar_diagrama(),
-                None => {}
-            }
-        });
-        ui::grupo_cinta(ui, "Simulación", |ui| {
-            if ui::boton_cinta(ui, Icono::Simular, "Simular", false).clicked() {
-                self.simular();
-            }
-            if ui::boton_cinta(ui, Icono::Linealizar, "Linealizar", false).clicked() && self.editor.id_lin.is_none() && self.editor.id_sim.is_none() {
-                self.editor.linealizar(&mut self.motor);
-            }
-        });
     }
 
     /// Panel izquierdo de 280 px «Esquema del proyecto | Opciones» con el árbol del proyecto; se
@@ -1650,6 +1616,14 @@ impl App {
         }
         self.cuadros += 1;
         ctx.request_repaint();
+        // Con la pantalla escalada, 1440 × 900 puntos no caben; se pide una ventana de 1440 × 900
+        // píxeles físicos y egui dibuja a un píxel por punto, como las referencias del diseño.
+        if self.cuadros == 1 {
+            if let Some(nativo) = ctx.native_pixels_per_point().filter(|p| *p > 1.0) {
+                ctx.set_zoom_factor(1.0 / nativo);
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(1440.0, 900.0) / nativo));
+            }
+        }
         if self.op.simular && !self.cuadro_sim && !self.editor.fichas.is_empty() && !self.editor.diagrama.sistema.bloques.is_empty() {
             self.cuadro_sim = true;
             self.editor.ejecutar(&mut self.motor);

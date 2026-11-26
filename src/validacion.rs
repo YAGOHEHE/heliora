@@ -1,4 +1,5 @@
 //! Página de validación: pruebas por fases, con el error numérico de cada medida.
+use crate::iconos::Icono;
 use crate::motor::Motor;
 use crate::tema;
 use crate::ui;
@@ -24,6 +25,15 @@ pub struct Validacion {
 }
 
 impl Validacion {
+    /// Cinta de Validación: ejecutar todas las fases.
+    pub fn cinta(&mut self, ui: &mut egui::Ui, motor: &mut Motor) {
+        ui::grupo_cinta(ui, "Ejecutar", |ui| {
+            if ui::boton_cinta(ui, Icono::Simular, "Ejecutar todas", false).clicked() && !self.ocupada() {
+                self.ejecutar(motor, 4);
+            }
+        });
+    }
+
     pub fn nueva() -> Validacion {
         // El último resultado guardado, para verlo sin esperar a repetir las pruebas
         let carpeta = crate::motor::carpeta_motor();

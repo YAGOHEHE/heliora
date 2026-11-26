@@ -1,6 +1,7 @@
 //! Módulo 1: consola interactiva, editor de scripts, variables y figuras.
 use crate::app::{Compartido, Variable};
 use crate::grafica::{self, Figura};
+use crate::iconos::Icono;
 use crate::motor::Motor;
 use crate::tema;
 use crate::ui as interfaz;
@@ -84,6 +85,15 @@ surf(X, Y, np.sin(X) * np.cos(Y), 'Superficie')
 ";
 
 impl Calculo {
+    /// Cinta de Cálculo: ejecutar el script abierto.
+    pub fn cinta(&mut self, ui: &mut egui::Ui, motor: &mut Motor) {
+        interfaz::grupo_cinta(ui, "Ejecutar", |ui| {
+            if interfaz::boton_cinta(ui, Icono::Simular, "Ejecutar script", false).clicked() {
+                self.correr_guion(motor);
+            }
+        });
+    }
+
     pub fn nuevo() -> Calculo {
         Calculo {
             historia: vec![Linea::Nota("Consola de Python con NumPy y SciPy. Escribe una expresión y pulsa Intro.".into())],

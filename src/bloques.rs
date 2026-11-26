@@ -2,6 +2,7 @@
 use crate::app::Compartido;
 use crate::grafica::{self, Fig2D, Figura, Serie, TipoSerie};
 use crate::herramientas;
+use crate::iconos::Icono;
 use crate::motor::Motor;
 use crate::tema;
 use crate::ui as interfaz;
@@ -459,6 +460,29 @@ pub struct Editor {
 }
 
 impl Editor {
+    /// Cinta de Bloques: diagrama y simulación.
+    pub fn cinta(&mut self, ui: &mut egui::Ui, motor: &mut Motor) {
+        interfaz::grupo_cinta(ui, "Diagrama", |ui| {
+            if interfaz::boton_cinta(ui, Icono::NuevoDocumento, "Nuevo diagrama", false).clicked() {
+                self.nuevo_diagrama();
+            }
+            match interfaz::columna_cinta(ui, &[(Icono::Abrir, "Abrir", true), (Icono::Guardar, "Guardar", true)]) {
+                Some(0) => self.abrir_diagrama(),
+                Some(_) => self.guardar_diagrama(),
+                None => {}
+            }
+        });
+        interfaz::grupo_cinta(ui, "Simulación", |ui| {
+            let libre = self.id_sim.is_none() && self.id_lin.is_none() && motor.listo;
+            if interfaz::boton_cinta(ui, Icono::Simular, "Simular", false).clicked() && libre {
+                self.ejecutar(motor);
+            }
+            if interfaz::boton_cinta(ui, Icono::Linealizar, "Linealizar", false).clicked() && libre {
+                self.linealizar(motor);
+            }
+        });
+    }
+
     pub fn nuevo() -> Editor {
         Editor {
             diagrama: diagrama_vacio(),
