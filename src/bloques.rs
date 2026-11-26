@@ -2179,6 +2179,8 @@ impl Editor {
             } else if scroll != Vec2::ZERO {
                 self.pan += scroll;
             }
+            // La rueda ya la usó el lienzo: la página que lo contiene no debe desplazarse también
+            interfaz::consumir_rueda(ui);
         }
         if let Some(e) = entrar {
             self.ruta.push(e);
