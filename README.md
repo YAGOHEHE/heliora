@@ -15,6 +15,7 @@ en una sola aplicación de escritorio, sin conexión a internet.
 ![Plataformas](https://img.shields.io/badge/plataformas-Windows%20%7C%20macOS-555)
 ![Rust](https://img.shields.io/badge/Rust-egui-b7410e?logo=rust&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.12-3776ab?logo=python&logoColor=white)
+[![Licencia MIT](https://img.shields.io/badge/licencia-MIT-2ea44f)](LICENSE)
 
 [Instalar](#instalar) · [Funcionalidades](#funcionalidades) · [Arquitectura](#arquitectura) ·
 [Desarrollo](#desarrollo) · [Documentación](#documentación)
@@ -198,4 +199,4 @@ heliora/
 
 ## Licencia
 
-El repositorio no tiene todavía una licencia publicada.
+Distribuido bajo la [licencia MIT](LICENSE).

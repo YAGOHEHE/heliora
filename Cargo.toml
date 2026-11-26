@@ -3,6 +3,7 @@ name = "heliora"
 version = "1.0.0"
 edition = "2021"
 description = "Cálculo técnico y simulación por bloques para plantas solares fotovoltaicas"
+license = "MIT"
 
 [[bin]]
 name = "heliora"
