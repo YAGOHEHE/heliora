@@ -1,55 +1,77 @@
+<div align="center">
+
+<img src="icon/icon_512.png" alt="Logotipo de Heliora" width="96">
+
 # Heliora
 
-Aplicación de escritorio de cálculo técnico y simulación por bloques, para modelar una planta solar
-fotovoltaica con sus inversores, analizar sus datos de operación y planificar su mantenimiento.
+**Cálculo técnico y simulación por bloques para plantas solares fotovoltaicas.**
 
-![Editor de bloques con la planta FV completa simulada](docs/capturas/bloques.png)
+Modela la planta con sus inversores, analiza sus datos de operación y planifica su mantenimiento
+en una sola aplicación de escritorio, sin conexión a internet.
 
-- **Ventana:** Rust con egui (`src/`), modo claro y modo oscuro «Instrumento».
-- **Motor de cálculo:** Python con NumPy, SciPy, pandas, scikit-learn, statsmodels y pvlib (`engine/heliora/`).
-  Se comunica con la ventana por entrada y salida estándar, con JSON por líneas.
+[![Comprobación](https://github.com/YAGOHEHE/heliora/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/YAGOHEHE/heliora/actions/workflows/ci.yml)
+[![Instaladores](https://github.com/YAGOHEHE/heliora/actions/workflows/instaladores.yml/badge.svg?branch=main)](https://github.com/YAGOHEHE/heliora/actions/workflows/instaladores.yml)
+![Versión](https://img.shields.io/badge/versión-1.0.0-f5a623)
+![Plataformas](https://img.shields.io/badge/plataformas-Windows%20%7C%20macOS-555)
+![Rust](https://img.shields.io/badge/Rust-egui-b7410e?logo=rust&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.12-3776ab?logo=python&logoColor=white)
+
+[Instalar](#instalar) · [Funcionalidades](#funcionalidades) · [Arquitectura](#arquitectura) ·
+[Desarrollo](#desarrollo) · [Documentación](#documentación)
+
+<img src="docs/capturas/bloques.png" alt="Editor de bloques con la planta FV completa simulada" width="100%">
+
+</div>
+
+## Qué es
+
+Heliora reúne en una ventana el trabajo de ingeniería de una planta fotovoltaica:
+
+| Área | Qué permite |
+|---|---|
+| **Simulación** | Diagramas de bloques con 127 bloques (eléctrica, potencia, fotovoltaica, térmica, máquinas, almacenamiento, control), cuatro solvers y linealización. |
+| **Cálculo** | Consola y scripts de Python con espacio de trabajo, importación de datos y gráficas 2D y 3D. |
+| **Análisis** | Electrónica de potencia, módulos FV, estadística y aprendizaje automático mediante formularios con informes exportables. |
+| **Operación** | Datos SCADA, KPIs de planta, detección de fallas, fiabilidad y planificación del mantenimiento. |
+| **Validación** | Banco de pruebas por fases contra soluciones analíticas y hojas de datos, con el error de cada medida. |
 
 ## Instalar
 
-Los instaladores incluyen Python y todas sus librerías: no hace falta instalar nada más ni tener
-conexión a internet. Se generan en GitHub Actions (flujo «Instaladores»): en cada cambio de `main`
-quedan como artefactos de la ejecución, y con cada etiqueta `v*` se publican en Releases.
+Los instaladores incluyen Python y todas sus librerías: no hace falta instalar nada más.
 
 | Sistema | Archivo | Notas |
 |---|---|---|
 | Windows 10/11 (64 bits) | `Heliora-Setup-<versión>.exe` | Instala en la carpeta del usuario, sin permisos de administrador, con accesos en el menú Inicio y, si se elige, en el Escritorio. |
 | macOS 11 o posterior (Apple Silicon) | `Heliora-<versión>-macos-arm64.dmg` | Se arrastra Heliora a Aplicaciones. |
 
-Los instaladores no llevan firma digital de un desarrollador verificado, así que el sistema avisa la
-primera vez:
+Se descargan desde [Releases](https://github.com/YAGOHEHE/heliora/releases) (versiones con etiqueta
+`v*`) o desde los artefactos del último flujo
+[Instaladores](https://github.com/YAGOHEHE/heliora/actions/workflows/instaladores.yml) de `main`.
 
-- **Windows:** SmartScreen muestra «Windows protegió su PC». Se pulsa «Más información» y «Ejecutar de
-  todas formas».
-- **macOS:** Gatekeeper indica que no puede verificar al desarrollador. Se abre con clic derecho sobre
-  Heliora → «Abrir», o en Ajustes del Sistema → Privacidad y seguridad → «Abrir igualmente».
-
-Para quitar esos avisos hace falta un certificado de firma (Apple Developer Program para macOS;
-certificado de firma de código o Azure Trusted Signing para Windows) guardado como secreto del
-repositorio; el flujo de la CI admite añadir ese paso.
+> [!NOTE]
+> Los instaladores no llevan firma digital, así que el sistema avisa la primera vez.
+> **Windows:** en «Windows protegió su PC», pulsa «Más información» y «Ejecutar de todas formas».
+> **macOS:** clic derecho sobre Heliora → «Abrir», o Ajustes del Sistema → Privacidad y seguridad →
+> «Abrir igualmente».
 
 ## Funcionalidades
 
 ### Inicio
 
-Acceso a los módulos, primeros pasos y estado de las fases de validación. La barra superior lleva la
-ruta del proyecto, el buscador de comandos (`Ctrl K`: bloques, comandos, módulos, ejemplos y variables)
-y la píldora del solver con «Simular» (`F5`), disponible desde cualquier módulo.
+Acceso a los módulos, el proyecto abierto, los KPIs de la planta, las próximas órdenes de trabajo y el
+estado de la validación. Si el motor o el banco de pruebas cambiaron desde la última validación, se
+marca como histórica y ofrece volver a validar. La barra superior lleva el buscador de comandos
+(`Ctrl K`) y «Simular» (`F5`) desde cualquier módulo.
 
 ![Inicio](docs/capturas/inicio.png)
 
 ### Simulación por bloques
 
-Lienzo con librería de más de 120 bloques (fuentes, matemática, control, eléctrica, potencia,
-fotovoltaica, almacenamiento, máquinas, térmica), subsistemas, cuatro solvers (Euler, RK4,
-Dormand-Prince y BDF), detección de lazos algebraicos y linealización con Bode, escalón y polos.
-Incluye minimapa, cables en ángulo recto («Ordenar cables»), bloques recientes, ayuda de cada
-parámetro y el resultado de la última simulación con su huella sha256. Los bloques «Desde CSV» y
-«Desde espacio de trabajo» eligen columnas y variables en desplegables.
+Lienzo con librería de bloques, subsistemas, cuatro solvers (Euler, RK4, Dormand-Prince y BDF),
+detección de lazos algebraicos y linealización en el punto de operación con Bode, escalón y polos.
+Incluye minimapa, cables en ángulo recto, bloques recientes, ayuda de cada parámetro y el resultado de
+la última simulación con su huella sha256. «Linealizar aquí» deja además el modelo en la variable
+`lin`, que usan las herramientas de Control con «Planta: modelo linealizado».
 
 ![Editor de bloques en modo oscuro con cables en ángulo recto](docs/capturas/bloques_oscuro.png)
 
@@ -57,173 +79,123 @@ parámetro y el resultado de la última simulación con su huella sha256. Los bl
 
 Consola y scripts de Python, espacio de trabajo con vista y exportación de variables, importación de
 CSV (también los de Excel en español: separador «;», coma decimal y Windows-1252), TSV y Parquet, y
-gráficas 2D y 3D exportables a PNG y SVG.
+gráficas exportables a PNG y SVG.
 
 ![Entorno de cálculo con un script, variables y una superficie 3D](docs/capturas/calculo.png)
 
 ### Electrónica de potencia
 
-Pérdidas y eficiencia del inversor, filtro LCL (resonancia, respuesta en frecuencia y valores de diseño
-en SI) y control: Bode y márgenes, escalón, lugar de las raíces y ajuste de un PI. Los resultados quedan
-en el espacio de trabajo y los informes se exportan a HTML; las tablas, a CSV.
+Pérdidas y eficiencia del inversor, filtro LCL (resonancia, respuesta en frecuencia y valores de diseño)
+y control: Bode y márgenes, escalón, lugar de las raíces y ajuste de un PI.
 
 ![Filtro LCL](docs/capturas/potencia.png)
 
 ### Fotovoltaica
 
 Modelo de un diodo desde la hoja de datos, curvas I-V y P-V por irradiancia y temperatura, sombreado
-parcial con diodos de bypass y recurso solar con pvlib. Además de los módulos propios, busca en la base
-CEC de pvlib (unos 21 500 módulos comerciales).
+parcial con diodos de bypass y recurso solar con pvlib. Busca además en la base CEC de pvlib (unos
+21 500 módulos comerciales).
 
 ![Curvas de un módulo según irradiancia y temperatura](docs/capturas/solar.png)
 
-### Estadística
+### Estadística y aprendizaje automático
 
-Descriptiva, ajuste de distribuciones, Weibull, pruebas de hipótesis, regresión lineal y no lineal,
-ANOVA, descomposición y ARIMA y control estadístico de procesos. Cada tabla se elige del espacio de
-trabajo o se importa desde el ordenador con «Importar…».
+Descriptiva, distribuciones, Weibull, pruebas de hipótesis, regresión, ANOVA, series temporales y
+control estadístico de procesos. Regresión y clasificación con validación aleatoria, temporal o con
+conjunto de prueba, aviso de sobreajuste, clustering, PCA, anomalías y «Aplicar modelo» con un modelo
+entrenado o guardado.
 
-![Regresión lineal](docs/capturas/estadistica.png)
-
-### Aprendizaje automático
-
-Preparación de datos, regresión y clasificación con validación aleatoria, temporal o con conjunto de
-prueba (métricas de entrenamiento y de validación por separado, aviso de sobreajuste e
-hiperparámetros editables), clustering, PCA, detección de anomalías y «Aplicar modelo» para predecir
-con un modelo entrenado o guardado.
-
-![Clasificación con métricas de validación y de entrenamiento](docs/capturas/aprendizaje.png)
+<table>
+<tr>
+<td><img src="docs/capturas/estadistica.png" alt="Regresión lineal"></td>
+<td><img src="docs/capturas/aprendizaje.png" alt="Clasificación con métricas de validación y de entrenamiento"></td>
+</tr>
+</table>
 
 ### Mantenimiento
 
-Importación de SCADA real (CSV regionales, fechas día/mes, fecha y hora en columnas separadas,
-nombres de columna con unidades, duplicados), KPIs, detección de fallas y fiabilidad. Planificador con
-tablero, calendario, órdenes de trabajo (crear, editar, reprogramar, cerrar, reabrir y borrar),
-catálogo de equipos, planes, AMEF e historial, con exportación a CSV e informe O&M.
+Importación de SCADA real (CSV regionales, fechas día/mes, columnas con unidades, duplicados) y KPIs de
+planta: cada inversor se integra con su propio intervalo de registro y el informe indica la cobertura
+de los datos y qué KPIs no se pueden calcular. Detección de fallas, fiabilidad, y un planificador con
+tablero, calendario, órdenes de trabajo, catálogo de equipos, planes, AMEF e informe O&M.
 
 ![KPIs de la planta](docs/capturas/mantenimiento_analisis.png)
 
-![Tablero y calendario](docs/capturas/mantenimiento_tablero.png)
-
-![Órdenes de trabajo con filtros](docs/capturas/mantenimiento_ordenes.png)
+<table>
+<tr>
+<td><img src="docs/capturas/mantenimiento_tablero.png" alt="Tablero y calendario"></td>
+<td><img src="docs/capturas/mantenimiento_ordenes.png" alt="Órdenes de trabajo con filtros"></td>
+</tr>
+</table>
 
 ### Validación
 
-Pruebas por fases contra soluciones analíticas y hojas de datos, con el error numérico de cada una.
+Pruebas por fases contra soluciones analíticas y hojas de datos, con el error numérico de cada medida
+frente a su tolerancia. Una fase no se ejecuta hasta que la anterior pasa todas sus pruebas.
 
 ![Validación por fases](docs/capturas/validacion.png)
 
+## Arquitectura
+
+La ventana y el motor son dos procesos que se comunican por entrada y salida estándar con mensajes
+JSON, uno por línea. La ventana no calcula: dibuja y envía órdenes; el motor simula, analiza y valida.
+
+```mermaid
+flowchart LR
+    U([Usuario]) --> V["Ventana<br/>Rust · egui"]
+    V -- "órdenes JSON<br/>(stdin)" --> M["Motor<br/>Python"]
+    M -- "resultados JSON<br/>(stdout)" --> V
+    M --> S["Simulación<br/>bloques y solvers"]
+    M --> H["Herramientas<br/>potencia · FV · estadística · ML · mantenimiento"]
+    M --> B["Banco de validación"]
+    V <--> P[("Proyecto<br/>carpeta con JSON, CSV/Parquet y scripts")]
+```
+
+| Componente | Tecnología |
+|---|---|
+| Ventana | Rust, [egui/eframe](https://github.com/emilk/egui) 0.33 |
+| Motor de cálculo | Python 3.12 con NumPy, SciPy, pandas, scikit-learn, statsmodels y pvlib |
+| Formato de proyecto | Carpeta con JSON canónico, CSV o Parquet y scripts `.py`, pensada para Git |
+| Instaladores | python-build-standalone, Inno Setup (Windows), `.app`/`.dmg` (macOS) |
+| Integración continua | GitHub Actions: comprobación en Windows, macOS y Linux; instaladores |
+
 ## Desarrollo
 
+Requisitos: Rust estable y Python 3.11 o 3.12 (en Windows, Rust con la cadena MSVC).
+
+    git clone https://github.com/YAGOHEHE/heliora.git
+    cd heliora
+    python -m venv .venv
+    .venv/bin/pip install -r engine/requirements.txt     # Windows: .venv\Scripts\pip
     cargo run
 
-La aplicación busca Python junto al motor: primero el Python incluido en los instaladores
-(`python/`), después `.venv/`. Si no hay ninguno, ofrece un botón «Instalar el motor».
-También se puede preparar a mano:
+Pruebas:
 
-    python3 -m venv .venv
-    .venv/bin/pip install -r engine/requirements.txt
+    cargo clippy -- -D warnings && cargo test
+    cd engine && ../.venv/bin/python validar_todo.py      # Windows: ..\.venv\Scripts\python
 
-En Windows (PowerShell), con Python 3.11 o 3.12 de python.org y Rust con la cadena MSVC
-(el instalador `rustup-init` ofrece instalar Visual Studio Build Tools si faltan):
+```
+heliora/
+├── src/                 ventana (Rust/egui)
+├── engine/
+│   ├── heliora/         motor: servidor, simulación (sim/), librerías (lib/), herramientas, validación
+│   ├── ejemplos/        diagramas de ejemplo en JSON
+│   └── validar_todo.py  banco de pruebas completo
+├── packaging/           instaladores de Windows y macOS
+├── docs/                documentación técnica y capturas
+├── historial/           estado del proyecto y registro de cada sesión
+└── MECHANICS.md         origen de cada valor del modelo
+```
 
-    py -3 -m venv .venv
-    .venv\Scripts\python -m pip install -r engine\requirements.txt
-    cargo run
+## Documentación
 
-En Windows la aplicación busca `.venv\Scripts\python.exe` y, si no está, `python`. La instalación
-desde el botón usa el lanzador `py`. Si Python está en otro sitio, la variable `HELIORA_PYTHON` indica
-la ruta del intérprete; `HELIORA_ENGINE`, la de la carpeta `engine`.
-
-Para montar localmente el motor autocontenido de los instaladores:
-
-    bash packaging/preparar_motor.sh dist/Heliora x86_64-pc-windows-msvc   # o aarch64-apple-darwin
-
-## Dónde está cada cosa
-
-| Tema | Archivo |
+| Documento | Contenido |
 |---|---|
-| Solvers | `engine/heliora/sim/solvers.py` |
-| Bloques genéricos | `engine/heliora/sim/bloques_genericos.py` |
-| Red eléctrica (análisis nodal) | `engine/heliora/sim/circuito.py` |
-| Elementos eléctricos | `engine/heliora/lib/electrica.py` |
-| Convertidores, modulación, control y medida | `engine/heliora/lib/potencia.py` |
-| Fotovoltaica | `engine/heliora/lib/fotovoltaica.py` |
-| Señal, control (PID) y tiempo discreto | `engine/heliora/lib/senal.py` |
-| Dominio térmico y uniones de semiconductores | `engine/heliora/lib/termica.py` |
-| Batería, supercondensador y cargador DC-DC | `engine/heliora/lib/almacenamiento.py` |
-| Dominio mecánico rotacional | `engine/heliora/lib/mecanica.py` |
-| Máquinas (continua, PMSM, inducción) | `engine/heliora/lib/maquinas.py` |
-| Diseño propuesto del motor DAE (sin construir) | `docs/diseno_motor_dae.md` |
-| Estadística | `engine/heliora/lib/estadistica.py` |
-| Aprendizaje automático | `engine/heliora/lib/aprendizaje.py` |
-| Mantenimiento | `engine/heliora/lib/mantenimiento.py` |
-| Formularios de análisis | `engine/heliora/herramientas.py` |
-| Validación de entradas de los formularios | `engine/heliora/entradas.py` |
-| Lectura de CSV, TSV y Parquet | `engine/heliora/lectura.py` |
-| Guardado del espacio de trabajo | `engine/heliora/almacen.py` |
-| Instaladores (Windows y macOS) | `packaging/`, `.github/workflows/instaladores.yml` |
-| Pruebas por fases | `engine/heliora/validacion/` |
-| Diagramas de ejemplo en JSON | `engine/ejemplos/` |
+| [docs/desarrollo.md](docs/desarrollo.md) | Entorno local, mapa de archivos, pruebas, procedencia de resultados, proyectos y Git, CI |
+| [MECHANICS.md](MECHANICS.md) | De dónde sale cada valor del modelo y cuáles son estimados |
+| [docs/diseno_motor_dae.md](docs/diseno_motor_dae.md) | Diseño propuesto del motor DAE (sin construir) |
+| [historial/ESTADO.md](historial/ESTADO.md) | Estado actual: qué está verificado y qué no |
 
-Cada bloque es una clase corta con sus ecuaciones en su documentación. Desde la aplicación se abre con
-«Ver y editar código»; al guardar, el motor vuelve a cargar los bloques.
+## Licencia
 
-## Proyectos
-
-Un proyecto es una carpeta: `proyecto.json`, `diagramas/*.json`, `datos/*.csv` o `*.parquet`, `scripts/*.py`
-y `mantenimiento.json`.
-
-### Trabajar con Git
-
-Cada carpeta de proyecto puede ser un repositorio (carpeta = proyecto). Heliora guarda los diagramas en
-**JSON canónico**: claves en orden alfabético, bloques ordenados por identificador, conexiones por sus
-extremos y sangría fija de 2 espacios. Guardar dos veces el mismo diagrama da el mismo archivo, byte a byte,
-y cambiar un parámetro cambia una sola línea, así que el diff de Git muestra justo lo que cambió.
-
-    cd mi_proyecto
-    git init
-    git add proyecto.json diagramas scripts mantenimiento.json .gitattributes
-    git commit -m "Planta inicial"
-    # ... cambia Kp del PI en la aplicación y guarda ...
-    git diff diagramas/principal.json      # una línea: "Kp": 2.0 → "Kp": 3.0
-
-Al guardar un proyecto se crea su `.gitattributes` (JSON y scripts como texto con fin de línea LF;
-Parquet, PNG y PDF como binarios). Los datos grandes (`datos/*.parquet`) conviene dejarlos fuera del
-repositorio o usar Git LFS.
-
-## Pruebas
-
-En la aplicación, módulo Validación. Desde la línea de órdenes:
-
-    cd engine
-    ../.venv/bin/python -c "from heliora.validacion import banco; banco.imprimir(banco.ejecutar(4))"
-
-O todas las fases con su resumen (en Windows, `..\.venv\Scripts\python validar_todo.py`):
-
-    ../.venv/bin/python validar_todo.py
-
-Cada simulación, linealización y validación devuelve un bloque `procedencia`:
-
-- `sha256`: huella de la entrada (el diagrama tal como se envió, o el código del banco de pruebas).
-- En simulación y linealización, además, `sha256_resuelto` (los parámetros de cada bloque ya evaluados
-  con el espacio de trabajo: el mismo diagrama con otra variable da otra huella), `sha256_codigo` (el
-  código de los bloques usados y del núcleo de simulación, incluidas las ediciones locales) y la lista
-  `archivos_codigo`.
-- Las versiones del motor, de Python y de NumPy, SciPy, pandas, scikit-learn, statsmodels, pvlib, joblib
-  y pyarrow.
-
-Son huellas, no copias: identifican qué se ejecutó, pero el código y los datos no se guardan con el
-resultado. Para reproducirlo hace falta conservar esos archivos (por ejemplo, en Git).
-
-## Linealización
-
-En Bloques, «Linealizar aquí» calcula el modelo lineal (A, B, C, D) del diagrama en su punto de
-operación: simula hasta el final, refina con Newton (f = 0) y deriva por diferencias centrales. La
-entrada es la primera fuente del diagrama; la salida, el bloque seleccionado o la señal del primer
-osciloscopio. Abre su Bode, su respuesta al escalón y sus polos, y deja la variable `lin` en la consola,
-que usan las herramientas de Control con «Planta: modelo linealizado».
-
-## Datos de los valores
-
-`MECHANICS.md` explica de dónde sale cada valor y cuáles son estimados.
+El repositorio no tiene todavía una licencia publicada.
