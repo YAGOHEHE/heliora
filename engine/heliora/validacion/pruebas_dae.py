@@ -6,14 +6,16 @@ import copy
 import numpy as np
 
 from .banco import prueba
-from ..sim.diagrama import bloque, diagrama, hilo, simular
+from ..sim.diagrama import Modelo, bloque, diagrama, hilo, simular
+from ..sim.solvers import ErrorSolver, integrar_modelo
+from .pruebas_correcciones import _cubica
 
 
 def _falla(d, config=None):
     """Mensaje de error de la simulación, o None si terminó."""
     try:
         simular(copy.deepcopy(d), config=config)
-    except ValueError as e:
+    except (ValueError, ErrorSolver) as e:
         return str(e)
     return None
 
@@ -119,3 +121,36 @@ def dae_acuerdo(m):
     from . import ejemplos
     m.cota("RC: respuesta al escalón", _acuerdo(ejemplos.rc_serie(), 0.005), 1e-3)
     m.cota("Motor de inducción: primeros 0.3 s del arranque", _acuerdo(ejemplos.arranque_induccion(), 0.3), 1e-3)
+
+
+@prueba(1, "DAE: errores diagnósticos como el motor de siempre",
+        "Invariante: sin solución, sin convergencia o sin tolerancia → error; nunca un resultado falso")
+def dae_errores(m):
+    """Los fallos del DAE dan el mismo diagnóstico que Dormand-Prince y un diagrama de señal avanza."""
+    d = diagrama("señal", [bloque("s", "senoidal", A=1.0, f=1.0), bloque("k", "ganancia", k=2.0),
+                           bloque("o", "osciloscopio", n=1)], [hilo("s.y", "k.u"), hilo("k.y", "o.u1")], t_fin=1.0)
+    a = simular(copy.deepcopy(d), config={"metodo": "dopri"})["senales"][0]
+    b = simular(copy.deepcopy(d), config={"metodo": "dae"})["senales"][0]
+    m.error("Diagrama sin estados: llega a t_fin", float(b["t"][-1]), 1.0, 0.0, "s")
+    m.cota("Diagrama sin estados: igual que Dormand-Prince",
+           float(np.max(np.abs(np.asarray(b["trazas"][0]) - np.asarray(a["trazas"][0])))), 0.0)
+
+    fuentes = diagrama("fuentes", [
+        bloque("v1", "fuente_dc", V=5.0), bloque("v2", "fuente_dc", V=10.0), bloque("r", "resistor", R=10.0),
+        bloque("g", "tierra"), bloque("vm", "voltimetro"), bloque("o", "osciloscopio", n=1),
+    ], [hilo("v1.p", "r.p"), hilo("v2.p", "r.p"), hilo("r.n", "g.t"), hilo("v1.n", "g.t"), hilo("v2.n", "g.t"),
+        hilo("r.p", "vm.p"), hilo("vm.n", "g.t"), hilo("vm.v", "o.u1")], metodo="dae", t_fin=0.01)
+    error = _falla(fuentes) or ""
+    m.verdad("Fuentes de tensión en paralelo: red sin solución única", "solución única" in error)
+
+    error = _falla(_cubica(-2.0, 2.0), config={"metodo": "dae"}) or ""
+    m.verdad("Red no lineal sin convergencia: error con el residuo", "no convergió" in error and "residuo" in error)
+
+    # Un paso mínimo de 1 ms frente a τ = 4 ms no puede cumplir rtol = 1e-10: debe fallar, no aceptar el paso
+    modelo = Modelo(_rc_paralelo(), None, dae=True)
+    try:
+        integrar_modelo(modelo, metodo="dae", tf=0.02, rtol=1e-10, atol=1e-14, paso_min=1e-3)
+        error = ""
+    except ErrorSolver as e:
+        error = str(e)
+    m.verdad("Paso mínimo sin alcanzar la tolerancia: error", "tolerancia" in error)
