@@ -182,6 +182,11 @@ class Supercondensador(Elemento):
         return [float(self.p["v0"])]
 
     @override
+    def estados_en_rama(self):
+        """La tensión del condensador ideal fija su rama."""
+        return {0: 0}
+
+    @override
     def estampar_fijo(self, S):
         m = self.internos[0]
         S.g(m, self.n["p"], 1.0 / float(self.p["R_esr"]))

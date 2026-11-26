@@ -326,6 +326,7 @@ fn etiqueta_metodo(m: &str) -> &'static str {
         "euler" => "Euler (fijo)",
         "rk4" => "RK4 (fijo)",
         "bdf" => "BDF (rígido)",
+        "dae" => "DAE (BDF implícito)",
         _ => "Dormand-Prince",
     }
 }
@@ -950,6 +951,7 @@ impl Editor {
             "euler" => "Euler fijo",
             "rk4" => "RK4 fijo",
             "bdf" => "BDF",
+            "dae" => "DAE",
             _ => "Dormand-Prince",
         };
         // Un campo ausente muestra el mismo valor por defecto que el panel del solver
@@ -1465,7 +1467,7 @@ impl Editor {
         egui::Grid::new("g_solver").num_columns(3).spacing([8.0, 8.0]).min_col_width(24.0).show(ui, |ui| {
             ui.label(egui::RichText::new("Método").color(tema::p().texto_2));
             egui::ComboBox::from_id_salt("solver").selected_text(etiqueta_metodo(&metodo)).width(130.0).show_ui(ui, |ui| {
-                for m in ["euler", "rk4", "dopri", "bdf"] {
+                for m in ["euler", "rk4", "dopri", "bdf", "dae"] {
                     if ui.selectable_label(metodo == m, etiqueta_metodo(m)).clicked() {
                         d.insert("metodo".into(), json!(m));
                     }
@@ -1497,6 +1499,7 @@ impl Editor {
             "euler" => "Euler explícito, orden 1. Sencillo; requiere pasos muy pequeños.",
             "rk4" => "Runge-Kutta clásico, orden 4. Recomendado para modelos conmutados con paso pequeño.",
             "bdf" => "BDF de orden variable (1 a 5). Para sistemas rígidos, como cargas con constantes de tiempo muy distintas.",
+            "dae" => "Red y diagrama como un solo sistema implícito (BDF de orden 1 y 2). Admite condensadores en paralelo e inercias unidas por un engranaje sin sumarlas a mano. Error global de unas decenas de veces rtol.",
             _ => "Dormand-Prince 5(4) con paso variable. Recomendado para modelos suaves.",
         };
         ui.label(egui::RichText::new(txt).small().color(tema::p().texto_3));

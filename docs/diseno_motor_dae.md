@@ -1,9 +1,43 @@
 # Diseño: motor acausal multidominio con DAE (Fase 5 del encargo)
 
-Estado: **propuesta para revisión humana. No implementado.** Este documento decide si Heliora sigue
-como simulador eléctrico (con dominios análogos) sobre la red actual o pasa a un motor de redes
-físicas acausales con ecuaciones diferenciales-algebraicas (DAE). Las estimaciones de esfuerzo son
-**estimadas**, no medidas.
+Estado (2026-11-26): **construido como solver opcional «dae»** en la rama `motor-dae`. El motor de
+siempre sigue siendo el de por defecto. La sección 0 describe lo construido y en qué se aparta de la
+propuesta; las secciones 1 a 6 son la propuesta original, que se conserva como contexto.
+
+## 0. Lo construido
+
+| Parte | Cómo quedó | Archivo |
+|---|---|---|
+| Formulación | `F(t, y, ẏ) = 0` con `y = [x; z]`: estados del diagrama y tensiones/corrientes de la red, resueltos juntos | `sim/dae.py` |
+| Almacenes | Cada elemento declara en `estados_en_rama()` qué estado fija qué rama de tensión. En modo DAE esa rama pasa a ser `d(fila·z)/dt = derivada del estado`; el estado se reconstruye de z. No hubo que reescribir ningún elemento (adaptador genérico) | `sim/circuito.py` y 10 clases de `lib/` |
+| Solver | BDF de paso variable, orden 1 y 2 (A-estable, el de los simuladores de circuitos), en lugar de orden variable 1-5 | `sim/dae.py` |
+| Newton | Jacobiano ∂F/∂y por diferencias finitas, agrupando columnas sin filas comunes (Curtis-Powell-Reid), uno por combinación de interruptores, corregido con Broyden en cada iteración; ∂F/∂ẏ es constante y exacta | `sim/dae.py` |
+| Error | Estimación de Milne (predictor frente a corrector) solo sobre las incógnitas diferenciales: las algebraicas, también las de índice 2 (par del engranaje entre dos inercias), quedan fuera | `sim/dae.py` |
+| Condiciones iniciales y conmutaciones | La red se resuelve con los almacenes fijados. Si dos almacenes unidos rígidamente tienen valores incompatibles, se proyectan minimizando Σ C_i·(valor - fijado)² con el resto de la red como restricción: conserva la carga, el momento angular referido al eje o el calor, y se avisa | `Red.consistente`, `Red._proyectar` |
+| Reducción de índice (Pantelides) | No hizo falta: BDF resuelve el caso de índice 2 del engranaje (comprobado contra la solución analítica) | — |
+| Interfaz | Opción «DAE (BDF implícito)» en el panel del solver | `src/bloques.rs` |
+
+Verificado (banco `pruebas_dae.py`): dos condensadores en paralelo y dos inercias en el mismo eje o
+por un engranaje, que el motor de siempre rechaza, contra su solución analítica; proyección que
+conserva la carga y el momento angular; acuerdo con Dormand-Prince en el RC y en el arranque del motor
+de inducción (diferencia relativa < 1e-3).
+
+Medido en los ejemplos con la tolerancia por defecto (rtol 1e-3): el DAE es más rápido que
+Dormand-Prince en las plantas FV promediada y con batería (rígidas) y más lento en el arranque del motor
+de inducción, la planta conmutada y el troceador (entre 3 y 12 veces), por su orden 2 y por el
+Jacobiano de la máquina, que gira con la red de 50 Hz.
+
+Pendiente:
+- La fuente de calor de las uniones sigue usando el estado de energía con retardo τ_e: leer v·i en el
+  mismo instante exige reescribir esas estampas, no solo el solver.
+- La linealización sigue sobre el motor de siempre; con DAE serían pares de matrices (E, A).
+- Orden variable mayor que 2, para acercarse a Dormand-Prince en los modelos suaves.
+
+## Propuesta original (2026-11-19)
+
+Este documento decidía si Heliora seguía como simulador eléctrico (con dominios análogos) sobre la red
+actual o pasaba a un motor de redes físicas acausales con ecuaciones diferenciales-algebraicas (DAE). Las
+estimaciones de esfuerzo eran **estimadas**, no medidas.
 
 ## 1. Situación actual (verificada en el código)
 

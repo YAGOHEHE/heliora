@@ -89,6 +89,11 @@ class Capacitor(Elemento):
         return [float(self.p["v0"])]
 
     @override
+    def estados_en_rama(self):
+        """La tensión del condensador fija su rama."""
+        return {0: 0}
+
+    @override
     def estampar_fijo(self, S):
         S.rama_tension(self.ramas[0], self.n["p"], self.n["n"])
 
@@ -122,6 +127,11 @@ class RLC(Elemento):
     @override
     def x0(self):
         return [0.0, 0.0]  # i_L, v_C
+
+    @override
+    def estados_en_rama(self):
+        """La tensión del condensador (segundo estado) fija la rama."""
+        return {1: 0}
 
     @override
     def estampar_fijo(self, S):
@@ -257,6 +267,11 @@ class Capacitor3(Elemento):
     @override
     def x0(self):
         return [0.0, 0.0]
+
+    @override
+    def estados_en_rama(self):
+        """v_a y v_b fijan sus ramas; la tercera es la restricción v_a + v_b + v_c = 0."""
+        return {0: 0, 1: 1}
 
     @override
     def estampar_fijo(self, S):
