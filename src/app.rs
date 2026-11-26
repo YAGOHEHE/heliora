@@ -858,7 +858,7 @@ impl App {
                     1 => self.tarjeta_planta(ui),
                     _ => self.tarjeta_validacion(ui),
                 });
-                ui::fila(ui, &[8, 4], altos[1].max(260.0), |i, ui| {
+                ui::fila_ajustable(ui, "inicio_ordenes", altos[1].max(260.0), |i, ui| {
                     if i == 0 {
                         self.tarjeta_ordenes(ui);
                     } else {

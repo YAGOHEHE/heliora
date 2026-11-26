@@ -890,7 +890,7 @@ impl Mantenimiento {
             ui::ficha_kpi(ui, e, v, u, n, None);
         });
         let alto = ui::altos(disponible, ALTO_FICHA, &[1.0])[0];
-        ui::fila(ui, &[8, 4], alto, |i, ui| {
+        ui::fila_ajustable(ui, "mantenimiento_tablero", alto, |i, ui| {
             if i == 0 {
                 self.plan_por_equipo(ui, &ordenes, lunes, hoy, acciones);
             } else {
@@ -1123,7 +1123,7 @@ impl Mantenimiento {
         let pagina: Vec<&Value> = visibles.iter().skip(self.pagina * POR_PAGINA).take(POR_PAGINA).copied().collect();
         let sel = self.orden_sel.clone();
         let titulo = FILTROS.iter().find(|(c, _)| *c == self.f_estado).map(|(_, e)| *e).unwrap_or("Órdenes");
-        ui::fila(ui, &[8, 4], alto, |i, ui| {
+        ui::fila_ajustable(ui, "mantenimiento_ordenes", alto, |i, ui| {
             if i == 0 {
                 self.tabla_ordenes(ui, titulo, &pagina, n_visibles, paginas, &codigos, acciones);
             } else {

@@ -231,7 +231,8 @@ impl Calculo {
             let alturas = interfaz::altos(ui.available_height() - 1.0, 2.0 * interfaz::MARGEN - interfaz::HUECO, &[1.5, 1.0]);
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 interfaz::pagina(ui, |ui| {
-                    interfaz::fila(ui, &[8, 4], alturas[0], |i, ui| {
+                    let alturas = interfaz::filas_ajustables(ui, "calculo_alturas", [alturas[0], alturas[1]], [200.0, 180.0]);
+                    interfaz::fila_ajustable(ui, "calculo_superior", alturas[0], |i, ui| {
                         ui.scope_builder(egui::UiBuilder::new().id_salt(("calculo_fila_1", i)), |ui| {
                             ui.spacing_mut().item_spacing.y = 4.0;
                             if i == 0 {
@@ -250,7 +251,7 @@ impl Calculo {
                             }
                         });
                     });
-                    interfaz::fila(ui, &[8, 4], alturas[1], |i, ui| {
+                    interfaz::fila_ajustable(ui, "calculo_inferior", alturas[1], |i, ui| {
                         ui.scope_builder(egui::UiBuilder::new().id_salt(("calculo_fila_2", i)), |ui| {
                             ui.spacing_mut().item_spacing.y = 4.0;
                             if i == 0 {

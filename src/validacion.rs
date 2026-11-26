@@ -145,12 +145,14 @@ impl Validacion {
                 }
             });
             let alto = (ui.available_height() - ui::MARGEN).max(420.0);
-            ui::fila(ui, &[8, 4], alto, |i, ui| {
-                if i == 0 {
-                    self.tabla_pruebas(ui);
-                } else {
-                    self.detalle(ui, motor);
-                }
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                ui::fila_ajustable(ui, "validacion_detalle", alto, |i, ui| {
+                    if i == 0 {
+                        self.tabla_pruebas(ui);
+                    } else {
+                        self.detalle(ui, motor);
+                    }
+                });
             });
         });
     }

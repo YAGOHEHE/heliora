@@ -1062,9 +1062,11 @@ impl Editor {
         egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.fondo)).show_inside(ui, |ui| {
             let apilado = interfaz::apilar(ui.available_width() - 2.0 * interfaz::MARGEN, &[8, 4]);
             let alturas = interfaz::altos(ui.available_height() - 1.0, 2.0 * interfaz::MARGEN - interfaz::HUECO, &[2.2, 1.0]);
-            egui::ScrollArea::vertical().scroll_source(if apilado { egui::containers::scroll_area::ScrollSource::ALL } else { egui::containers::scroll_area::ScrollSource::NONE }).auto_shrink([false, false]).show(ui, |ui| {
+            let rueda = if apilado { egui::containers::scroll_area::ScrollSource::ALL } else { egui::containers::scroll_area::ScrollSource::SCROLL_BAR };
+            egui::ScrollArea::vertical().scroll_source(rueda).auto_shrink([false, false]).show(ui, |ui| {
                 interfaz::pagina(ui, |ui| {
-                    interfaz::fila(ui, &[8, 4], alturas[0], |i, ui| {
+                    let alturas = interfaz::filas_ajustables(ui, "bloques_alturas", [alturas[0], alturas[1]], [392.0, 160.0]);
+                    interfaz::fila_ajustable(ui, "bloques_superior", alturas[0], |i, ui| {
                         ui.scope_builder(egui::UiBuilder::new().id_salt(("bloques_fila_1", i)), |ui| {
                             ui.spacing_mut().item_spacing = Vec2::new(8.0, 4.0);
                             if i == 0 {
@@ -1074,7 +1076,7 @@ impl Editor {
                             }
                         });
                     });
-                    interfaz::fila(ui, &[8, 4], alturas[1], |i, ui| {
+                    interfaz::fila_ajustable(ui, "bloques_inferior", alturas[1], |i, ui| {
                         ui.scope_builder(egui::UiBuilder::new().id_salt(("bloques_fila_2", i)), |ui| {
                             ui.spacing_mut().item_spacing = Vec2::new(8.0, 4.0);
                             if i == 0 {
@@ -1148,24 +1150,21 @@ impl Editor {
         }
     }
 
-    /// Tarjeta de 8 columnas: la librería (200 px) a la izquierda y el lienzo a la derecha.
+    /// Librería de bloques y lienzo con un separador de ancho ajustable.
     fn libreria_y_lienzo(&mut self, ui: &mut egui::Ui) {
-        let pal = tema::p();
         interfaz::tarjeta_plena(ui, |ui| {
             let r = ui.max_rect();
-            let r_lib = Rect::from_min_max(r.min, Pos2::new(r.left() + 200.0, r.bottom()));
+            let [r_lib, r_lienzo] = interfaz::dividir(ui, "libreria_bloques", r, true, 12.0, 194.0 / (r.width() - 12.0), [140.0, 200.0]);
             let mut lib = ui.new_child(egui::UiBuilder::new().id_salt("libreria").max_rect(r_lib.shrink2(Vec2::new(8.0, 12.0))));
             lib.set_clip_rect(r_lib.intersect(ui.clip_rect()));
             self.paleta(&mut lib);
-            ui.painter().line_segment([r_lib.right_top(), r_lib.right_bottom()], Stroke::new(1.0_f32, pal.linea));
-            let r_lienzo = Rect::from_min_max(Pos2::new(r_lib.right() + 1.0, r.top()), r.max);
             let mut zona = ui.new_child(egui::UiBuilder::new().id_salt("zona_lienzo").max_rect(r_lienzo));
             zona.set_clip_rect(r_lienzo.intersect(ui.clip_rect()));
             self.lienzo(&mut zona);
         });
     }
 
-    /// Bloque seleccionado, solver y última simulación apilados en la celda de 4 columnas.
+    /// Bloque seleccionado, solver y última simulación apilados en la columna derecha.
     fn tarjetas_laterales(&mut self, ui: &mut egui::Ui, c: &mut Compartido) {
         let r = ui.max_rect();
         let alturas = interfaz::altos(r.height() + interfaz::HUECO, 0.0, &[0.32, 0.26, 0.42]);

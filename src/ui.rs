@@ -66,6 +66,77 @@ pub fn fila(ui: &mut Ui, spans: &[usize], alto: f32, mut contenido: impl FnMut(u
     }
 }
 
+/// Dos paneles cuyo ancho se puede ajustar. En ventanas estrechas se apilan.
+pub fn fila_ajustable(ui: &mut Ui, clave: impl std::hash::Hash, alto: f32, mut contenido: impl FnMut(usize, &mut Ui)) {
+    let ancho = ui.available_width();
+    if apilar(ancho, &[8, 4]) {
+        fila(ui, &[8, 4], alto, contenido);
+        return;
+    }
+    let (r, _) = ui.allocate_exact_size(Vec2::new(ancho, alto), Sense::hover());
+    let proporcion = celdas(ancho, COLUMNAS, HUECO, &[8, 4])[0].1 / (ancho - HUECO);
+    let paneles = dividir(ui, clave, r, true, HUECO, proporcion, [420.0, 310.0]);
+    for (i, panel) in paneles.into_iter().enumerate() {
+        let mut hijo = ui.new_child(UiBuilder::new().max_rect(panel));
+        hijo.set_clip_rect(panel.intersect(ui.clip_rect()));
+        contenido(i, &mut hijo);
+    }
+}
+
+/// Ajusta el alto de dos filas en una página con la separación habitual entre tarjetas.
+pub fn filas_ajustables(ui: &mut Ui, clave: impl std::hash::Hash, alturas: [f32; 2], minimos: [f32; 2]) -> [f32; 2] {
+    let alto = (alturas[0] + alturas[1]).max(minimos[0] + minimos[1]);
+    let ancho = ui.available_width();
+    let r = Rect::from_min_size(ui.next_widget_position(), Vec2::new(ancho, alto + HUECO));
+    let paneles = dividir(ui, clave, r, false, HUECO, alturas[0] / alturas.iter().sum::<f32>(), minimos);
+    [paneles[0].height(), paneles[1].height()]
+}
+
+/// Guarda la proporción de un separador en las preferencias de egui.
+pub fn dividir(
+    ui: &Ui, clave: impl std::hash::Hash, r: Rect, lado_a_lado: bool, hueco: f32, inicial: f32, minimos: [f32; 2],
+) -> [Rect; 2] {
+    let id = egui::Id::new(("distribucion_paneles", clave));
+    let eje = if lado_a_lado { Vec2::X } else { Vec2::Y };
+    let espacio = (r.size().dot(eje) - hueco).max(1.0);
+    let escala = (espacio / minimos.iter().sum::<f32>()).min(1.0);
+    let minimo = minimos[0] * escala;
+    let maximo = (espacio - minimos[1] * escala).max(minimo);
+    let limitar = |fraccion: f32| (fraccion * espacio).clamp(minimo, maximo);
+    let posicion = ui.data_mut(|d| d.get_persisted::<f32>(id)).filter(|v| v.is_finite()).unwrap_or(inicial);
+    let mut primero = limitar(posicion);
+    let separador = |primero: f32| {
+        let esquina = r.min + eje * primero;
+        Rect::from_min_max(esquina, r.max - eje * (espacio - primero))
+    };
+    let respuesta = ui.interact(separador(primero), id, Sense::click_and_drag())
+        .on_hover_cursor(if lado_a_lado { egui::CursorIcon::ResizeHorizontal } else { egui::CursorIcon::ResizeVertical })
+        .on_hover_text("Arrastra para ajustar · Doble clic para restablecer");
+    let inicio_arrastre = id.with("inicio");
+    if respuesta.drag_started() {
+        ui.data_mut(|d| d.insert_temp(inicio_arrastre, primero));
+    }
+    if let Some(delta) = respuesta.total_drag_delta() {
+        let anterior = ui.data(|d| d.get_temp::<f32>(inicio_arrastre)).unwrap_or(primero);
+        primero = limitar((anterior + delta.dot(eje)) / espacio);
+        ui.data_mut(|d| d.insert_persisted(id, primero / espacio));
+    } else if respuesta.double_clicked() {
+        ui.data_mut(|d| d.remove::<f32>(id));
+        primero = limitar(inicial);
+    }
+    let centro = separador(primero).center();
+    let pal = tema::p();
+    let color = if respuesta.hovered() || respuesta.dragged() { pal.acento } else { pal.texto_3 };
+    let transversal = if lado_a_lado { Vec2::Y } else { Vec2::X };
+    for indice in [-1.0, 0.0, 1.0] {
+        ui.painter().circle_filled(centro + transversal * (4.0 * indice), 1.25, color);
+    }
+    [
+        Rect::from_min_max(r.min, r.max - eje * (r.size().dot(eje) - primero)),
+        Rect::from_min_max(r.min + eje * (primero + hueco), r.max),
+    ]
+}
+
 /// Alto de las filas que llenan la pantalla: reparte `disponible` (menos huecos y filas fijas) según `pesos`.
 pub fn altos(disponible: f32, fijos: f32, pesos: &[f32]) -> Vec<f32> {
     const MINIMO: f32 = 120.0;
@@ -305,6 +376,71 @@ pub fn estado_vacio(ui: &mut Ui, texto: &str, accion: &str) -> bool {
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    #[test]
+    fn el_separador_se_arrastra_se_guarda_y_se_restablece_con_doble_clic() {
+        let contexto = egui::Context::default();
+        let clave = "prueba_del_arrastre";
+        let medir = |ctx: &egui::Context, tiempo, eventos| {
+            let mut ancho = 0.0;
+            let _ = ctx.run(egui::RawInput { events: eventos, time: Some(tiempo), ..Default::default() }, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let zona = Rect::from_min_size(Pos2::ZERO, Vec2::new(816.0, 300.0));
+                    ancho = dividir(ui, clave, zona, true, 16.0, 0.5, [160.0, 180.0])[0].width();
+                });
+            });
+            ancho
+        };
+        let boton = |pos, pressed| egui::Event::PointerButton {
+            pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE,
+        };
+        let inicial = Pos2::new(408.0, 150.0);
+        let desplazada = Pos2::new(558.0, 150.0);
+        assert_eq!(medir(&contexto, 0.0, vec![]), 400.0);
+        medir(&contexto, 0.1, vec![egui::Event::PointerMoved(inicial)]);
+        medir(&contexto, 0.2, vec![boton(inicial, true)]);
+        assert_eq!(medir(&contexto, 0.3, vec![egui::Event::PointerMoved(desplazada)]), 550.0);
+        medir(&contexto, 0.4, vec![boton(desplazada, false)]);
+
+        #[derive(Default)]
+        struct Preferencias(Option<String>);
+        impl eframe::Storage for Preferencias {
+            fn get_string(&self, _: &str) -> Option<String> { self.0.clone() }
+            fn set_string(&mut self, _: &str, valor: String) { self.0 = Some(valor); }
+            fn flush(&mut self) {}
+        }
+        let mut preferencias = Preferencias::default();
+        contexto.memory(|m| eframe::set_value(&mut preferencias, "egui", m));
+        let reiniciado = egui::Context::default();
+        reiniciado.memory_mut(|m| *m = eframe::get_value(&preferencias, "egui").unwrap());
+        assert_eq!(medir(&reiniciado, 1.0, vec![]), 550.0);
+        medir(&reiniciado, 1.1, vec![egui::Event::PointerMoved(desplazada)]);
+        medir(&reiniciado, 1.2, vec![boton(desplazada, true)]);
+        medir(&reiniciado, 1.3, vec![boton(desplazada, false)]);
+        medir(&reiniciado, 1.4, vec![boton(desplazada, true)]);
+        assert_eq!(medir(&reiniciado, 1.5, vec![boton(desplazada, false)]), 400.0);
+    }
+
+    #[test]
+    fn el_separador_recupera_la_proporcion_despues_de_estrechar_la_ventana() {
+        let ctx = egui::Context::default();
+        let clave = "prueba_de_distribucion";
+        let id = egui::Id::new(("distribucion_paneles", clave));
+        ctx.data_mut(|d| d.insert_persisted(id, 0.75_f32));
+        let medir = |ancho: f32| {
+            let mut anchos = [0.0; 2];
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let r = Rect::from_min_size(ui.next_widget_position(), Vec2::new(ancho, 300.0));
+                    anchos = dividir(ui, clave, r, true, 16.0, 0.5, [160.0, 180.0]).map(|r| r.width());
+                });
+            });
+            anchos
+        };
+        assert_eq!(medir(816.0), [600.0, 200.0]);
+        assert_eq!(medir(416.0), [220.0, 180.0]);
+        assert_eq!(medir(816.0), [600.0, 200.0]);
+    }
 
     #[test]
     fn la_rejilla_reparte_doce_columnas_con_huecos() {

@@ -447,7 +447,7 @@ impl Pagina {
                     }
                     let reservado = 2.0 * ui::MARGEN + if vista.is_some() { alto_fichas + ui::HUECO } else { 0.0 };
                     let alto = (total - reservado).max(460.0);
-                    ui::fila(ui, &[8, 4], alto, |i, ui| {
+                    ui::fila_ajustable(ui, ("herramientas", self.modulo.clone()), alto, |i, ui| {
                         if i == 0 {
                             match (inf.as_mut(), vista.as_ref()) {
                                 (Some(r), Some(v)) => columna_resultados(ui, r, v, c, &mut sel, &id),
