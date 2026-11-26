@@ -216,6 +216,12 @@ pub struct App {
     filtro_esquema: String,
     /// Nodos del esquema que la persona ha cerrado.
     esquema_cerrados: std::collections::HashSet<String>,
+    /// Filtro de las próximas órdenes de la portada: «vencidas», «30» o «pendientes».
+    filtro_inicio: String,
+    /// Tipo de orden elegido en los chips de la portada.
+    tipo_inicio: Option<String>,
+    /// Próximas órdenes ordenadas por equipo en lugar de por fecha.
+    orden_inicio_equipo: bool,
 }
 
 /// Módulos del menú, en orden.
@@ -298,6 +304,9 @@ impl App {
             pestana_esquema: 0,
             filtro_esquema: String::new(),
             esquema_cerrados: Default::default(),
+            filtro_inicio: "30".into(),
+            tipo_inicio: None,
+            orden_inicio_equipo: false,
         }
     }
 
@@ -1093,27 +1102,121 @@ impl App {
         }
     }
 
-    /// Portada: continuar con el diagrama abierto, KPIs de planta, validación, próximas órdenes y módulos.
-    fn pagina_inicio(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            ui::pagina(ui, |ui| {
-                self.cabecera_inicio(ui);
-                let alto = (ui.available_height() - ui::MARGEN).max(560.0);
-                let altos = ui::altos(alto + ui::HUECO, 0.0, &[1.0, 1.0]);
-                ui::fila(ui, &[4, 4, 4], altos[0].max(300.0), |i, ui| match i {
-                    0 => self.tarjeta_continuar(ui),
-                    1 => self.tarjeta_planta(ui),
-                    _ => self.tarjeta_validacion(ui),
-                });
-                ui::fila_ajustable(ui, "inicio_ordenes", altos[1].max(260.0), |i, ui| {
-                    if i == 0 {
-                        self.tarjeta_ordenes(ui);
-                    } else {
-                        self.tarjeta_modulos(ui);
-                    }
+    /// Barra superior de la portada: blanca, de 40 px, con la marca y el estado del motor.
+    fn barra_superior_portada(&mut self, ctx: &egui::Context) {
+        let pal = tema::p();
+        egui::TopBottomPanel::top("superior_portada")
+            .exact_height(40.0)
+            .show_separator_line(false)
+            .frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(14, 0)))
+            .show(ctx, |ui| {
+                let r = ui.max_rect();
+                ui.painter().line_segment([Pos2::new(r.left() - 14.0, r.bottom()), Pos2::new(r.right() + 14.0, r.bottom())], egui::Stroke::new(1.0_f32, pal.linea));
+                ui.horizontal_centered(|ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    let (r, _) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::hover());
+                    tema::logo(ui.painter(), r);
+                    ui.label(egui::RichText::new("Heliora").family(tema::semi()).size(14.0).color(pal.texto));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| self.estado_motor(ui));
                 });
             });
+    }
+
+    /// Barra lateral negra de 140 px de la portada: Inicio, Nuevo, Abrir y Referencia arriba; Ajustes
+    /// y Cuenta abajo. El activo lleva una barra blanca de 3 px a la izquierda.
+    fn barra_lateral_portada(&mut self, ctx: &egui::Context) {
+        let borde = if self.modo == tema::Modo::Oscuro { tema::p().borde } else { tema::NEGRO };
+        egui::SidePanel::left("lateral_portada")
+            .exact_width(140.0)
+            .resizable(false)
+            .show_separator_line(false)
+            .frame(egui::Frame::new().fill(tema::NEGRO).inner_margin(egui::Margin { left: 0, right: 0, top: 8, bottom: 8 }).stroke(egui::Stroke::new(1.0_f32, borde)))
+            .show(ctx, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                if boton_lateral(ui, Icono::Inicio, "Inicio", self.modulo == Modulo::Inicio).clicked() {
+                    self.modulo = Modulo::Inicio;
+                }
+                if boton_lateral(ui, Icono::Nuevo, "Nuevo", false).on_hover_text("Nuevo proyecto").clicked() {
+                    self.confirmar_nuevo = true;
+                }
+                if boton_lateral(ui, Icono::Abrir, "Abrir", false).on_hover_text("Abrir un proyecto").clicked() {
+                    self.abrir_proyecto();
+                }
+                if boton_lateral(ui, Icono::Referencia, "Referencia", false).on_hover_text("Referencia de bloques y funciones").clicked() {
+                    self.modulo = Modulo::Referencia;
+                }
+                ui.add_space((ui.available_height() - 2.0 * 80.0).max(0.0));
+                let ajustes = boton_lateral(ui, Icono::Ajustes, "Ajustes", false);
+                egui::Popup::menu(&ajustes).show(|ui| {
+                    ui::titulo_seccion(ui, "Tema");
+                    for m in [tema::Modo::Claro, tema::Modo::Oscuro] {
+                        if ui.radio(self.modo == m, m.nombre()).clicked() {
+                            self.cambiar_modo(ui.ctx(), m);
+                        }
+                    }
+                    ui.separator();
+                    if ui.add_enabled(self.motor.listo, egui::Button::new("Reiniciar el motor")).clicked() {
+                        self.reiniciar_motor();
+                    }
+                });
+                boton_lateral(ui, Icono::Cuenta, "Cuenta", false).on_hover_text("Heliora no usa cuentas: cada proyecto es una carpeta local");
+            });
+    }
+
+    /// Portada: cabecera del proyecto, tres tarjetas (continuar, planta y validación), próximas
+    /// órdenes y módulos.
+    fn pagina_inicio(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            egui::Frame::new().fill(tema::p().fondo).inner_margin(egui::Margin { left: 32, right: 32, top: 26, bottom: 26 }).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 22.0;
+                self.cabecera_inicio(ui);
+                let ancho = ui.available_width();
+                let apilar = ancho < 900.0;
+                let spans: &[usize] = &[4, 4, 4];
+                let alto = 310.0;
+                if apilar {
+                    for i in 0..3 {
+                        let (r, _) = ui.allocate_exact_size(Vec2::new(ancho, alto), Sense::hover());
+                        let mut c = ui.new_child(egui::UiBuilder::new().max_rect(r));
+                        self.tarjeta_inicio(&mut c, i);
+                    }
+                } else {
+                    let (fila, _) = ui.allocate_exact_size(Vec2::new(ancho, alto), Sense::hover());
+                    for (i, (x, w)) in ui::celdas(ancho, 12, 20.0, spans).into_iter().enumerate() {
+                        let r = Rect::from_min_size(Pos2::new(fila.left() + x, fila.top()), Vec2::new(w, alto));
+                        let mut c = ui.new_child(egui::UiBuilder::new().max_rect(r));
+                        self.tarjeta_inicio(&mut c, i);
+                    }
+                }
+                let hueco = 32.0;
+                let ancho_ordenes = if apilar { ancho } else { (ancho - hueco) * 2.0 / 3.0 };
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = hueco;
+                    ui.vertical(|ui| {
+                        ui.set_width(ancho_ordenes);
+                        self.lista_ordenes(ui);
+                    });
+                    if !apilar {
+                        ui.vertical(|ui| {
+                            ui.set_width(ancho - ancho_ordenes - hueco);
+                            self.rejilla_modulos(ui);
+                        });
+                    }
+                });
+                if apilar {
+                    self.rejilla_modulos(ui);
+                }
+            });
         });
+    }
+
+    /// Una de las tres tarjetas de la portada.
+    fn tarjeta_inicio(&mut self, ui: &mut egui::Ui, i: usize) {
+        match i {
+            0 => self.tarjeta_continuar(ui),
+            1 => self.tarjeta_planta(ui),
+            _ => self.tarjeta_validacion(ui),
+        }
     }
 
     fn cabecera_inicio(&mut self, ui: &mut egui::Ui) {
@@ -1122,22 +1225,26 @@ impl App {
         let diagramas = usize::from(!self.editor.diagrama.sistema.bloques.is_empty());
         let scripts = self.calculo.guiones.iter().filter(|g| !g.motor).count();
         let mut partes = vec![format!("{diagramas} {}", if diagramas == 1 { "diagrama" } else { "diagramas" }), format!("{scripts} {}", if scripts == 1 { "script" } else { "scripts" })];
-        match self.mantenimiento.tablero["pendientes"].as_u64() {
+        match self.mantenimiento.pendientes() {
             Some(n) => partes.push(format!("plan de mantenimiento con {n} órdenes pendientes")),
             None => partes.push("sin plan de mantenimiento".into()),
         }
-        ui.horizontal(|ui| {
+        ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 2.0;
-                ui.label(egui::RichText::new(proyecto).size(22.0).family(tema::semi()).color(pal.texto));
-                ui.label(egui::RichText::new(partes.join(" · ")).color(pal.texto_2));
+                ui.spacing_mut().item_spacing.y = 6.0;
+                ui.label(egui::RichText::new(proyecto).font(tema::fuente_negrita(28.0)).color(pal.texto));
+                ui.label(egui::RichText::new(partes.join(" · ")).size(14.0).color(pal.texto_2));
             });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Nuevo proyecto").clicked() {
-                    self.confirmar_nuevo = true;
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                ui.spacing_mut().item_spacing.x = 12.0;
+                if ui::boton(ui, ui::EstiloBoton::Secundario, Some(Icono::Nuevo), "Crear carpeta", "", false).on_hover_text("Guarda el proyecto en una carpeta nueva").clicked() {
+                    self.guardar_proyecto();
                 }
-                if ui.button("Abrir proyecto").clicked() {
+                if ui::boton(ui, ui::EstiloBoton::Secundario, Some(Icono::Abrir), "Abrir proyecto", "", false).clicked() {
                     self.abrir_proyecto();
+                }
+                if ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::NuevoDocumento), "Nuevo proyecto", "", false).clicked() {
+                    self.confirmar_nuevo = true;
                 }
             });
         });
@@ -1183,7 +1290,7 @@ impl App {
                 if tema::boton_principal(ui, "Empezar uno nuevo").clicked() {
                     decision = Some(true);
                 }
-                if ui.button("Cancelar").clicked() {
+                if ui::boton(ui, ui::EstiloBoton::Secundario, None, "Cancelar", "", false).clicked() {
                     decision = Some(false);
                 }
             });
@@ -1200,57 +1307,65 @@ impl App {
     }
 
     fn tarjeta_continuar(&mut self, ui: &mut egui::Ui) {
-        let pal = tema::p();
         let mut ir_bloques = false;
+        let mut ir_calculo = false;
         let hay_diagrama = !self.editor.diagrama.sistema.bloques.is_empty();
-        ui::tarjeta_con_titulo(
-            ui,
-            "Continuar",
-            |ui| {
-                ui.label(egui::RichText::new("Bloques").color(pal.texto_2));
-            },
-            |ui| {
-                if !hay_diagrama {
-                    if ui::estado_vacio(ui, "No hay ningún diagrama abierto.", "Abrir la planta completa") {
-                        self.editor.pedir_ejemplo(&mut self.motor, "planta_promediada");
-                        ir_bloques = true;
-                    }
-                    return;
+        let (titulo, chips) = if hay_diagrama {
+            let (con_avisos, estado) = if self.editor.ultima.is_none() {
+                (false, "Sin simular".to_string())
+            } else if self.editor.avisos.is_empty() && self.editor.error.is_none() {
+                (false, "Sin avisos".to_string())
+            } else {
+                (true, format!("{} avisos", self.editor.avisos.len() + usize::from(self.editor.error.is_some())))
+            };
+            let partes: Vec<String> = self.editor.resumen_solver().split(" · ").map(|s| s.trim().to_string()).collect();
+            let metodo = partes.first().and_then(|m| m.split_whitespace().next()).unwrap_or("").to_string();
+            let fin = partes.get(1).and_then(|i| i.split('→').nth(1)).map(|s| s.trim().to_string()).unwrap_or_default();
+            let solver = [metodo, fin].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ");
+            let nombre = if self.editor.diagrama.nombre.is_empty() { "Diagrama sin nombre".to_string() } else { self.editor.diagrama.nombre.clone() };
+            (nombre, vec![(estado, con_avisos), (format!("{} bloques", self.editor.diagrama.sistema.bloques.len()), false), (solver, false)])
+        } else {
+            ("Sin diagrama abierto".to_string(), vec![])
+        };
+        let vista = self.editor.vista_previa();
+        let guion = self.calculo.guiones.iter().find(|g| !g.motor).map(|g| g.nombre.clone());
+        let debajo = |ui: &mut egui::Ui| {
+            ui.label(egui::RichText::new("Continuar donde lo dejaste · Bloques").size(13.0).color(tema::p().texto_2));
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                for (t, oscuro) in &chips {
+                    ui::chip(ui, t, *oscuro);
                 }
-                let alto_vista = (ui.available_height() - 150.0).max(80.0);
-                let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), alto_vista), Sense::hover());
-                dibujar_vista_previa(ui.painter_at(r), r, &self.editor.vista_previa());
-                ui.add_space(8.0);
-                ui.label(egui::RichText::new(&self.editor.diagrama.nombre).size(15.0).family(tema::semi()).color(pal.texto));
-                ui.add_space(2.0);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
-                    let (con_avisos, texto) = if self.editor.ultima.is_none() {
-                        (false, "Sin simular".to_string())
-                    } else if self.editor.avisos.is_empty() && self.editor.error.is_none() {
-                        (false, "Sin avisos".to_string())
-                    } else {
-                        (true, format!("{} avisos", self.editor.avisos.len() + usize::from(self.editor.error.is_some())))
-                    };
-                    ui::chip(ui, &texto, con_avisos);
-                    ui::chip(ui, &format!("{} bloques", self.editor.diagrama.sistema.bloques.len()), false);
-                    ui::chip(ui, &self.editor.resumen_solver().split(" · ").next().unwrap_or("").to_lowercase(), false);
-                });
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    if tema::boton_principal(ui, "Abrir").clicked() {
-                        ir_bloques = true;
-                    }
-                    if let Some(g) = self.calculo.guiones.iter().find(|g| !g.motor) {
-                        if ui.button(&g.nombre).clicked() {
-                            self.modulo = Modulo::Calculo;
-                        }
-                    }
-                });
-            },
-        );
+            });
+        };
+        tarjeta_portada(ui, &titulo, |_| {}, debajo, |ui| {
+            if !hay_diagrama {
+                if ui::estado_vacio(ui, "No hay ningún diagrama abierto.", "Abrir la planta completa") {
+                    self.editor.pedir_ejemplo(&mut self.motor, "planta_promediada");
+                    ir_bloques = true;
+                }
+                return;
+            }
+            let r = ui.max_rect();
+            let pie = 48.0;
+            let zona = Rect::from_min_max(r.min + Vec2::new(14.0, 10.0), Pos2::new(r.right() - 14.0, r.bottom() - pie));
+            dibujar_vista_previa(ui.painter_at(zona), zona, &vista);
+            let mut fila = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(Pos2::new(r.left() + 14.0, r.bottom() - pie), Pos2::new(r.right() - 14.0, r.bottom() - 14.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
+            fila.spacing_mut().item_spacing.x = 8.0;
+            if ui::boton(&mut fila, ui::EstiloBoton::Principal, Some(Icono::Flecha), "Abrir", "", false).clicked() {
+                ir_bloques = true;
+            }
+            if let Some(g) = &guion {
+                if ui::boton(&mut fila, ui::EstiloBoton::Secundario, Some(Icono::Informe), g, "", false).clicked() {
+                    ir_calculo = true;
+                }
+            }
+        });
         if ir_bloques {
             self.modulo = Modulo::Bloques;
+        }
+        if ir_calculo {
+            self.modulo = Modulo::Calculo;
         }
     }
 
@@ -1267,13 +1382,17 @@ impl App {
                 v
             })
             .unwrap_or_default();
-        ui::tarjeta_con_titulo(
+        let subtitulo = if kpis.is_empty() { "Indicadores de la planta a partir de una tabla SCADA." } else { "Indicadores calculados a partir de la tabla scada." };
+        tarjeta_portada(
             ui,
             "Planta · datos SCADA",
             |ui| {
-                if ui.link("Análisis →").clicked() {
+                if enlace(ui, "Análisis").clicked() {
                     ir_analisis.set(true);
                 }
+            },
+            |ui| {
+                ui.label(egui::RichText::new(subtitulo).size(13.0).color(tema::p().texto_2));
             },
             |ui| {
                 if kpis.is_empty() {
@@ -1281,7 +1400,7 @@ impl App {
                     let (texto, accion, herramienta) = if hay_scada {
                         ("Aún no hay KPIs de planta para la tabla «scada».", "Calcular KPIs", "mt_kpi")
                     } else {
-                        ("Aún no hay KPIs de planta. Se calculan con una tabla SCADA.", "Importar o generar datos SCADA", "mt_importar")
+                        ("Aún no hay KPIs de planta.", "Importar o generar datos SCADA", "mt_importar")
                     };
                     if ui::estado_vacio(ui, texto, accion) {
                         self.mantenimiento.analisis.seleccionar(herramienta);
@@ -1289,17 +1408,16 @@ impl App {
                     }
                     return;
                 }
-                let area = ui.available_rect_before_wrap();
-                let hueco = 10.0;
-                let w = (area.width() - hueco) / 2.0;
-                let h = ((area.height() - 2.0 * hueco) / 3.0).max(60.0);
+                let area = ui.max_rect().shrink(14.0);
+                let hueco = 8.0;
+                let w = (area.width() - 2.0 * hueco) / 3.0;
+                let h = 84.0_f32.min((area.height() - hueco) / 2.0);
                 for (i, (e, v, u)) in kpis.iter().take(6).enumerate() {
-                    let r = Rect::from_min_size(Pos2::new(area.left() + (i % 2) as f32 * (w + hueco), area.top() + (i / 2) as f32 * (h + hueco)), Vec2::new(w, h));
+                    let r = Rect::from_min_size(Pos2::new(area.left() + (i % 3) as f32 * (w + hueco), area.top() + (i / 3) as f32 * (h + hueco)), Vec2::new(w, h));
                     let mut hijo = ui.new_child(egui::UiBuilder::new().max_rect(r));
-                    let (u, nota) = herramientas::unidad_o_nota(u);
-                    ui::ficha_kpi(&mut hijo, e, v, u, nota, None);
+                    let (u, _) = herramientas::unidad_o_nota(u);
+                    ui::ficha_kpi(&mut hijo, e, v, u, "", None);
                 }
-                ui.allocate_rect(Rect::from_min_size(area.min, Vec2::new(area.width(), 3.0 * h + 2.0 * hueco)), Sense::hover());
             },
         );
         if ir_analisis.get() {
@@ -1314,59 +1432,77 @@ impl App {
         let cuando = self.validacion.cuando.clone();
         let ocupada = self.validacion.ocupada();
         let historica = self.validacion.historica();
+        let listo = self.motor.listo;
         let mut ir_validacion = false;
         let mut ejecutar = false;
-        ui::tarjeta_con_titulo(
+        let ejecutadas = resumen.iter().filter(|r| r.nivel.is_some()).count();
+        let falla = resumen.iter().filter(|r| matches!(r.nivel, Some(tema::Nivel::Falla))).count();
+        let bloqueadas = resumen.iter().filter(|r| matches!(r.nivel, Some(tema::Nivel::Alerta))).count();
+        let (estado, texto) = if ejecutadas == 0 {
+            (ui::EstadoNodo::SinEjecutar, "Sin ejecutar".to_string())
+        } else if let Some(m) = historica {
+            (ui::EstadoNodo::Pendiente, format!("Histórica · {m}"))
+        } else if falla > 0 {
+            (ui::EstadoNodo::Pendiente, format!("{falla} {} con fallos", if falla == 1 { "fase" } else { "fases" }))
+        } else if bloqueadas > 0 {
+            (ui::EstadoNodo::Pendiente, "Hay fases bloqueadas".to_string())
+        } else if ejecutadas == 4 {
+            (ui::EstadoNodo::Listo, "Las cuatro fases superadas".to_string())
+        } else {
+            (ui::EstadoNodo::Listo, format!("{ejecutadas} de 4 fases superadas"))
+        };
+        let fecha = fecha_validacion(&cuando);
+        tarjeta_portada(
             ui,
             "Validación",
             |ui| {
-                ui.label(egui::RichText::new(&cuando).font(tema::fuente_mono(12.0)).color(pal.texto_2));
+                ui.label(egui::RichText::new(&fecha).font(tema::fuente_mono(12.0)).color(pal.texto_2));
             },
             |ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                let ejecutadas = resumen.iter().filter(|r| r.nivel.is_some()).count();
-                let falla = resumen.iter().filter(|r| matches!(r.nivel, Some(tema::Nivel::Falla))).count();
-                let bloqueadas = resumen.iter().filter(|r| matches!(r.nivel, Some(tema::Nivel::Alerta))).count();
-                let (nivel, texto) = if ejecutadas == 0 {
-                    (None, "Sin ejecutar".to_string())
-                } else if let Some(m) = historica {
-                    (Some(tema::Nivel::Alerta), format!("Histórica · {m}"))
-                } else if falla > 0 {
-                    (Some(tema::Nivel::Falla), format!("{falla} {} con fallos", if falla == 1 { "fase" } else { "fases" }))
-                } else if bloqueadas > 0 {
-                    (Some(tema::Nivel::Alerta), "Hay fases bloqueadas".to_string())
-                } else if ejecutadas == 4 {
-                    (Some(tema::Nivel::Ok), "Las cuatro fases superadas".to_string())
-                } else {
-                    (Some(tema::Nivel::Ok), format!("{ejecutadas} de 4 fases superadas"))
-                };
-                let color = nivel.map_or(pal.texto_2, |n| n.color());
-                let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 40.0), Sense::hover());
-                ui.painter().rect_filled(r, tema::radio() as f32, if nivel.is_some() { color.gamma_multiply(0.14) } else { pal.campo_alt });
-                ui.painter().text(Pos2::new(r.left() + 14.0, r.center().y), egui::Align2::LEFT_CENTER, texto, egui::FontId::proportional(13.5), color);
-                ui.add_space(10.0);
-                for f in &resumen {
-                    let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 38.0), Sense::hover());
-                    ui.painter().line_segment([r.left_bottom(), r.right_bottom()], egui::Stroke::new(1.0_f32, pal.realce));
-                    let c = if historica.is_some() { pal.texto_3 } else { f.nivel.map_or(pal.texto_3, |n| n.color()) };
-                    ui.painter().circle_filled(Pos2::new(r.left() + 5.0, r.center().y), 3.5, c);
-                    ui.painter().text(Pos2::new(r.left() + 20.0, r.center().y), egui::Align2::LEFT_CENTER, &f.titulo, egui::FontId::proportional(13.0), pal.texto);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let (r, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
+                    if estado == ui::EstadoNodo::Listo {
+                        ui.painter().circle_stroke(r.center(), 8.0, egui::Stroke::new(1.5_f32, pal.ok));
+                        crate::iconos::dibujar(ui.painter(), r.shrink(3.0), Icono::Correcto, pal.ok);
+                    } else {
+                        ui::punto_estado(ui.painter(), r.center(), estado);
+                    }
+                    ui.label(egui::RichText::new(&texto).size(13.0).color(pal.texto));
+                });
+            },
+            |ui| {
+                let r = ui.max_rect();
+                let lista = Rect::from_min_max(Pos2::new(r.left() + 14.0, r.top()), Pos2::new(r.right() - 14.0, r.top() + 4.0 + 34.0 * resumen.len() as f32));
+                ui.painter().rect(lista, 0.0, pal.panel, egui::Stroke::new(1.0_f32, pal.linea), egui::StrokeKind::Inside);
+                for (i, f) in resumen.iter().enumerate() {
+                    let fila = Rect::from_min_size(Pos2::new(lista.left() + 16.0, lista.top() + 4.0 + 34.0 * i as f32), Vec2::new(lista.width() - 32.0, 34.0));
+                    if i + 1 < resumen.len() {
+                        ui.painter().line_segment([fila.left_bottom(), fila.right_bottom()], egui::Stroke::new(1.0_f32, pal.linea));
+                    }
+                    let e = match (historica, f.nivel) {
+                        (Some(_), Some(_)) | (_, Some(tema::Nivel::Falla)) | (_, Some(tema::Nivel::Alerta)) => ui::EstadoNodo::Pendiente,
+                        (_, Some(tema::Nivel::Ok)) => ui::EstadoNodo::Listo,
+                        _ => ui::EstadoNodo::SinEjecutar,
+                    };
+                    ui::punto_estado(ui.painter(), Pos2::new(fila.left() + 5.0, fila.center().y), e);
+                    ui.painter().text(Pos2::new(fila.left() + 20.0, fila.center().y), egui::Align2::LEFT_CENTER, f.titulo.clone(), egui::FontId::proportional(13.0), pal.texto);
                     let cuenta = match (f.bien, f.total) {
                         (Some(b), Some(t)) => format!("{b}/{t}"),
                         (None, Some(t)) => format!("—/{t}"),
                         _ => String::new(),
                     };
-                    ui.painter().text(Pos2::new(r.right(), r.center().y), egui::Align2::RIGHT_CENTER, cuenta, tema::fuente_mono(12.5), pal.texto_2);
+                    ui.painter().text(Pos2::new(fila.right(), fila.center().y), egui::Align2::RIGHT_CENTER, cuenta, tema::fuente_mono(12.0), pal.texto);
                 }
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui.add_enabled(!ocupada && self.motor.listo, egui::Button::new(if historica.is_some() { "▶ Volver a validar" } else { "▶ Ejecutar" })).clicked() {
-                        ejecutar = true;
-                    }
-                    if ui.link("Ver el error de cada prueba →").clicked() {
-                        ir_validacion = true;
-                    }
-                });
+                let mut pie = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(Pos2::new(r.left() + 14.0, r.bottom() - 48.0), Pos2::new(r.right() - 14.0, r.bottom() - 14.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+                pie.spacing_mut().item_spacing.x = 14.0;
+                let texto_boton = if historica.is_some() { "Volver a validar" } else { "Ejecutar" };
+                if pie.add_enabled_ui(!ocupada && listo, |ui| ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::Simular), texto_boton, "", false)).inner.clicked() {
+                    ejecutar = true;
+                }
+                if enlace(&mut pie, "Ver el error de cada prueba").clicked() {
+                    ir_validacion = true;
+                }
             },
         );
         if ejecutar {
@@ -1377,99 +1513,165 @@ impl App {
         }
     }
 
-    fn tarjeta_ordenes(&mut self, ui: &mut egui::Ui) {
+    /// Próximas órdenes: filtros en chips, orden y filas con borde, etiquetas y fecha.
+    fn lista_ordenes(&mut self, ui: &mut egui::Ui) {
         let pal = tema::p();
         let hoy = self.mantenimiento.hoy.clone();
         let t = &self.mantenimiento.tablero;
-        let cuentas = [(t["vencidas"].as_u64(), "vencidas"), (t["proximas_30"].as_u64(), "en 30 días"), (t["pendientes"].as_u64(), "pendientes")];
-        let mut proximas: Vec<&Value> = self.mantenimiento.estado["ordenes"].as_array().map(|a| a.iter().filter(|o| o["estado"].as_str() != Some("cerrada")).collect()).unwrap_or_default();
-        proximas.sort_by(|a, b| a["fecha"].as_str().cmp(&b["fecha"].as_str()).then(a["id"].as_str().cmp(&b["id"].as_str())));
-        let ir_plan = std::cell::Cell::new(false);
-        let ir_tablero = std::cell::Cell::new(false);
-        ui::tarjeta_con_titulo(
-            ui,
-            "Próximas órdenes",
-            |ui| {
-                if ui.link("Ver todas →").clicked() {
-                    ir_plan.set(true);
+        let mut ir_plan = false;
+        let mut ir_tablero = false;
+        ui.spacing_mut().item_spacing.y = 0.0;
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Próximas órdenes").size(22.0).family(tema::semi()).color(pal.texto));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if enlace(ui, "Ver todas").clicked() {
+                    ir_plan = true;
                 }
-                for (n, texto) in cuentas.iter().rev() {
-                    if let Some(n) = n {
-                        ui::chip(ui, &format!("{n} {texto}"), false);
+            });
+        });
+        ui.add_space(14.0);
+        let estados = [("vencidas", t["vencidas"].as_u64(), "vencidas"), ("30", t["proximas_30"].as_u64(), "en 30 días"), ("pendientes", t["pendientes"].as_u64(), "pendientes")];
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            for (clave, n, texto) in estados {
+                if let Some(n) = n {
+                    if ui::chip(ui, &format!("{n} {texto}"), self.filtro_inicio == clave).clicked() {
+                        self.filtro_inicio = clave.to_string();
                     }
                 }
-            },
-            |ui| {
-                if proximas.is_empty() {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(30.0);
-                        ui.label(egui::RichText::new("No hay órdenes pendientes. Genera el plan de ejemplo o abre un plan en Mantenimiento.").color(pal.texto_2));
-                        if ui.button("Abrir Mantenimiento · Tablero").clicked() {
-                            ir_tablero.set(true);
-                        }
-                    });
-                    return;
+            }
+            for tipo in TIPOS_ORDEN {
+                let activo = self.tipo_inicio.as_deref() == Some(tipo);
+                if ui::chip(ui, tipo, activo).clicked() {
+                    self.tipo_inicio = if activo { None } else { Some(tipo.to_string()) };
                 }
-                let ancho = ui.available_width();
-                let filas = ((ui.available_height() / 38.0) as usize).clamp(1, 8);
-                ui.spacing_mut().item_spacing.y = 0.0;
-                for (i, o) in proximas.iter().take(filas).enumerate() {
-                    let (r, _) = ui.allocate_exact_size(Vec2::new(ancho, 38.0), Sense::hover());
-                    ui::fondo_fila(ui, r, i);
-                    let p = ui.painter();
-                    let y = r.center().y;
-                    let fecha = o["fecha"].as_str().unwrap_or("");
-                    p.text(Pos2::new(r.left() + 8.0, y), egui::Align2::LEFT_CENTER, fecha_corta(fecha), tema::fuente_mono(12.5), pal.texto_2);
-                    p.text(Pos2::new(r.left() + 78.0, y), egui::Align2::LEFT_CENTER, o["id"].as_str().unwrap_or(""), tema::fuente_mono(12.5), pal.texto_2);
-                    let nombre = o["nombre"].as_str().unwrap_or("");
-                    let x_nombre = r.left() + 160.0;
-                    p.rect_filled(Rect::from_center_size(Pos2::new(x_nombre, y), Vec2::splat(8.0)), 2.0, tema::color_tipo_orden(nombre));
-                    let x_equipo = (r.right() - 150.0).max(x_nombre + 120.0);
-                    p.with_clip_rect(Rect::from_min_max(Pos2::new(x_nombre + 12.0, r.top()), Pos2::new(x_equipo - 8.0, r.bottom()))).text(Pos2::new(x_nombre + 14.0, y), egui::Align2::LEFT_CENTER, nombre, egui::FontId::proportional(13.0), pal.texto);
-                    p.text(Pos2::new(x_equipo, y), egui::Align2::LEFT_CENTER, o["equipo"].as_str().unwrap_or(""), tema::fuente_mono(12.5), pal.texto_2);
-                    let marca = if fecha == hoy { Some(("hoy", pal.acento_texto)) } else if fecha < hoy.as_str() { Some(("vencida", pal.falla)) } else { None };
-                    if let Some((txt, c)) = marca {
-                        let g = p.layout_no_wrap(txt.to_string(), egui::FontId::proportional(11.5), c);
-                        let rt = Rect::from_min_size(Pos2::new(r.right() - g.size().x - 20.0, y - 10.0), Vec2::new(g.size().x + 12.0, 20.0));
-                        p.rect_filled(rt, 10.0, c.gamma_multiply(0.14));
-                        p.galley(Pos2::new(rt.left() + 6.0, y - g.size().y / 2.0), g, c);
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let texto = if self.orden_inicio_equipo { "Orden: equipo" } else { "Orden: fecha" };
+                let r = ui::boton_texto(ui, None, &format!("{texto} ▾"));
+                egui::Popup::menu(&r).show(|ui| {
+                    if ui.radio(!self.orden_inicio_equipo, "Fecha").clicked() {
+                        self.orden_inicio_equipo = false;
                     }
+                    if ui.radio(self.orden_inicio_equipo, "Equipo").clicked() {
+                        self.orden_inicio_equipo = true;
+                    }
+                });
+            });
+        });
+        ui.add_space(10.0);
+        let limite = sumar_dias(&hoy, 30);
+        let mut ordenes: Vec<&Value> = self.mantenimiento.estado["ordenes"]
+            .as_array()
+            .map(|a| a.iter().filter(|o| o["estado"].as_str() != Some("cerrada")).collect())
+            .unwrap_or_default();
+        ordenes.retain(|o| {
+            let f = o["fecha"].as_str().unwrap_or("");
+            let por_estado = match self.filtro_inicio.as_str() {
+                "vencidas" => f < hoy.as_str(),
+                "30" => f >= hoy.as_str() && limite.as_deref().is_none_or(|l| f <= l),
+                _ => true,
+            };
+            por_estado && self.tipo_inicio.as_deref().is_none_or(|t| tipo_orden(o["nombre"].as_str().unwrap_or("")) == t)
+        });
+        if self.orden_inicio_equipo {
+            ordenes.sort_by(|a, b| a["equipo"].as_str().cmp(&b["equipo"].as_str()).then(a["fecha"].as_str().cmp(&b["fecha"].as_str())));
+        } else {
+            ordenes.sort_by(|a, b| a["fecha"].as_str().cmp(&b["fecha"].as_str()).then(a["id"].as_str().cmp(&b["id"].as_str())));
+        }
+        if ordenes.is_empty() {
+            ui.add_space(20.0);
+            let texto = if self.mantenimiento.estado.is_null() { "No hay un plan de mantenimiento abierto." } else { "No hay órdenes con este filtro." };
+            ui.label(egui::RichText::new(texto).color(pal.texto_2));
+            ui.add_space(8.0);
+            if ui::boton(ui, ui::EstiloBoton::Secundario, None, "Abrir Mantenimiento · Tablero", "", true).clicked() {
+                ir_tablero = true;
+            }
+        } else {
+            let ancho = ui.available_width();
+            let columnas = |r: Rect| {
+                let x_fecha = r.right() - 12.0 - 64.0 - 12.0 - 110.0;
+                let x_etiquetas = x_fecha - 12.0 - 260.0;
+                (r.left() + 12.0, r.left() + 64.0, x_etiquetas, x_fecha, x_fecha + 122.0)
+            };
+            let (r, _) = ui.allocate_exact_size(Vec2::new(ancho, 28.0), Sense::hover());
+            let (_, x_tarea, x_etq, x_fecha, _) = columnas(r);
+            for (x, t) in [(x_tarea, "Tarea"), (x_etq, "Etiquetas"), (x_fecha, "Fecha")] {
+                ui.painter().text(Pos2::new(x, r.center().y), egui::Align2::LEFT_CENTER, t, egui::FontId::new(14.0, tema::semi()), pal.texto);
+            }
+            for o in ordenes.iter().take(5) {
+                ui.add_space(8.0);
+                let (r, resp) = ui.allocate_exact_size(Vec2::new(ancho, 40.0), Sense::click());
+                let (x_icono, x_tarea, x_etq, x_fecha, x_marca) = columnas(r);
+                let p = ui.painter();
+                p.rect(r, 0.0, if resp.hovered() { pal.campo } else { pal.panel }, egui::Stroke::new(1.0_f32, pal.borde), egui::StrokeKind::Inside);
+                let caja = Rect::from_min_size(Pos2::new(x_icono, r.center().y - 15.0), Vec2::splat(30.0));
+                p.rect_filled(caja, 0.0, pal.chip);
+                crate::iconos::dibujar(p, Rect::from_center_size(caja.center(), Vec2::splat(16.0)), Icono::Informe, pal.texto);
+                let nombre = o["nombre"].as_str().unwrap_or("");
+                let id = o["id"].as_str().unwrap_or("");
+                let mut job = egui::text::LayoutJob::default();
+                job.append(nombre, 0.0, egui::TextFormat::simple(egui::FontId::new(13.0, tema::semi()), pal.texto));
+                job.append(id, 6.0, egui::TextFormat::simple(tema::fuente_mono(13.0), pal.texto_2));
+                let g = ui.fonts_mut(|f| f.layout_job(job));
+                p.with_clip_rect(Rect::from_min_max(Pos2::new(x_tarea, r.top()), Pos2::new(x_etq - 12.0, r.bottom()))).galley(Pos2::new(x_tarea, r.center().y - g.size().y / 2.0), g, pal.texto);
+                let mut etq = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(Pos2::new(x_etq, r.top()), Pos2::new(x_fecha - 12.0, r.bottom()))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+                etq.spacing_mut().item_spacing.x = 6.0;
+                if let Some(e) = o["equipo"].as_str().filter(|e| !e.is_empty()) {
+                    ui::chip(&mut etq, e, true);
                 }
-            },
-        );
-        if ir_plan.get() {
+                ui::chip(&mut etq, tipo_orden(nombre), true);
+                let fecha = o["fecha"].as_str().unwrap_or("");
+                ui.painter().text(Pos2::new(x_fecha, r.center().y), egui::Align2::LEFT_CENTER, fecha_corta(fecha), tema::fuente_mono(13.0), pal.texto);
+                let marca = if fecha == hoy { Some("hoy") } else if fecha < hoy.as_str() { Some("vencida") } else { None };
+                if let Some(m) = marca {
+                    let mut c = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(Pos2::new(x_marca, r.top()), Pos2::new(r.right() - 8.0, r.bottom()))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+                    ui::chip(&mut c, m, false);
+                }
+                if resp.clicked() {
+                    ir_plan = true;
+                }
+            }
+        }
+        if ir_plan {
             self.mantenimiento.ver_ordenes_pendientes();
             self.modulo = Modulo::Mantenimiento;
         }
-        if ir_tablero.get() {
+        if ir_tablero {
             self.mantenimiento.fijar_pestana("tablero");
             self.modulo = Modulo::Mantenimiento;
         }
     }
 
-    fn tarjeta_modulos(&mut self, ui: &mut egui::Ui) {
+    /// Módulos en una rejilla de 4 × 2 con icono y nombre.
+    fn rejilla_modulos(&mut self, ui: &mut egui::Ui) {
         let pal = tema::p();
-        let modulos = [Modulo::Bloques, Modulo::Potencia, Modulo::Fotovoltaica, Modulo::Calculo, Modulo::Estadistica, Modulo::Aprendizaje, Modulo::Mantenimiento, Modulo::Validacion];
-        let mut destino = None;
-        ui::tarjeta_con_titulo(ui, "Módulos", |_| {}, |ui| {
-            let area = ui.available_rect_before_wrap();
-            let hueco = 8.0;
-            let w = (area.width() - 3.0 * hueco) / 4.0;
-            let h = ((area.height() - hueco) / 2.0).max(60.0);
-            for (i, m) in modulos.iter().enumerate() {
-                let r = Rect::from_min_size(Pos2::new(area.left() + (i % 4) as f32 * (w + hueco), area.top() + (i / 4) as f32 * (h + hueco)), Vec2::new(w, h));
-                let resp = ui.interact(r, ui.id().with(("modulo", i)), Sense::click());
-                ui.painter().rect(r, tema::radio_ventana() as f32, if resp.hovered() { pal.campo } else { pal.campo_alt }, egui::Stroke::new(1.0_f32, if resp.hovered() { pal.linea_fuerte } else { pal.linea }), egui::StrokeKind::Inside);
-                tema::icono(ui.painter(), Rect::from_center_size(Pos2::new(r.center().x, r.center().y - 10.0), Vec2::splat(22.0)), *m, pal.acento);
-                ui.painter().with_clip_rect(r).text(Pos2::new(r.center().x, r.center().y + 20.0), egui::Align2::CENTER_CENTER, tema::nombre_modulo(*m), egui::FontId::proportional(12.0), pal.texto);
-                if resp.clicked() {
-                    destino = Some(*m);
-                }
+        let modulos = [
+            (Modulo::Bloques, Icono::Bloques),
+            (Modulo::Potencia, Icono::Rayo),
+            (Modulo::Fotovoltaica, Icono::Sol),
+            (Modulo::Calculo, Icono::Terminal),
+            (Modulo::Estadistica, Icono::Histograma),
+            (Modulo::Aprendizaje, Icono::Red),
+            (Modulo::Mantenimiento, Icono::Calendario),
+            (Modulo::Validacion, Icono::Validar),
+        ];
+        ui.label(egui::RichText::new("Módulos").size(22.0).family(tema::semi()).color(pal.texto));
+        ui.add_space(20.0);
+        let ancho = ui.available_width();
+        let hueco = 10.0;
+        let w = (ancho - 3.0 * hueco) / 4.0;
+        let h = 110.0;
+        let (area, _) = ui.allocate_exact_size(Vec2::new(ancho, 2.0 * h + hueco), Sense::hover());
+        for (i, (m, icono)) in modulos.iter().enumerate() {
+            let r = Rect::from_min_size(Pos2::new(area.left() + (i % 4) as f32 * (w + hueco), area.top() + (i / 4) as f32 * (h + hueco)), Vec2::new(w, h));
+            let resp = ui.interact(r, ui.id().with(("modulo", i)), Sense::click());
+            ui.painter().rect(r, 0.0, if resp.hovered() { pal.campo } else { pal.panel }, egui::Stroke::new(1.0_f32, pal.borde), egui::StrokeKind::Inside);
+            crate::iconos::dibujar(ui.painter(), Rect::from_center_size(Pos2::new(r.center().x, r.center().y - 14.0), Vec2::splat(26.0)), *icono, pal.texto);
+            ui.painter().with_clip_rect(r).text(Pos2::new(r.center().x, r.center().y + 22.0), egui::Align2::CENTER_CENTER, tema::nombre_modulo(*m), egui::FontId::proportional(13.0), pal.texto);
+            if resp.clicked() {
+                self.modulo = *m;
             }
-            ui.allocate_rect(Rect::from_min_size(area.min, Vec2::new(area.width(), 2.0 * h + hueco)), Sense::hover());
-        });
-        if let Some(m) = destino {
-            self.modulo = m;
         }
     }
 
@@ -1616,13 +1818,16 @@ impl App {
         }
         self.cuadros += 1;
         ctx.request_repaint();
-        // Con la pantalla escalada, 1440 × 900 puntos no caben; se pide una ventana de 1440 × 900
-        // píxeles físicos y egui dibuja a un píxel por punto, como las referencias del diseño.
-        if self.cuadros == 1 {
-            if let Some(nativo) = ctx.native_pixels_per_point().filter(|p| *p > 1.0) {
-                ctx.set_zoom_factor(1.0 / nativo);
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(1440.0, 900.0) / nativo));
-            }
+        // La captura se hace a 1440 × 900 píxeles físicos y a un píxel por punto, como las
+        // referencias del diseño, sea cual sea la escala del monitor donde se abre la ventana.
+        let nativo = ctx.native_pixels_per_point().unwrap_or(1.0);
+        if (ctx.zoom_factor() - 1.0 / nativo).abs() > 1e-3 {
+            ctx.set_zoom_factor(1.0 / nativo);
+        }
+        let fisico = ctx.content_rect().size() * ctx.pixels_per_point();
+        let a_medida = (fisico - Vec2::new(1440.0, 900.0)).abs().max_elem() < 1.5;
+        if !a_medida && self.cuadros % 10 == 1 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(1440.0, 900.0) / ctx.pixels_per_point()));
         }
         if self.op.simular && !self.cuadro_sim && !self.editor.fichas.is_empty() && !self.editor.diagrama.sistema.bloques.is_empty() {
             self.cuadro_sim = true;
@@ -1659,7 +1864,7 @@ impl App {
         }
         let ocupado = self.editor.id_sim.is_some() || self.editor.id_lin.is_some() || self.op.linealizar || self.pagina_ocupada() || !self.op.herramientas.is_empty();
         let listo = self.motor.caido.is_some() || (self.motor.listo && !self.editor.fichas.is_empty() && !self.herramientas.is_empty() && !self.mantenimiento.estado.is_null() && !ocupado);
-        if listo {
+        if listo && a_medida {
             self.cuadros_listo += 1;
         }
         // 120 cuadros tras cargar; como mucho, unos 45 s en total
@@ -1677,6 +1882,105 @@ fn recortar(t: &str, n: usize) -> String {
     } else {
         format!("{}…", t.chars().take(n.saturating_sub(1)).collect::<String>())
     }
+}
+
+/// Tipos de orden de los chips de filtro de la portada, en el orden del diseño.
+const TIPOS_ORDEN: [&str; 4] = ["Limpieza", "Inspección", "Ensayo", "Mant. anual"];
+
+/// Tipo de una orden de mantenimiento a partir de su nombre (mismo criterio que sus colores).
+fn tipo_orden(nombre: &str) -> &'static str {
+    let t = nombre.to_lowercase();
+    if t.contains("limpieza") {
+        "Limpieza"
+    } else if t.contains("inspecc") || t.contains("termograf") {
+        "Inspección"
+    } else if t.contains("ensayo") || t.contains("curva") {
+        "Ensayo"
+    } else if t.contains("anual") {
+        "Mant. anual"
+    } else {
+        "Otro"
+    }
+}
+
+/// Fecha AAAA-MM-DD `n` días después de `fecha` (calendario civil proléptico).
+fn sumar_dias(fecha: &str, n: i64) -> Option<String> {
+    let mut t = fecha.split('-').map(|x| x.parse::<i64>().ok());
+    let (y, m, d) = (t.next()??, t.next()??, t.next()??);
+    let (y0, m0) = if m <= 2 { (y - 1, m + 9) } else { (y, m - 3) };
+    let era = y0.div_euclid(400);
+    let ye = y0 - era * 400;
+    let doy = (153 * m0 + 2) / 5 + d - 1;
+    let z = era * 146_097 + ye * 365 + ye / 4 - ye / 100 + doy + n;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let dia = doy - (153 * mp + 2) / 5 + 1;
+    let mes = if mp < 10 { mp + 3 } else { mp - 9 };
+    let anio = yoe + era * 400 + i64::from(mes <= 2);
+    Some(format!("{anio:04}-{mes:02}-{dia:02}"))
+}
+
+/// Fecha de la última validación como «25 nov · 15:19».
+fn fecha_validacion(cuando: &str) -> String {
+    let mut partes = cuando.split_whitespace();
+    match (partes.next(), partes.next()) {
+        (Some(d), Some(h)) => format!("{} · {}", fecha_corta(d), h.get(..5).unwrap_or(h)),
+        (Some(d), None) => fecha_corta(d),
+        _ => String::new(),
+    }
+}
+
+/// Enlace subrayado de 13 px en peso medio con una flecha («Ver todas →»).
+fn enlace(ui: &mut egui::Ui, texto: &str) -> egui::Response {
+    let pal = tema::p();
+    let g = ui.painter().layout_no_wrap(texto.to_string(), egui::FontId::new(13.0, tema::semi()), pal.texto);
+    let (r, resp) = ui.allocate_exact_size(Vec2::new(g.size().x + 20.0, 24.0), Sense::click());
+    let base = r.center().y + g.size().y / 2.0 + 1.0;
+    let ancho_texto = g.size().x;
+    ui.painter().galley(Pos2::new(r.left(), r.center().y - g.size().y / 2.0), g, pal.texto);
+    ui.painter().line_segment([Pos2::new(r.left(), base), Pos2::new(r.left() + ancho_texto, base)], egui::Stroke::new(1.0_f32, pal.texto));
+    crate::iconos::dibujar(ui.painter(), Rect::from_min_size(Pos2::new(r.left() + ancho_texto + 6.0, r.center().y - 7.0), Vec2::splat(14.0)), Icono::Flecha, pal.texto);
+    resp
+}
+
+/// Botón de la barra lateral de la portada: icono de 22 px sobre el texto de 14 px, en blanco.
+fn boton_lateral(ui: &mut egui::Ui, icono: Icono, texto: &str, activo: bool) -> egui::Response {
+    let blanco = egui::Color32::WHITE;
+    let (r, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 80.0), Sense::click());
+    if resp.hovered() && !activo {
+        ui.painter().rect_filled(r, 0.0, egui::Color32::from_gray(28));
+    }
+    if activo {
+        ui.painter().rect_filled(Rect::from_min_max(Pos2::new(r.left(), r.top() + 10.0), Pos2::new(r.left() + 3.0, r.bottom() - 10.0)), 0.0, blanco);
+    }
+    crate::iconos::dibujar(ui.painter(), Rect::from_min_size(Pos2::new(r.center().x - 11.0, r.top() + 14.0), Vec2::splat(22.0)), icono, blanco);
+    let fuente = if activo { egui::FontId::new(14.0, tema::semi()) } else { egui::FontId::proportional(14.0) };
+    ui.painter().text(Pos2::new(r.center().x, r.top() + 56.0), egui::Align2::CENTER_CENTER, texto, fuente, blanco);
+    resp
+}
+
+/// Tarjeta de la portada: parte blanca con el título de 19 px, las acciones a la derecha y lo que
+/// dibuje `debajo`; el resto de la tarjeta es una zona gris con `gris`.
+fn tarjeta_portada(ui: &mut egui::Ui, titulo: &str, acciones: impl FnOnce(&mut egui::Ui), debajo: impl FnOnce(&mut egui::Ui), gris: impl FnOnce(&mut egui::Ui)) {
+    let pal = tema::p();
+    let r = ui.max_rect();
+    ui.painter().rect(r, 0.0, pal.panel, egui::Stroke::new(1.0_f32, pal.borde), egui::StrokeKind::Inside);
+    let mut arriba = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(r.min + Vec2::new(20.0, 18.0), Pos2::new(r.right() - 20.0, r.bottom()))).layout(egui::Layout::top_down(egui::Align::Min)));
+    arriba.spacing_mut().item_spacing.y = 8.0;
+    arriba.horizontal(|ui| {
+        ui.label(egui::RichText::new(titulo).size(19.0).family(tema::semi()).color(pal.texto));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), acciones);
+    });
+    debajo(&mut arriba);
+    let corte = arriba.min_rect().bottom() + 14.0;
+    let zona = Rect::from_min_max(Pos2::new(r.left() + 1.0, corte), Pos2::new(r.right() - 1.0, r.bottom() - 1.0));
+    ui.painter().rect_filled(zona, 0.0, pal.campo);
+    let mut abajo = ui.new_child(egui::UiBuilder::new().max_rect(zona).layout(egui::Layout::top_down(egui::Align::Min)));
+    abajo.set_clip_rect(zona.intersect(ui.clip_rect()));
+    gris(&mut abajo);
 }
 
 fn guardar_png(img: &egui::ColorImage, ruta: &std::path::Path) {
@@ -1726,10 +2030,18 @@ impl eframe::App for App {
         if ctrl_k {
             self.paleta.abrir();
         }
-        self.barra_superior(ctx);
-        self.menu_modulos(ctx);
-        self.cinta(ctx);
+        // La portada es una ventana aparte: barra blanca y lateral negra, sin menú ni cinta
+        if self.modulo == Modulo::Inicio {
+            self.barra_superior_portada(ctx);
+        } else {
+            self.barra_superior(ctx);
+            self.menu_modulos(ctx);
+            self.cinta(ctx);
+        }
         self.barra_estado(ctx);
+        if self.modulo == Modulo::Inicio {
+            self.barra_lateral_portada(ctx);
+        }
         self.panel_sin_motor(ctx);
         self.panel_pkl(ctx);
         self.dialogo_nuevo_proyecto(ctx);
@@ -1865,7 +2177,6 @@ fn fecha_corta(f: &str) -> String {
 /// Dibuja la vista previa simplificada de un diagrama dentro de `r`, ajustada a su tamaño.
 fn dibujar_vista_previa(p: egui::Painter, r: Rect, v: &bloques::VistaPrevia) {
     let pal = tema::p();
-    p.rect(r, tema::radio() as f32, pal.campo_alt, egui::Stroke::new(1.0_f32, pal.linea), egui::StrokeKind::Inside);
     if v.bloques.is_empty() {
         return;
     }
@@ -1883,10 +2194,10 @@ fn dibujar_vista_previa(p: egui::Painter, r: Rect, v: &bloques::VistaPrevia) {
         let (ra, rb) = (v.bloques[*a], v.bloques[*b]);
         let (pa, pb) = (mapa(Pos2::new(ra.right(), ra.center().y)), mapa(Pos2::new(rb.left(), rb.center().y)));
         let xm = (pa.x + pb.x) / 2.0;
-        p.add(egui::Shape::line(vec![pa, Pos2::new(xm, pa.y), Pos2::new(xm, pb.y), pb], egui::Stroke::new(1.5_f32, pal.electrica)));
+        p.add(egui::Shape::line(vec![pa, Pos2::new(xm, pa.y), Pos2::new(xm, pb.y), pb], egui::Stroke::new(1.5_f32, pal.texto)));
     }
     for b in &v.bloques {
         let rb = Rect::from_min_max(mapa(b.min), mapa(b.max));
-        p.rect(rb, 3.0, pal.panel, egui::Stroke::new(1.0_f32, pal.linea_fuerte), egui::StrokeKind::Inside);
+        p.rect(rb, 0.0, pal.panel, egui::Stroke::new(1.0_f32, pal.acento), egui::StrokeKind::Inside);
     }
 }
