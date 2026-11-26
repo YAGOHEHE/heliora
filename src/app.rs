@@ -3,6 +3,7 @@ use crate::bloques::{self, Editor};
 use crate::calculo::Calculo;
 use crate::comandos;
 use crate::grafica::{self, Figura};
+use crate::iconos::Icono;
 use crate::herramientas::{self, Herramienta, Pagina};
 use crate::motor::{self, Mensaje, Motor};
 use crate::plan::Mantenimiento;
@@ -208,7 +209,27 @@ pub struct App {
     cuadro_sim: bool,
     modo: tema::Modo,
     paleta: comandos::Paleta,
+    /// Esquema del proyecto plegado (None: según el ancho de la ventana).
+    esquema_plegado: Option<bool>,
+    /// Pestaña del panel izquierdo: 0 esquema, 1 opciones.
+    pestana_esquema: usize,
+    filtro_esquema: String,
+    /// Nodos del esquema que la persona ha cerrado.
+    esquema_cerrados: std::collections::HashSet<String>,
 }
+
+/// Módulos del menú, en orden.
+const MENU_MODULOS: [(Modulo, &str); 9] = [
+    (Modulo::Inicio, "Inicio"),
+    (Modulo::Bloques, "Bloques"),
+    (Modulo::Potencia, "Potencia"),
+    (Modulo::Fotovoltaica, "Solar"),
+    (Modulo::Calculo, "Cálculo"),
+    (Modulo::Estadistica, "Estadística"),
+    (Modulo::Aprendizaje, "Aprendizaje"),
+    (Modulo::Mantenimiento, "Mantenimiento"),
+    (Modulo::Validacion, "Validación"),
+];
 
 impl App {
     pub fn nueva(cc: &eframe::CreationContext, op: Opciones) -> App {
@@ -273,6 +294,10 @@ impl App {
             cuadro_sim: false,
             modo,
             paleta: comandos::Paleta::default(),
+            esquema_plegado: None,
+            pestana_esquema: 0,
+            filtro_esquema: String::new(),
+            esquema_cerrados: Default::default(),
         }
     }
 
@@ -424,145 +449,88 @@ impl App {
         }
     }
 
+    /// Barra superior gris de 44 px: marca, guardar, deshacer y rehacer; buscador centrado; píldora
+    /// del solver con «Simular», estado del motor y ayuda.
     fn barra_superior(&mut self, ctx: &egui::Context) {
         let pal = tema::p();
         egui::TopBottomPanel::top("superior")
-            .exact_height(48.0)
-            .frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin { left: 0, right: 12, top: 0, bottom: 0 }).stroke(egui::Stroke::new(1.0_f32, pal.linea)))
+            .exact_height(44.0)
+            .show_separator_line(false)
+            .frame(egui::Frame::new().fill(pal.campo).inner_margin(egui::Margin::symmetric(10, 0)))
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
-                    // El logo ocupa el ancho del riel para alinearse con sus iconos
-                    let (r, _) = ui.allocate_exact_size(Vec2::new(56.0, 26.0), Sense::hover());
-                    tema::logo(ui.painter(), Rect::from_center_size(r.center(), Vec2::splat(26.0)));
-                    ui.add_space(8.0);
-                    self.ruta(ui);
-                    let ancho_busqueda = 330.0;
-                    let derecha = 420.0;
-                    let hueco = ((ui.available_width() - ancho_busqueda - derecha) / 2.0).max(8.0);
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    let (r, _) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::hover());
+                    tema::logo(ui.painter(), r);
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new("Heliora").family(tema::semi()).size(14.0).color(pal.texto));
+                    ui.add_space(12.0);
+                    if ui::boton_icono(ui, Icono::Guardar, 18.0, "Guardar el proyecto").clicked() {
+                        self.guardar_proyecto();
+                    }
+                    if ui::boton_icono(ui, Icono::Deshacer, 18.0, "Deshacer en el diagrama").clicked() {
+                        self.editor.deshacer_ya();
+                    }
+                    if ui::boton_icono(ui, Icono::Rehacer, 18.0, "Rehacer en el diagrama").clicked() {
+                        self.editor.rehacer_ya();
+                    }
+                    let ancho_busqueda = 380.0_f32.min(ui.available_width() - 560.0).max(200.0);
+                    let centro = ui.max_rect().center().x;
+                    let hueco = (centro - ancho_busqueda / 2.0 - ui.cursor().min.x).max(8.0);
                     ui.add_space(hueco);
                     if self.boton_buscar(ui, ancho_busqueda).clicked() {
                         self.paleta.abrir();
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 16.0;
+                        if ui::boton_texto(ui, Some(Icono::Ayuda), "Ayuda").on_hover_text("Referencia de bloques y funciones").clicked() {
+                            self.modulo = Modulo::Referencia;
+                        }
                         self.estado_motor(ui);
-                        ui.add_space(6.0);
                         self.pildora_simulacion(ui);
                     });
                 });
             });
     }
 
-    /// Ruta «proyecto / módulo / diagrama ●»: el proyecto y el diagrama abren su menú.
-    fn ruta(&mut self, ui: &mut egui::Ui) {
-        let pal = tema::p();
-        ui.spacing_mut().item_spacing.x = 6.0;
-        let proyecto = self.carpeta.as_ref().and_then(|c| c.file_name()).map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Proyecto sin guardar".into());
-        let r = ui.add(egui::Button::new(egui::RichText::new(proyecto).color(pal.texto_3)).frame(false));
-        egui::Popup::menu(&r).show(|ui| {
-            if ui.button("Abrir proyecto…").clicked() {
-                self.abrir_proyecto();
-            }
-            if ui.button("Guardar proyecto").clicked() {
-                self.guardar_proyecto();
-            }
-        });
-        ui.label(egui::RichText::new("/").color(pal.texto_3));
-        // El último tramo de la ruta va en TEXTO; los anteriores, en TEXTO_3
-        let detalle = match self.modulo {
-            Modulo::Potencia => self.potencia.titulo_seleccion(&self.herramientas),
-            Modulo::Fotovoltaica => self.fotovoltaica.titulo_seleccion(&self.herramientas),
-            Modulo::Estadistica => self.estadistica.titulo_seleccion(&self.herramientas),
-            Modulo::Aprendizaje => self.aprendizaje.titulo_seleccion(&self.herramientas),
-            Modulo::Mantenimiento => Some(self.mantenimiento.nombre_pestana().to_string()),
-            _ => None,
-        };
-        let ultimo = detalle.is_none() && self.modulo != Modulo::Bloques;
-        ui.label(egui::RichText::new(tema::nombre_modulo(self.modulo)).color(if ultimo { pal.texto } else { pal.texto_3 }));
-        if let Some(d) = detalle {
-            ui.label(egui::RichText::new("/").color(pal.texto_3));
-            ui.label(egui::RichText::new(d).color(pal.texto));
-        }
-        if self.modulo != Modulo::Bloques {
-            return;
-        }
-        ui.label(egui::RichText::new("/").color(pal.texto_3));
-        let nombre = if self.editor.diagrama.nombre.is_empty() { "Diagrama sin nombre".to_string() } else { self.editor.diagrama.nombre.clone() };
-        let r = ui.add(egui::Button::new(egui::RichText::new(nombre).color(pal.texto).family(tema::semi())).frame(false));
-        egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-            ui.set_min_width(220.0);
-            ui.add(egui::TextEdit::singleline(&mut self.editor.diagrama.nombre).hint_text("Nombre del diagrama"));
-            if ui.button("Nuevo diagrama").clicked() {
-                self.editor.nuevo_diagrama();
-                ui.close();
-            }
-            if ui.button("Abrir diagrama…").clicked() {
-                self.editor.abrir_diagrama();
-                ui.close();
-            }
-            if ui.button("Guardar diagrama").clicked() {
-                self.editor.guardar_diagrama();
-                ui.close();
-            }
-            ui.menu_button("Ejemplos", |ui| {
-                for (k, n) in self.editor.ejemplos.clone() {
-                    if ui.button(n).clicked() {
-                        self.editor.pedir_ejemplo(&mut self.motor, &k);
-                        ui.close();
-                    }
-                }
-            });
-        });
-        if self.editor.sucio() {
-            let (r, _) = ui.allocate_exact_size(Vec2::new(6.0, 6.0), Sense::hover());
-            ui.painter().circle_filled(r.center(), 3.0, pal.acento);
-            ui.interact(r, ui.id().with("sucio"), Sense::hover()).on_hover_text("Cambios sin guardar");
-        }
-    }
-
-    /// Botón que abre la paleta de comandos, con la pista del atajo.
+    /// Buscador que abre la paleta de comandos, con la pista del atajo.
     fn boton_buscar(&self, ui: &mut egui::Ui, ancho: f32) -> egui::Response {
         let pal = tema::p();
         let (r, resp) = ui.allocate_exact_size(Vec2::new(ancho, 30.0), Sense::click());
         let p = ui.painter();
-        p.rect(r, 6.0, if resp.hovered() { pal.realce } else { pal.panel }, egui::Stroke::new(1.0_f32, pal.borde), egui::StrokeKind::Inside);
-        let c = Pos2::new(r.left() + 16.0, r.center().y);
-        p.circle_stroke(c - Vec2::new(1.0, 1.0), 4.5, egui::Stroke::new(1.5_f32, pal.texto_3));
-        p.line_segment([c + Vec2::new(2.5, 2.5), c + Vec2::new(5.5, 5.5)], egui::Stroke::new(1.5_f32, pal.texto_3));
-        p.text(Pos2::new(r.left() + 30.0, r.center().y), egui::Align2::LEFT_CENTER, "Buscar bloque, comando o variable", egui::FontId::proportional(13.0), pal.texto_3);
-        let g = p.layout_no_wrap("Ctrl K".into(), tema::fuente_mono(11.0), pal.texto_3);
-        let caja = Rect::from_min_size(Pos2::new(r.right() - g.size().x - 18.0, r.center().y - 9.0), Vec2::new(g.size().x + 10.0, 18.0));
-        p.rect_stroke(caja, 4.0, egui::Stroke::new(1.0_f32, pal.linea_fuerte), egui::StrokeKind::Inside);
-        p.galley(caja.center() - g.size() / 2.0, g, pal.texto_3);
+        p.rect(r, 0.0, pal.panel, egui::Stroke::new(1.0_f32, if resp.hovered() { pal.texto_2 } else { pal.borde }), egui::StrokeKind::Inside);
+        crate::iconos::dibujar(p, Rect::from_min_size(Pos2::new(r.left() + 10.0, r.center().y - 8.0), Vec2::splat(16.0)), Icono::Buscar, pal.texto_2);
+        p.text(Pos2::new(r.left() + 34.0, r.center().y), egui::Align2::LEFT_CENTER, "Buscar bloque, comando o variable", egui::FontId::proportional(13.0), pal.texto_2);
+        p.text(Pos2::new(r.right() - 10.0, r.center().y), egui::Align2::RIGHT_CENTER, "Ctrl K", tema::fuente_mono(11.0), pal.texto_2);
         resp.on_hover_text("Paleta de comandos (Ctrl K)")
     }
 
-    /// Píldora con el resumen del solver (clic para cambiarlo) y el botón Simular.
+    /// Píldora con el resumen del solver (clic para cambiarlo) y el botón negro «Simular F5».
     fn pildora_simulacion(&mut self, ui: &mut egui::Ui) {
         let pal = tema::p();
-        // La barra se llena de derecha a izquierda: primero el botón, después el resumen. El fondo
-        // se pinta al final, ajustado a lo que ocupan, para que la píldora no se estire.
+        // La barra se llena de derecha a izquierda: primero el botón, después el resumen. El borde
+        // se pinta al final, ajustado a lo que ocupan.
         let fondo = ui.painter().add(egui::Shape::Noop);
-        ui.add_space(4.0);
+        let espacio = ui.spacing().item_spacing.x;
+        ui.spacing_mut().item_spacing.x = 0.0;
         let mut ocupado = Rect::NOTHING;
         if self.editor.id_sim.is_some() {
-            let d = ui.small_button("■ Detener");
+            let d = ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::Detener), "Detener", "", true);
             if d.clicked() {
                 self.motor.llamar("cancelar", json!({}));
             }
             ocupado = ocupado.union(d.rect);
-            ocupado = ocupado.union(ui.add(egui::ProgressBar::new(self.editor.avance).desired_width(90.0).desired_height(14.0)).rect);
+            ui.add_space(8.0);
+            ocupado = ocupado.union(ui.add(egui::ProgressBar::new(self.editor.avance).desired_width(80.0).desired_height(10.0).corner_radius(0)).rect);
         } else {
-            let p = tema::p();
-            let texto = egui::text::LayoutJob::simple_format("▶ Simular".into(), egui::TextFormat::simple(tema::fuente_semi(13.0), p.sobre_acento));
-            let mut job = texto;
-            job.append("  F5", 0.0, egui::TextFormat::simple(tema::fuente_mono(11.0), p.sobre_acento.gamma_multiply(0.7)));
-            let b = ui.add(egui::Button::new(job).fill(p.acento).stroke(egui::Stroke::NONE).corner_radius(5).min_size(Vec2::new(0.0, 24.0)));
+            let b = ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::Simular), "Simular", "F5", true);
             if b.clicked() {
                 self.simular();
             }
             ocupado = ocupado.union(b.rect);
         }
-        let r = ui.add(egui::Button::new(egui::RichText::new(self.editor.resumen_solver()).font(tema::fuente_mono(12.0)).color(pal.texto_2)).frame(false)).on_hover_text("Solver e intervalo de simulación");
+        ui.add_space(4.0);
+        let r = ui.add(egui::Button::new(egui::RichText::new(self.editor.resumen_solver()).font(tema::fuente_mono(12.0)).color(pal.texto)).frame(false)).on_hover_text("Solver e intervalo de simulación");
         egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
             ui.set_min_width(260.0);
             self.editor.panel_solver_rapido(ui);
@@ -570,8 +538,9 @@ impl App {
         ocupado = ocupado.union(r.rect);
         ui.add_space(6.0);
         let c = ui.max_rect().center().y;
-        let caja = Rect::from_min_max(Pos2::new(ocupado.left() - 6.0, c - 16.0), Pos2::new(ocupado.right() + 4.0, c + 16.0));
-        ui.painter().set(fondo, egui::epaint::RectShape::new(caja, 7, pal.campo, egui::Stroke::new(1.0_f32, pal.borde), egui::StrokeKind::Inside));
+        let caja = Rect::from_min_max(Pos2::new(ocupado.left() - 10.0, c - 15.0), Pos2::new(ocupado.right() + 1.0, c + 15.0));
+        ui.painter().set(fondo, egui::epaint::RectShape::new(caja, 0, pal.panel, egui::Stroke::new(1.0_f32, pal.borde), egui::StrokeKind::Inside));
+        ui.spacing_mut().item_spacing.x = espacio;
     }
 
     /// Lanza la simulación del diagrama de Bloques desde cualquier módulo.
@@ -582,7 +551,7 @@ impl App {
         }
     }
 
-    /// Punto y texto del estado del motor; su menú permite reiniciarlo.
+    /// Punto de 8 px y texto del estado del motor; su menú permite reiniciarlo.
     fn estado_motor(&mut self, ui: &mut egui::Ui) {
         let pal = tema::p();
         let (nivel, texto) = if self.motor.listo && self.motor.ocupado() {
@@ -594,10 +563,11 @@ impl App {
         } else {
             (tema::Nivel::Alerta, "Iniciando el motor…")
         };
-        let r = ui.add(egui::Button::new(egui::RichText::new(texto).size(12.0).color(pal.texto_2)).frame(false));
-        let (p, _) = ui.allocate_exact_size(Vec2::new(7.0, 14.0), Sense::hover());
-        tema::punto(ui.painter(), p.center(), nivel.color());
-        egui::Popup::menu(&r).show(|ui| {
+        let g = ui.painter().layout_no_wrap(texto.to_string(), egui::FontId::proportional(12.0), pal.texto);
+        let (r, resp) = ui.allocate_exact_size(Vec2::new(g.size().x + 14.0, 24.0), Sense::click());
+        ui.painter().circle_filled(Pos2::new(r.left() + 4.0, r.center().y), 4.0, nivel.color());
+        ui.painter().galley(Pos2::new(r.left() + 14.0, r.center().y - g.size().y / 2.0), g, pal.texto);
+        egui::Popup::menu(&resp).show(|ui| {
             if ui.add_enabled(self.motor.listo, egui::Button::new("Reiniciar el motor")).on_hover_text("Borra las variables y vuelve a cargar el motor").clicked() {
                 self.reiniciar_motor();
             }
@@ -617,29 +587,59 @@ impl App {
         }
     }
 
-    /// Barra de estado: versiones del motor, avisos, bloques visibles y tema.
-    fn pie(&mut self, ctx: &egui::Context) {
-        let pal = tema::p();
+    /// Ruta «proyecto / módulo / documento» de la barra de estado.
+    fn ruta(&self) -> String {
+        let proyecto = self.carpeta.as_ref().and_then(|c| c.file_name()).map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Proyecto sin guardar".into());
+        let herr = |p: &crate::herramientas::Pagina| p.seleccion().map(|id| crate::herramientas::presentacion(id, id).1);
+        let detalle = match self.modulo {
+            Modulo::Potencia => herr(&self.potencia),
+            Modulo::Fotovoltaica => herr(&self.fotovoltaica),
+            Modulo::Estadistica => herr(&self.estadistica),
+            Modulo::Aprendizaje => herr(&self.aprendizaje),
+            Modulo::Mantenimiento => Some(self.mantenimiento.nombre_pestana().to_string()),
+            Modulo::Bloques => {
+                let nombre = if self.editor.diagrama.nombre.is_empty() { "Diagrama sin nombre" } else { self.editor.diagrama.nombre.as_str() };
+                Some(if self.editor.sucio() { format!("{nombre} (cambios sin guardar)") } else { nombre.to_string() })
+            }
+            _ => None,
+        };
+        let mut partes = vec![proyecto, tema::nombre_modulo(self.modulo).to_string()];
+        partes.extend(detalle);
+        partes.join(" / ")
+    }
+
+    /// Barra de estado negra de 28 px: ruta del proyecto a la izquierda; selección o aviso, unidades,
+    /// versiones del motor y tema a la derecha.
+    fn barra_estado(&mut self, ctx: &egui::Context) {
+        let blanco = egui::Color32::WHITE;
+        let borde = if self.modo == tema::Modo::Oscuro { tema::p().borde } else { tema::NEGRO };
         egui::TopBottomPanel::bottom("pie")
-            .exact_height(24.0)
-            .frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(12, 0)).stroke(egui::Stroke::new(1.0_f32, pal.linea)))
+            .exact_height(28.0)
+            .show_separator_line(false)
+            .frame(egui::Frame::new().fill(tema::NEGRO).inner_margin(egui::Margin::symmetric(16, 0)).stroke(egui::Stroke::new(1.0_f32, borde)))
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
-                    let f = tema::fuente_mono(11.0);
-                    ui.spacing_mut().item_spacing.x = 16.0;
+                    let f = egui::FontId::proportional(13.0);
+                    ui.spacing_mut().item_spacing.x = 24.0;
+                    let ruta = self.ruta();
                     // Hasta la primera simulación, las versiones salen de la última validación guardada
                     let versiones = if self.editor.tiene_procedencia() { self.editor.versiones() } else { crate::bloques::versiones_de(&self.validacion.procedencia) };
-                    ui.label(egui::RichText::new(versiones).font(f.clone()).color(pal.texto_3));
                     let ancho = ui.available_width();
+                    ui.add(egui::Label::new(egui::RichText::new(ruta).font(f.clone()).color(blanco)).truncate());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(egui::RichText::new(format!("Tema: {}", self.modo.nombre())).font(f.clone()).color(pal.texto_3));
-                        if self.modulo == Modulo::Bloques {
-                            ui.label(egui::RichText::new(format!("{} bloques visibles", self.editor.bloques_visibles())).font(f.clone()).color(pal.texto_3));
+                        ui.label(egui::RichText::new(format!("Tema: {}", self.modo.nombre())).font(f.clone()).color(blanco));
+                        if !versiones.is_empty() {
+                            ui.label(egui::RichText::new(versiones).font(f.clone()).color(blanco));
                         }
-                        if !self.aviso.is_empty() {
-                            ui.set_max_width(ancho - 40.0);
-                            ui.add(egui::Label::new(egui::RichText::new(&self.aviso).font(f).color(pal.texto_2)).truncate()).on_hover_text(&self.aviso);
-                        }
+                        ui.label(egui::RichText::new("Unidades SI").font(f.clone()).color(blanco));
+                        let seleccion = if !self.aviso.is_empty() {
+                            recortar(&self.aviso, ((ancho * 0.45) / 7.5) as usize)
+                        } else if self.modulo == Modulo::Bloques {
+                            format!("{} bloques visibles", self.editor.bloques_visibles())
+                        } else {
+                            "Sin selección".to_string()
+                        };
+                        ui.label(egui::RichText::new(&seleccion).font(f).color(blanco)).on_hover_text(&self.aviso);
                     });
                 });
             });
@@ -791,59 +791,340 @@ impl App {
         self.aviso = "Guardando el proyecto: esperando a que el motor guarde los datos...".into();
     }
 
-    fn barra_modulos(&mut self, ctx: &egui::Context) {
+    /// Menú de módulos (Archivo y los módulos): el activo en peso medio con subrayado negro de 2 px.
+    fn menu_modulos(&mut self, ctx: &egui::Context) {
         let pal = tema::p();
-        egui::SidePanel::left("rail")
-            .exact_width(56.0)
-            .resizable(false)
-            .frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(8, 10)).stroke(egui::Stroke::new(1.0_f32, pal.linea)))
+        egui::TopBottomPanel::top("menu_modulos")
+            .exact_height(35.0)
+            .show_separator_line(false)
+            .frame(egui::Frame::new().fill(pal.campo).inner_margin(egui::Margin { left: 12, right: 12, top: 0, bottom: 0 }))
             .show(ctx, |ui| {
-                ui.spacing_mut().item_spacing.y = 4.0;
-                let grupos = tema::MODULOS.len();
-                for (g, grupo) in tema::MODULOS.iter().enumerate() {
-                    // El último grupo (consulta) va abajo, junto a los ajustes
-                    if g == grupos - 1 {
-                        ui.add_space((ui.available_height() - 44.0 * grupo.len() as f32 - 44.0).max(0.0));
-                    } else if g > 0 {
-                        let (r, _) = ui.allocate_exact_size(Vec2::new(40.0, 9.0), Sense::hover());
-                        ui.painter().line_segment([Pos2::new(r.center().x - 12.0, r.center().y), Pos2::new(r.center().x + 12.0, r.center().y)], egui::Stroke::new(1.0_f32, pal.linea));
-                    }
-                    for (m, nombre) in grupo.iter() {
-                        if self.boton_riel(ui, nombre, self.modulo == *m, |pt, r, c| tema::icono(pt, r, *m, c)).clicked() {
-                            self.modulo = *m;
+                let r = ui.max_rect();
+                ui.painter().line_segment([Pos2::new(r.left() - 12.0, r.bottom()), Pos2::new(r.right() + 12.0, r.bottom())], egui::Stroke::new(1.0_f32, pal.linea));
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    let archivo = self.pestana_menu(ui, "Archivo", false);
+                    egui::Popup::menu(&archivo).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| self.menu_archivo(ui));
+                    for (m, nombre) in MENU_MODULOS {
+                        if self.pestana_menu(ui, nombre, self.modulo == m).clicked() {
+                            self.modulo = m;
                         }
-                    }
-                }
-                let r = self.boton_riel(ui, "Ajustes y tema", false, tema::icono_ajustes);
-                egui::Popup::menu(&r).show(|ui| {
-                    tema::titulo(ui, "Tema");
-                    for m in [tema::Modo::Claro, tema::Modo::Oscuro] {
-                        if ui.radio(self.modo == m, m.nombre()).clicked() {
-                            self.cambiar_modo(ui.ctx(), m);
-                        }
-                    }
-                    ui.separator();
-                    if ui.add_enabled(self.motor.listo, egui::Button::new("Reiniciar el motor")).clicked() {
-                        self.reiniciar_motor();
                     }
                 });
             });
     }
 
-    /// Botón cuadrado de 40 px del riel; el activo lleva fondo de acento y barra de 2 px.
-    fn boton_riel(&self, ui: &mut egui::Ui, nombre: &str, activo: bool, dibujar: impl FnOnce(&egui::Painter, Rect, egui::Color32)) -> egui::Response {
+    /// Una entrada del menú de módulos: 34 px de alto, texto de 14 px.
+    fn pestana_menu(&self, ui: &mut egui::Ui, nombre: &str, activo: bool) -> egui::Response {
         let pal = tema::p();
-        let (r, resp) = ui.allocate_exact_size(Vec2::splat(40.0), Sense::click());
-        let p = ui.painter();
-        if activo {
-            p.rect_filled(r, 8.0, pal.acento_fondo);
-            p.rect_filled(Rect::from_min_size(Pos2::new(r.left(), r.top() + 6.0), Vec2::new(2.0, r.height() - 12.0)), 1.0, pal.acento);
-        } else if resp.hovered() {
-            p.rect_filled(r, 8.0, pal.realce);
+        let fuente = if activo { egui::FontId::new(14.0, tema::semi()) } else { egui::FontId::proportional(14.0) };
+        let g = ui.painter().layout_no_wrap(nombre.to_string(), fuente, pal.texto);
+        let (r, resp) = ui.allocate_exact_size(Vec2::new(g.size().x + 28.0, 34.0), Sense::click());
+        if resp.hovered() && !activo {
+            ui.painter().rect_filled(r, 0.0, pal.realce);
         }
-        let color = if activo { pal.acento } else if resp.hovered() { pal.texto } else { pal.texto_3 };
-        dibujar(p, Rect::from_center_size(r.center(), Vec2::splat(19.0)), color);
-        resp.on_hover_text(nombre)
+        ui.painter().galley(Pos2::new(r.left() + 14.0, r.center().y - g.size().y / 2.0), g, pal.texto);
+        if activo {
+            ui.painter().rect_filled(Rect::from_min_max(Pos2::new(r.left(), r.bottom() - 2.0), r.right_bottom()), 0.0, pal.acento);
+        }
+        resp
+    }
+
+    /// Menú Archivo: proyecto, diagrama, tema y motor.
+    fn menu_archivo(&mut self, ui: &mut egui::Ui) {
+        ui.set_min_width(240.0);
+        if ui.button("Nuevo proyecto").clicked() {
+            self.nuevo_proyecto();
+            ui.close();
+        }
+        if ui.button("Abrir proyecto…").clicked() {
+            self.abrir_proyecto();
+            ui.close();
+        }
+        if ui.button("Guardar proyecto").clicked() {
+            self.guardar_proyecto();
+            ui.close();
+        }
+        ui.separator();
+        ui::titulo_seccion(ui, "Diagrama");
+        ui.add(egui::TextEdit::singleline(&mut self.editor.diagrama.nombre).hint_text("Nombre del diagrama"));
+        ui.menu_button("Ejemplos", |ui| {
+            for (k, n) in self.editor.ejemplos.clone() {
+                if ui.button(n).clicked() {
+                    self.editor.pedir_ejemplo(&mut self.motor, &k);
+                    self.modulo = Modulo::Bloques;
+                    ui.close();
+                }
+            }
+        });
+        ui.separator();
+        ui::titulo_seccion(ui, "Tema");
+        for m in [tema::Modo::Claro, tema::Modo::Oscuro] {
+            if ui.radio(self.modo == m, m.nombre()).clicked() {
+                self.cambiar_modo(ui.ctx(), m);
+            }
+        }
+        ui.separator();
+        if ui.button("Referencia").clicked() {
+            self.modulo = Modulo::Referencia;
+            ui.close();
+        }
+        if ui.add_enabled(self.motor.listo, egui::Button::new("Reiniciar el motor")).clicked() {
+            self.reiniciar_motor();
+            ui.close();
+        }
+    }
+
+    /// Cinta blanca de 94 px con los grupos del módulo activo.
+    fn cinta(&mut self, ctx: &egui::Context) {
+        let pal = tema::p();
+        egui::TopBottomPanel::top("cinta")
+            .exact_height(ui::ALTO_CINTA)
+            .show_separator_line(false)
+            .frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin { left: 0, right: 0, top: 8, bottom: 0 }))
+            .show(ctx, |ui| {
+                let r = ui.max_rect();
+                ui.painter().line_segment([Pos2::new(r.left(), r.bottom()), Pos2::new(r.right(), r.bottom())], egui::Stroke::new(1.0_f32, pal.linea));
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    let herr = self.herramientas.clone();
+                    match self.modulo {
+                        Modulo::Potencia => self.potencia.cinta(ui, &herr),
+                        Modulo::Fotovoltaica => self.fotovoltaica.cinta(ui, &herr),
+                        Modulo::Estadistica => self.estadistica.cinta(ui, &herr),
+                        Modulo::Aprendizaje => self.aprendizaje.cinta(ui, &herr),
+                        Modulo::Mantenimiento => self.mantenimiento.cinta(ui, &herr),
+                        Modulo::Bloques => self.cinta_bloques(ui),
+                        Modulo::Calculo => {
+                            ui::grupo_cinta(ui, "Ejecutar", |ui| {
+                                if ui::boton_cinta(ui, Icono::Simular, "Ejecutar script", false).clicked() {
+                                    self.calculo.correr_guion(&mut self.motor);
+                                }
+                            });
+                        }
+                        Modulo::Validacion => {
+                            ui::grupo_cinta(ui, "Ejecutar", |ui| {
+                                if ui::boton_cinta(ui, Icono::Simular, "Ejecutar todas", false).clicked() && !self.validacion.ocupada() {
+                                    self.validacion.ejecutar(&mut self.motor, 4);
+                                }
+                            });
+                        }
+                        Modulo::Inicio | Modulo::Referencia => {
+                            ui::grupo_cinta(ui, "Proyecto", |ui| {
+                                if ui::boton_cinta(ui, Icono::NuevoDocumento, "Nuevo proyecto", false).clicked() {
+                                    self.nuevo_proyecto();
+                                }
+                                if ui::boton_cinta(ui, Icono::Abrir, "Abrir proyecto", false).clicked() {
+                                    self.abrir_proyecto();
+                                }
+                                if ui::boton_cinta(ui, Icono::Guardar, "Guardar proyecto", false).clicked() {
+                                    self.guardar_proyecto();
+                                }
+                            });
+                        }
+                    }
+                });
+            });
+    }
+
+    /// Cinta de Bloques: diagrama y simulación.
+    fn cinta_bloques(&mut self, ui: &mut egui::Ui) {
+        ui::grupo_cinta(ui, "Diagrama", |ui| {
+            if ui::boton_cinta(ui, Icono::NuevoDocumento, "Nuevo diagrama", false).clicked() {
+                self.editor.nuevo_diagrama();
+            }
+            match ui::columna_cinta(ui, &[(Icono::Abrir, "Abrir", true), (Icono::Guardar, "Guardar", true)]) {
+                Some(0) => self.editor.abrir_diagrama(),
+                Some(_) => self.editor.guardar_diagrama(),
+                None => {}
+            }
+        });
+        ui::grupo_cinta(ui, "Simulación", |ui| {
+            if ui::boton_cinta(ui, Icono::Simular, "Simular", false).clicked() {
+                self.simular();
+            }
+            if ui::boton_cinta(ui, Icono::Linealizar, "Linealizar", false).clicked() && self.editor.id_lin.is_none() && self.editor.id_sim.is_none() {
+                self.editor.linealizar(&mut self.motor);
+            }
+        });
+    }
+
+    /// Panel izquierdo de 280 px «Esquema del proyecto | Opciones» con el árbol del proyecto; se
+    /// pliega con «« y, por debajo de 1100 px de ancho, empieza plegado.
+    fn esquema(&mut self, ctx: &egui::Context) {
+        let pal = tema::p();
+        let estrecha = ctx.content_rect().width() < ui::ANCHO_APILAR;
+        let plegado = self.esquema_plegado.unwrap_or(estrecha);
+        if plegado {
+            egui::SidePanel::left("esquema_plegado").exact_width(32.0).resizable(false).frame(egui::Frame::new().fill(pal.panel).stroke(egui::Stroke::new(1.0_f32, pal.linea))).show(ctx, |ui| {
+                ui.add_space(8.0);
+                if ui::boton_icono(ui, Icono::Desplegar, 14.0, "Mostrar el esquema del proyecto").clicked() {
+                    self.esquema_plegado = Some(false);
+                }
+            });
+            return;
+        }
+        egui::SidePanel::left("esquema").exact_width(280.0).resizable(false).frame(egui::Frame::new().fill(pal.panel).stroke(egui::Stroke::new(1.0_f32, pal.linea))).show(ctx, |ui| {
+            egui::Frame::new().inner_margin(egui::Margin { left: 10, right: 6, top: 6, bottom: 0 }).show(ui, |ui| {
+                let mut pestana = self.pestana_esquema;
+                ui::barra_pestanas(ui, &["Esquema del proyecto", "Opciones"], &mut pestana, |ui| {
+                    if ui::boton_icono(ui, Icono::Plegar, 14.0, "Plegar el esquema").clicked() {
+                        self.esquema_plegado = Some(true);
+                    }
+                });
+                self.pestana_esquema = pestana;
+            });
+            tema::separador(ui);
+            if self.pestana_esquema == 1 {
+                egui::Frame::new().inner_margin(16).show(ui, |ui| {
+                    ui::titulo_seccion(ui, "Tema");
+                    for m in [tema::Modo::Claro, tema::Modo::Oscuro] {
+                        if ui.radio(self.modo == m, m.nombre()).clicked() {
+                            self.cambiar_modo(ui.ctx(), m);
+                        }
+                    }
+                });
+                return;
+            }
+            egui::Frame::new().inner_margin(egui::Margin { left: 12, right: 12, top: 12, bottom: 8 }).show(ui, |ui| {
+                ui.add(egui::TextEdit::singleline(&mut self.filtro_esquema).hint_text("Buscar objetos…").desired_width(f32::INFINITY).margin(egui::Margin::symmetric(8, 7)));
+            });
+            egui::ScrollArea::vertical().id_salt("arbol_proyecto").auto_shrink([false, false]).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                self.arbol_proyecto(ui);
+            });
+        });
+    }
+
+    /// Árbol del proyecto: diagramas, scripts, datos, análisis, plan de mantenimiento y validación.
+    fn arbol_proyecto(&mut self, ui: &mut egui::Ui) {
+        use ui::EstadoNodo as E;
+        let filtro = self.filtro_esquema.to_lowercase();
+        let pasa = |t: &str| filtro.is_empty() || t.to_lowercase().contains(&filtro);
+        let proyecto = self.carpeta.as_ref().and_then(|c| c.file_name()).map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Proyecto sin guardar".into());
+        let mut ir: Option<Modulo> = None;
+        let mut herramienta: Option<(Modulo, String)> = None;
+        let nodo = |ui: &mut egui::Ui, abiertos: &mut std::collections::HashSet<String>, clave: &str, nivel: usize, estado: E, icono: Option<Icono>, texto: &str, sufijo: &str, activo: bool, hijos: bool| -> (egui::Response, bool) {
+            let abierto = !abiertos.contains(clave);
+            let (r, conmutado) = ui::nodo_arbol(ui, nivel, hijos.then_some(abierto), estado, icono, texto, sufijo, activo);
+            if conmutado {
+                if abierto {
+                    abiertos.insert(clave.to_string());
+                } else {
+                    abiertos.remove(clave);
+                }
+            }
+            (r, abierto && hijos)
+        };
+        let mut cerrados = std::mem::take(&mut self.esquema_cerrados);
+        let (_, abierto) = nodo(ui, &mut cerrados, "proyecto", 0, E::Ninguno, Some(Icono::Carpeta), &proyecto, "", false, true);
+        if abierto {
+            // Diagramas
+            let bloques = self.editor.diagrama.sistema.bloques.len();
+            let estado_diagrama = if self.editor.ultima.is_none() {
+                E::SinEjecutar
+            } else if self.editor.avisos.is_empty() && self.editor.error.is_none() {
+                E::Listo
+            } else {
+                E::Pendiente
+            };
+            let (_, a) = nodo(ui, &mut cerrados, "diagramas", 1, estado_diagrama, None, "Diagramas", "", false, true);
+            let nombre = if self.editor.diagrama.nombre.is_empty() { "Diagrama sin nombre".to_string() } else { self.editor.diagrama.nombre.clone() };
+            if a && pasa(&nombre) {
+                let (r, _) = nodo(ui, &mut cerrados, "", 2, estado_diagrama, None, &nombre, &format!("{bloques} bloques"), self.modulo == Modulo::Bloques, false);
+                if r.clicked() {
+                    ir = Some(Modulo::Bloques);
+                }
+            }
+            // Scripts
+            let guiones: Vec<String> = self.calculo.guiones.iter().filter(|g| !g.motor).map(|g| g.nombre.clone()).collect();
+            if !guiones.is_empty() {
+                let (_, a) = nodo(ui, &mut cerrados, "scripts", 1, E::Listo, None, "Scripts", "", false, true);
+                if a {
+                    for g in guiones.iter().filter(|g| pasa(g)) {
+                        let (r, _) = nodo(ui, &mut cerrados, "", 2, E::Listo, None, g, "", self.modulo == Modulo::Calculo, false);
+                        if r.clicked() {
+                            ir = Some(Modulo::Calculo);
+                        }
+                    }
+                }
+            }
+            // Datos del espacio de trabajo
+            if !self.compartido.variables.is_empty() {
+                let (_, a) = nodo(ui, &mut cerrados, "datos", 1, E::Listo, None, "Datos", "", false, true);
+                if a {
+                    for v in self.compartido.variables.iter().filter(|v| pasa(&v.nombre)) {
+                        let icono = if v.columnas.is_empty() { Icono::Variable } else { Icono::Tabla };
+                        let (r, _) = nodo(ui, &mut cerrados, "", 2, E::Ninguno, Some(icono), &v.nombre, &v.forma, false, false);
+                        if r.on_hover_text(format!("{} {}", v.tipo, v.forma)).clicked() {
+                            ir = Some(Modulo::Calculo);
+                        }
+                    }
+                }
+            }
+            // Análisis calculados en las páginas de herramientas
+            let paginas = [
+                (Modulo::Potencia, &self.potencia),
+                (Modulo::Fotovoltaica, &self.fotovoltaica),
+                (Modulo::Estadistica, &self.estadistica),
+                (Modulo::Aprendizaje, &self.aprendizaje),
+                (Modulo::Mantenimiento, &self.mantenimiento.analisis),
+            ];
+            let analisis: Vec<(Modulo, String, String, E, String)> = paginas
+                .iter()
+                .flat_map(|(m, p)| p.resultados_esquema(&self.herramientas).into_iter().map(move |(id, corto, e, s)| (*m, id, format!("{} · {}", tema::nombre_modulo(*m), corto), e, s)))
+                .collect();
+            if !analisis.is_empty() {
+                let estado = if analisis.iter().any(|a| a.3 == E::Pendiente) { E::Pendiente } else { E::Listo };
+                let (_, a) = nodo(ui, &mut cerrados, "analisis", 1, estado, None, "Análisis", "", false, true);
+                if a {
+                    for (m, id, texto, e, s) in analisis.iter().filter(|a| pasa(&a.2)) {
+                        let activo = self.modulo == *m && paginas.iter().any(|(pm, p)| pm == m && p.seleccion() == Some(id.as_str()));
+                        let (r, _) = nodo(ui, &mut cerrados, "", 2, *e, None, texto, s, activo, false);
+                        if r.clicked() {
+                            herramienta = Some((*m, id.clone()));
+                        }
+                    }
+                }
+            }
+            // Plan de mantenimiento
+            if let Some(n) = self.mantenimiento.pendientes() {
+                let (r, _) = nodo(ui, &mut cerrados, "plan", 1, if n > 0 { E::Pendiente } else { E::Listo }, None, "Plan de mantenimiento", &format!("{n} pendientes"), self.modulo == Modulo::Mantenimiento, false);
+                if r.clicked() {
+                    ir = Some(Modulo::Mantenimiento);
+                }
+            }
+            // Validación
+            let fases = self.validacion.resumen_fases();
+            let ejecutadas: Vec<&crate::validacion::ResumenFase> = fases.iter().filter(|f| f.nivel.is_some()).collect();
+            let estado = if ejecutadas.is_empty() {
+                E::SinEjecutar
+            } else if ejecutadas.iter().all(|f| f.nivel == Some(tema::Nivel::Ok)) {
+                E::Listo
+            } else {
+                E::Pendiente
+            };
+            let (r, _) = nodo(ui, &mut cerrados, "validacion", 1, estado, None, "Validación", &format!("{} fases", fases.len()), self.modulo == Modulo::Validacion, false);
+            if r.clicked() {
+                ir = Some(Modulo::Validacion);
+            }
+        }
+        self.esquema_cerrados = cerrados;
+        if let Some((m, id)) = herramienta {
+            self.modulo = m;
+            match m {
+                Modulo::Potencia => self.potencia.seleccionar(&id),
+                Modulo::Fotovoltaica => self.fotovoltaica.seleccionar(&id),
+                Modulo::Estadistica => self.estadistica.seleccionar(&id),
+                Modulo::Aprendizaje => self.aprendizaje.seleccionar(&id),
+                _ => {
+                    self.mantenimiento.fijar_pestana("analisis");
+                    self.mantenimiento.analisis.seleccionar(&id);
+                }
+            }
+        } else if let Some(m) = ir {
+            self.modulo = m;
+        }
     }
 
     /// Portada: continuar con el diagrama abierto, KPIs de planta, validación, próximas órdenes y módulos.
@@ -1415,6 +1696,15 @@ impl App {
     }
 }
 
+/// Recorta un texto a `n` caracteres, con puntos suspensivos si no cabe.
+fn recortar(t: &str, n: usize) -> String {
+    if t.chars().count() <= n {
+        t.to_string()
+    } else {
+        format!("{}…", t.chars().take(n.saturating_sub(1)).collect::<String>())
+    }
+}
+
 fn guardar_png(img: &egui::ColorImage, ruta: &std::path::Path) {
     let [w, h] = img.size;
     let mut datos = Vec::with_capacity(w * h * 4);
@@ -1463,11 +1753,15 @@ impl eframe::App for App {
             self.paleta.abrir();
         }
         self.barra_superior(ctx);
-        self.pie(ctx);
+        self.menu_modulos(ctx);
+        self.cinta(ctx);
+        self.barra_estado(ctx);
         self.panel_sin_motor(ctx);
         self.panel_pkl(ctx);
         self.dialogo_nuevo_proyecto(ctx);
-        self.barra_modulos(ctx);
+        if !matches!(self.modulo, Modulo::Inicio | Modulo::Bloques | Modulo::Referencia) {
+            self.esquema(ctx);
+        }
         egui::CentralPanel::default().frame(egui::Frame::new().fill(tema::p().fondo)).show(ctx, |ui| {
             let herr = self.herramientas.clone();
             match self.modulo {

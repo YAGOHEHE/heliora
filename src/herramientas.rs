@@ -1,5 +1,6 @@
 //! Páginas de análisis: cada herramienta del motor se muestra como un formulario con su informe.
 use crate::app::{Compartido, Variable};
+use crate::iconos::Icono;
 use crate::grafica::{self, Accion, Decoracion, EstiloMapa, Figura, Franja, MapaCalor, MarcaV, TipoSerie};
 use crate::motor::Motor;
 use crate::tema;
@@ -286,6 +287,8 @@ pub struct Pagina {
     calculados: HashMap<String, HashMap<String, String>>,
     /// Gráfica elegida en cada herramienta con varias.
     figura_sel: HashMap<String, usize>,
+    /// «Calcular» pulsado en la cinta: se atiende en el siguiente dibujo de la página.
+    calcular_pedido: bool,
 }
 
 /// Estado del buscador de módulos CEC de un parámetro `modulo_cec`.
@@ -348,6 +351,7 @@ impl Pagina {
             busquedas: HashMap::new(),
             calculados: HashMap::new(),
             figura_sel: HashMap::new(),
+            calcular_pedido: false,
         }
     }
 
@@ -417,15 +421,7 @@ impl Pagina {
             self.seleccion = propias.first().map(|h| h.id.clone());
         }
         let pal = tema::p();
-        egui::TopBottomPanel::top(format!("pestanas_{}", self.modulo)).frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(16, 0))).show_inside(ui, |ui| {
-            let titulos: Vec<&str> = propias.iter().map(|h| h.titulo.as_str()).collect();
-            let mut activa = propias.iter().position(|h| Some(&h.id) == self.seleccion.as_ref()).unwrap_or(0);
-            let cambio = egui::ScrollArea::horizontal().id_salt(("barra", &self.modulo)).auto_shrink([false, true]).show(ui, |ui| ui::barra_pestanas(ui, &titulos, &mut activa, |_| {})).inner;
-            if cambio {
-                self.seleccion = propias.get(activa).map(|h| h.id.clone());
-            }
-        });
-        let atajo = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter));
+        let atajo = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter)) || std::mem::take(&mut self.calcular_pedido);
         egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.fondo)).show_inside(ui, |ui| {
             let Some(id) = self.seleccion.clone() else { return };
             let Some(h) = propias.iter().find(|h| h.id == id) else { return };
@@ -710,12 +706,6 @@ impl Pagina {
         self.errores.clear();
     }
 
-    /// Título de la herramienta abierta, para la ruta de la cabecera.
-    pub fn titulo_seleccion(&self, todas: &[Herramienta]) -> Option<String> {
-        let id = self.seleccion.as_deref()?;
-        todas.iter().find(|h| h.id == id).map(|h| h.titulo.clone())
-    }
-
     /// Último informe de una herramienta, si se ha ejecutado con éxito.
     pub fn informe(&self, id: &str) -> Option<&Informe> {
         self.informes.get(id)
@@ -724,6 +714,112 @@ impl Pagina {
     pub fn seleccionar(&mut self, id: &str) {
         self.seleccion = Some(id.to_string());
     }
+
+    /// Cinta del módulo: las herramientas como botones grandes y el grupo Resultados.
+    pub fn cinta(&mut self, ui: &mut egui::Ui, todas: &[Herramienta]) {
+        let propias: Vec<&Herramienta> = todas.iter().filter(|h| h.modulo == self.modulo).collect();
+        if self.seleccion.is_none() {
+            self.seleccion = propias.first().map(|h| h.id.clone());
+        }
+        ui::grupo_cinta(ui, "Herramientas", |ui| {
+            for h in &propias {
+                let (icono, corto) = presentacion(&h.id, &h.titulo);
+                if ui::boton_cinta(ui, icono, &corto, self.seleccion.as_deref() == Some(h.id.as_str())).on_hover_text(&h.titulo).clicked() {
+                    self.seleccion = Some(h.id.clone());
+                }
+            }
+        });
+        let hay_informe = self.seleccion.as_ref().is_some_and(|id| self.informes.contains_key(id));
+        let hay_tabla = self.seleccion.as_ref().and_then(|id| self.informes.get(id)).is_some_and(|i| i.secciones.iter().any(|s| matches!(s, Seccion::Tabla(..))));
+        let mut exportar = false;
+        let mut copiar = false;
+        let ocupada = self.ocupada();
+        let mut calcular = false;
+        ui::grupo_cinta(ui, "Resultados", |ui| {
+            calcular = ui::boton_cinta(ui, Icono::Informe, "Calcular", false).on_hover_text("Calcular · Ctrl Intro").clicked() && !ocupada;
+            match ui::columna_cinta(ui, &[(Icono::Informe, "Exportar informe", hay_informe), (Icono::Descargar, "Copiar CSV", hay_tabla)]) {
+                Some(0) => exportar = true,
+                Some(_) => copiar = true,
+                None => {}
+            }
+        });
+        self.calcular_pedido |= calcular;
+        if let Some(inf) = self.seleccion.as_ref().and_then(|id| self.informes.get(id)) {
+            if exportar {
+                guardar_informe_html(inf);
+            }
+            if copiar {
+                if let Some(Seccion::Tabla(_, col, fil)) = inf.secciones.iter().find(|s| matches!(s, Seccion::Tabla(..))) {
+                    ui.ctx().copy_text(a_csv(col, fil, ','));
+                }
+            }
+        }
+    }
+
+    /// Herramientas con resultado o error, para el esquema del proyecto: id, título corto y estado.
+    pub fn resultados_esquema(&self, todas: &[Herramienta]) -> Vec<(String, String, ui::EstadoNodo, String)> {
+        todas
+            .iter()
+            .filter(|h| h.modulo == self.modulo)
+            .filter_map(|h| {
+                let (_, corto) = presentacion(&h.id, &h.titulo);
+                if self.errores.contains_key(&h.id) {
+                    Some((h.id.clone(), corto, ui::EstadoNodo::Pendiente, "error".to_string()))
+                } else if let Some(inf) = self.informes.get(&h.id) {
+                    let aviso = inf.secciones.iter().any(|s| matches!(s, Seccion::Aviso(n, _) if n == "alerta" || n == "falla"));
+                    Some((h.id.clone(), corto, if aviso { ui::EstadoNodo::Pendiente } else { ui::EstadoNodo::Listo }, if aviso { "aviso".to_string() } else { String::new() }))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Herramienta abierta.
+    pub fn seleccion(&self) -> Option<&str> {
+        self.seleccion.as_deref()
+    }
+}
+
+/// Icono y título corto de una herramienta en la cinta y en el esquema del proyecto.
+pub fn presentacion(id: &str, titulo: &str) -> (Icono, String) {
+    let (icono, corto) = match id {
+        "pot_perdidas" => (Icono::Rayo, "Pérdidas del inversor"),
+        "pot_lcl" => (Icono::Onda, "Filtro LCL"),
+        "ctl_bode" => (Icono::Bode, "Bode y márgenes"),
+        "ctl_escalon" => (Icono::Escalon, "Respuesta al escalón"),
+        "ctl_lugar" => (Icono::Raices, "Lugar de las raíces"),
+        "ctl_pi" => (Icono::Pi, "Ajuste de un PI"),
+        "fv_hoja" => (Icono::Informe, "Hoja de datos"),
+        "fv_curvas" => (Icono::Curva, "Curvas I-V y P-V"),
+        "fv_sombra" => (Icono::Sol, "Sombreado parcial"),
+        "fv_sol" => (Icono::Sol, "Posición solar"),
+        "es_muestra" => (Icono::Tabla, "Datos de ejemplo"),
+        "es_descriptiva" => (Icono::Histograma, "Descriptiva"),
+        "es_ajuste" => (Icono::Curva, "Ajuste de distribuciones"),
+        "es_weibull" => (Icono::Curva, "Weibull"),
+        "es_hipotesis" => (Icono::Validar, "Pruebas de hipótesis"),
+        "es_regresion" => (Icono::Dispersion, "Regresión lineal"),
+        "es_no_lineal" => (Icono::Dispersion, "Regresión no lineal"),
+        "es_anova" => (Icono::Histograma, "ANOVA"),
+        "es_serie" => (Icono::Grafica, "Series y ARIMA"),
+        "es_spc" => (Icono::Grafica, "Control de procesos"),
+        "ml_preparar" => (Icono::Tabla, "Preparar datos"),
+        "ml_regresion" => (Icono::Dispersion, "Regresión"),
+        "ml_clasificacion" => (Icono::Red, "Clasificación"),
+        "ml_clustering" => (Icono::Dispersion, "Clustering"),
+        "ml_pca" => (Icono::Grafica, "PCA"),
+        "ml_anomalias" => (Icono::Raices, "Anomalías"),
+        "ml_guardar" => (Icono::Guardar, "Guardar o cargar"),
+        "ml_predecir" => (Icono::Flecha, "Aplicar modelo"),
+        "mt_muestra" => (Icono::Tabla, "Datos de muestra"),
+        "mt_importar" => (Icono::Abrir, "Importar SCADA"),
+        "mt_kpi" => (Icono::Grafica, "KPIs de la planta"),
+        "mt_fallas" => (Icono::Raices, "Detección de fallas"),
+        "mt_fiabilidad" => (Icono::Curva, "Fiabilidad"),
+        _ => (Icono::Informe, titulo),
+    };
+    (icono, corto.to_string())
 }
 
 

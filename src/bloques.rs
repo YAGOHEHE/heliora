@@ -648,7 +648,7 @@ impl Editor {
         }
     }
 
-    fn deshacer_ya(&mut self) {
+    pub fn deshacer_ya(&mut self) {
         if let Some(t) = self.deshacer.pop() {
             if let Ok(a) = serde_json::to_string(&self.diagrama) {
                 self.rehacer.push(a);
@@ -660,7 +660,7 @@ impl Editor {
         }
     }
 
-    fn rehacer_ya(&mut self) {
+    pub fn rehacer_ya(&mut self) {
         if let Some(t) = self.rehacer.pop() {
             if let Ok(a) = serde_json::to_string(&self.diagrama) {
                 self.deshacer.push(a);

@@ -532,19 +532,6 @@ pub fn icono(pt: &egui::Painter, r: Rect, m: Modulo, color: Color32) {
     }
 }
 
-/// Icono de ajustes: un engranaje esquemático.
-pub fn icono_ajustes(pt: &egui::Painter, r: Rect, color: Color32) {
-    let c = r.center();
-    let s = r.width().min(r.height()) / 2.0;
-    let t = Stroke::new(1.5_f32, color);
-    pt.circle_stroke(c, s * 0.28, t);
-    for i in 0..8 {
-        let a = i as f32 * std::f32::consts::FRAC_PI_4;
-        let d = Vec2::new(a.cos(), a.sin());
-        pt.line_segment([c + d * s * 0.55, c + d * s * 0.9], t);
-    }
-}
-
 /// Un grupo con superficie PANEL, borde LINEA de 1 px y radio de ventana.
 pub fn tarjeta<R>(ui: &mut egui::Ui, f: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let p = p();

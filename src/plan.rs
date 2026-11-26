@@ -7,6 +7,7 @@ use crate::app::Compartido;
 use crate::herramientas::{Herramienta, Pagina};
 use crate::motor::Motor;
 use crate::tema;
+use crate::iconos::Icono;
 use crate::ui;
 use egui::{Color32, Pos2, Rect, Sense, Vec2};
 use serde_json::{json, Value};
@@ -340,6 +341,34 @@ impl Mantenimiento {
         }
     }
 
+    /// Cinta del módulo: las vistas de Mantenimiento como botones grandes y, en Análisis, sus herramientas.
+    pub fn cinta(&mut self, ui: &mut egui::Ui, todas: &[Herramienta]) {
+        ui::grupo_cinta(ui, "Vistas", |ui| {
+            for (p, nombre) in PESTANAS {
+                let icono = match p {
+                    Pestana::Analisis => Icono::Grafica,
+                    Pestana::Tablero => Icono::Calendario,
+                    Pestana::Ordenes => Icono::Lista,
+                    Pestana::Catalogo => Icono::Tabla,
+                    Pestana::Planes => Icono::Informe,
+                    Pestana::Amef => Icono::Raices,
+                    Pestana::Historial => Icono::Deshacer,
+                };
+                if ui::boton_cinta(ui, icono, nombre, self.pestana == p).clicked() {
+                    self.pestana = p;
+                }
+            }
+        });
+        if self.pestana == Pestana::Analisis {
+            self.analisis.cinta(ui, todas);
+        }
+    }
+
+    /// Órdenes pendientes del plan abierto, para el esquema del proyecto.
+    pub fn pendientes(&self) -> Option<u64> {
+        self.tablero["pendientes"].as_u64()
+    }
+
     /// Abre la pestaña Órdenes con el filtro de pendientes (el de las próximas órdenes de Inicio).
     pub fn ver_ordenes_pendientes(&mut self) {
         self.pestana = Pestana::Ordenes;
@@ -548,11 +577,11 @@ impl Mantenimiento {
             self.sucio = huella(&self.estado) != self.hash_guardado.get();
         }
         let pal = tema::p();
-        egui::TopBottomPanel::top("pest_mant").frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(16, 0)).stroke(egui::Stroke::new(1.0_f32, pal.linea))).show_inside(ui, |ui| {
-            let mut activa = PESTANAS.iter().position(|(p, _)| *p == self.pestana).unwrap_or(0);
-            let nombres: Vec<&str> = PESTANAS.iter().map(|(_, n)| *n).collect();
-            ui::barra_pestanas(ui, &nombres, &mut activa, |ui| self.acciones_plan(ui, motor));
-            self.pestana = PESTANAS[activa].0;
+        egui::TopBottomPanel::top("pest_mant").frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(16, 4)).stroke(egui::Stroke::new(1.0_f32, pal.linea))).show_inside(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.set_min_height(32.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| self.acciones_plan(ui, motor));
+            });
             if !self.mensaje.is_empty() {
                 let color = if self.mensaje_error { pal.falla } else { pal.texto_2 };
                 ui.label(egui::RichText::new(&self.mensaje).size(12.0).color(color));
