@@ -427,6 +427,17 @@ impl Mantenimiento {
     }
 
     /// Abre la pestaña Órdenes con el filtro de pendientes (el de las próximas órdenes de Inicio).
+    /// Abre la pestaña Órdenes con la orden `id` elegida y sin filtros que la oculten.
+    pub fn abrir_orden(&mut self, id: &str) {
+        self.orden_sel = Some(id.to_string());
+        self.f_estado = "todas".into();
+        self.f_equipo.clear();
+        self.f_desde.clear();
+        self.f_hasta.clear();
+        self.traer_sel = true;
+        self.pestana = Pestana::Ordenes;
+    }
+
     pub fn ver_ordenes_pendientes(&mut self) {
         self.pestana = Pestana::Ordenes;
         self.f_estado = "pendiente".into();
@@ -794,15 +805,7 @@ impl Mantenimiento {
                 }
                 Accion::Confirmar(c) => self.confirmar = Some(c),
                 Accion::Hecho(id, i, v) => self.marcar_hecho(&id, i, v),
-                Accion::AbrirOrden(id) => {
-                    self.orden_sel = Some(id);
-                    self.f_estado = "todas".into();
-                    self.f_equipo.clear();
-                    self.f_desde.clear();
-                    self.f_hasta.clear();
-                    self.traer_sel = true;
-                    self.pestana = Pestana::Ordenes;
-                }
+                Accion::AbrirOrden(id) => self.abrir_orden(&id),
                 Accion::Ir(p) => self.pestana = p,
                 Accion::IrAmef(t) => {
                     self.filtro_amef = t;

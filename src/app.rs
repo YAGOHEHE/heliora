@@ -856,8 +856,8 @@ impl App {
     /// Menú Archivo: proyecto, diagrama, tema y motor.
     fn menu_archivo(&mut self, ui: &mut egui::Ui) {
         ui.set_min_width(240.0);
-        if ui.button("Nuevo proyecto").clicked() {
-            self.nuevo_proyecto();
+        if ui.button("Nuevo proyecto…").clicked() {
+            self.confirmar_nuevo = true;
             ui.close();
         }
         if ui.button("Abrir proyecto…").clicked() {
@@ -950,7 +950,7 @@ impl App {
                         Modulo::Inicio | Modulo::Referencia => {
                             ui::grupo_cinta(ui, "Proyecto", |ui| {
                                 if ui::boton_cinta(ui, Icono::NuevoDocumento, "Nuevo proyecto", false).clicked() {
-                                    self.nuevo_proyecto();
+                                    self.confirmar_nuevo = true;
                                 }
                                 if ui::boton_cinta(ui, Icono::Abrir, "Abrir proyecto", false).clicked() {
                                     self.abrir_proyecto();
@@ -1283,7 +1283,10 @@ impl App {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
                 if ui::boton(ui, ui::EstiloBoton::Secundario, Some(Icono::Nuevo), "Crear carpeta", "", false).on_hover_text("Guarda el proyecto en una carpeta nueva").clicked() {
-                    self.guardar_proyecto();
+                    if let Some(c) = rfd::FileDialog::new().set_title("Carpeta nueva para el proyecto").pick_folder() {
+                        self.carpeta = Some(c);
+                        self.guardar_proyecto();
+                    }
                 }
                 if ui::boton(ui, ui::EstiloBoton::Secundario, Some(Icono::Abrir), "Abrir proyecto", "", false).clicked() {
                     self.abrir_proyecto();
@@ -1565,6 +1568,7 @@ impl App {
         let t = &self.mantenimiento.tablero;
         let mut ir_plan = false;
         let mut ir_tablero = false;
+        let mut abrir: Option<String> = None;
         ui.spacing_mut().item_spacing.y = 0.0;
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Próximas órdenes").size(22.0).family(tema::semi()).color(pal.texto));
@@ -1674,9 +1678,13 @@ impl App {
                     ui::chip(&mut c, m, false);
                 }
                 if resp.clicked() {
-                    ir_plan = true;
+                    abrir = Some(id.to_string());
                 }
             }
+        }
+        if let Some(id) = abrir {
+            self.mantenimiento.abrir_orden(&id);
+            self.modulo = Modulo::Mantenimiento;
         }
         if ir_plan {
             self.mantenimiento.ver_ordenes_pendientes();

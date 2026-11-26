@@ -640,11 +640,12 @@ impl Pagina {
                 }
                 "salida" => {
                     let clave = (h.id.clone(), p.nombre.clone());
-                    let previo = !t.is_empty();
-                    let mut activo = previo;
-                    let mut nombre = if previo { t.clone() } else { self.salida_apagada.get(&clave).cloned().unwrap_or_else(|| p.defecto.clone()) };
+                    let apagada = self.salida_apagada.get(&clave).cloned();
+                    let mut activo = apagada.is_none();
+                    let mut nombre = apagada.unwrap_or_else(|| t.clone());
                     ui::fila_guardar(ui, &mut activo, &etiqueta_salida(&p.etiqueta), &mut nombre);
                     if activo {
+                        self.salida_apagada.remove(&clave);
                         t = nombre;
                     } else {
                         self.salida_apagada.insert(clave, nombre);

@@ -274,6 +274,9 @@ impl Calculo {
     }
 
     pub fn correr_guion(&mut self, motor: &mut Motor) {
+        if self.id_eval.is_some() {
+            return;
+        }
         if let Some(g) = self.guiones.get(self.activo) {
             self.historia.push(Linea::Nota(format!("» ejecutando {}", g.nombre)));
             self.id_eval = Some(motor.llamar("ejecutar_script", json!({"codigo": g.texto, "ruta": g.ruta.as_ref().map(|r| r.display().to_string())})));

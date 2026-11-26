@@ -203,7 +203,7 @@ heliora/
 |---|---|
 | [docs/desarrollo.md](docs/desarrollo.md) | Entorno local, mapa de archivos, pruebas, procedencia de resultados, proyectos y Git, CI |
 | [MECHANICS.md](MECHANICS.md) | De dónde sale cada valor del modelo y cuáles son estimados |
-| [docs/diseno_motor_dae.md](docs/diseno_motor_dae.md) | Diseño propuesto del motor DAE (sin construir) |
+| [docs/diseno_motor_dae.md](docs/diseno_motor_dae.md) | Diseño del motor DAE. El motor está construido y en revisión: los arreglos B1-B4 esperan en el PR #2 y el diseño, la revisión humana |
 
 ## Licencia
 

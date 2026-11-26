@@ -208,7 +208,7 @@ All documents are in Spanish.
 |---|---|
 | [docs/desarrollo.md](docs/desarrollo.md) | Local setup, file map, tests, result provenance, projects and Git, CI |
 | [MECHANICS.md](MECHANICS.md) | Where every model value comes from and which ones are estimated |
-| [docs/diseno_motor_dae.md](docs/diseno_motor_dae.md) | Proposed design of the DAE engine (not built) |
+| [docs/diseno_motor_dae.md](docs/diseno_motor_dae.md) | Design of the DAE engine. The engine is built and under review: fixes B1-B4 are waiting in PR #2 and the design awaits human review |
 
 ## License
 

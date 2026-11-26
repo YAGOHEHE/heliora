@@ -193,7 +193,7 @@ heliora/
 |---|---|
 | [docs/desarrollo.md](docs/desarrollo.md) | 本地环境、文件索引、测试、结果溯源、项目与 Git、持续集成 |
 | [MECHANICS.md](MECHANICS.md) | 模型中每个数值的来源，以及哪些是估计值 |
-| [docs/diseno_motor_dae.md](docs/diseno_motor_dae.md) | DAE 引擎的设计方案（尚未实现） |
+| [docs/diseno_motor_dae.md](docs/diseno_motor_dae.md) | DAE 引擎的设计。引擎已实现，正在评审：修复 B1-B4 在 PR #2 中等待合并，设计文档待人工评审 |
 
 ## 许可证
 
