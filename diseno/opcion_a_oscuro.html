@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Opción A · Sala de control</title>
+</head>
+<body>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap">
+<style>
+@font-face{font-family:'IBM Plex Sans';src:url(../fuentes/IBMPlexSans-Regular.ttf);font-weight:400}
+@font-face{font-family:'IBM Plex Sans';src:url(../fuentes/IBMPlexSans-SemiBold.ttf);font-weight:500 600}
+@font-face{font-family:'IBM Plex Mono';src:url(../fuentes/IBMPlexMono-Regular.ttf);font-weight:400}
+@font-face{font-family:'IBM Plex Mono';src:url(../fuentes/IBMPlexMono-Medium.ttf);font-weight:500}
+body{margin:0;background:#0B0D10}
+a{color:#F2A93B}a:hover{color:#FFC46B}
+.a-btn{white-space:nowrap;font:500 13px 'IBM Plex Sans',sans-serif;color:#C9CED6;background:transparent;border:1px solid #262B33;border-radius:6px;height:30px;padding:0 10px;display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.a-btn:hover{background:#171B21;color:#EEF1F5}
+.a-ico{width:40px;height:40px;border-radius:8px;border:0;background:transparent;color:#7D8592;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.a-ico:hover{background:#171B21;color:#EEF1F5}
+.a-blk{position:absolute;width:118px;height:64px;box-sizing:border-box;background:#14181D;border:1px solid #2A3039;border-radius:6px;font-family:'IBM Plex Sans',sans-serif}
+.a-bt{font-size:11px;font-weight:600;color:#E4E7EC;padding:6px 8px 0}
+.a-bp{font:400 10px 'IBM Plex Mono',monospace;color:#7D8592;padding:4px 8px 0}
+.a-in{width:100%;box-sizing:border-box;height:28px;background:#0E1114;border:1px solid #262B33;border-radius:5px;color:#E4E7EC;font:400 12px 'IBM Plex Mono',monospace;padding:0 8px}
+.a-lbl{font-size:12px;color:#98A0AC}
+.a-cat{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:5px;font-size:13px;color:#C9CED6}
+.a-cat:hover{background:#171B21}
+</style>
+<div style="width:100%;height:900px;display:flex;flex-direction:column;background:#0B0D10;color:#E4E7EC;font-family:'IBM Plex Sans',sans-serif;overflow:hidden">
+
+  <!-- Barra superior: proyecto + documento + ejecución -->
+  <header style="height:48px;flex:none;display:flex;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid #1E232A;background:#0E1114">
+    <div style="display:flex;align-items:center;gap:8px;width:52px;justify-content:center">
+      <svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="#F2A93B" stroke-width="1.6" stroke-linecap="round" role="img" aria-label="Heliora"><path d="M4 18a9 9 0 0 1 18 0"></path><path d="M13 4v3M5.5 7.5l2 2M20.5 7.5l-2 2M2 18h22M6 22h14"></path></svg>
+    </div>
+    <nav aria-label="Ruta" style="display:flex;align-items:center;gap:6px;font-size:13px;color:#7D8592;white-space:nowrap">
+      <span>Proyecto sin guardar</span><span aria-hidden="true">/</span><span>Bloques</span><span aria-hidden="true">/</span>
+      <span style="color:#EEF1F5;font-weight:500">Planta FV completa (promediada)</span>
+      <span style="width:6px;height:6px;border-radius:3px;background:#F2A93B" title="Cambios sin guardar"></span>
+    </nav>
+    <div style="flex:1"></div>
+    <button class="a-btn" style="width:280px;justify-content:space-between;color:#7D8592">
+      <span style="display:flex;align-items:center;gap:8px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>Buscar bloque, comando o variable</span>
+      <span style="font:400 11px 'IBM Plex Mono',monospace;border:1px solid #2A3039;border-radius:4px;padding:1px 5px">Ctrl K</span>
+    </button>
+    <div style="flex:1"></div>
+    <div style="display:flex;align-items:center;gap:6px;height:32px;padding:0 4px 0 10px;border:1px solid #262B33;border-radius:7px;background:#11151A">
+      <span style="font:400 12px 'IBM Plex Mono',monospace;color:#98A0AC">RK4 fijo · 0 → 1.0 s · h 5e-5</span>
+      <button style="height:24px;border:0;border-radius:5px;background:#F2A93B;color:#1A1205;font:600 13px 'IBM Plex Sans',sans-serif;padding:0 12px;display:flex;align-items:center;gap:6px;cursor:pointer">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 0.5 9.5 5 1 9.5Z" fill="#1A1205"></path></svg>Simular<span style="font:400 11px 'IBM Plex Mono',monospace;opacity:.7">F5</span>
+      </button>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#98A0AC;padding-left:4px">
+      <span style="width:7px;height:7px;border-radius:4px;background:#3FB27F"></span>Motor listo
+    </div>
+  </header>
+
+  <div style="flex:1;display:flex;min-height:0">
+    <!-- Riel de módulos -->
+    <nav aria-label="Módulos" style="width:56px;flex:none;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 0;border-right:1px solid #1E232A;background:#0E1114">
+      <button class="a-ico" aria-label="Inicio"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 11 12 4l9 7v9H3z"></path></svg></button>
+      <div style="width:24px;height:1px;background:#1E232A;margin:4px 0"></div>
+      <button class="a-ico" aria-label="Bloques" style="background:#1A1712;color:#F2A93B;box-shadow:inset 2px 0 0 #F2A93B"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="3" width="7" height="6" rx="1"></rect><rect x="14" y="15" width="7" height="6" rx="1"></rect><path d="M10 6h3a2 2 0 0 1 2 2v7"></path></svg></button>
+      <button class="a-ico" aria-label="Potencia"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M13 2 5 14h6l-1 8 8-12h-6z"></path></svg></button>
+      <button class="a-ico" aria-label="Solar"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5"></path></svg></button>
+      <div style="width:24px;height:1px;background:#1E232A;margin:4px 0"></div>
+      <button class="a-ico" aria-label="Cálculo"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="m7 10 3 2-3 2M12 15h5"></path></svg></button>
+      <button class="a-ico" aria-label="Estadística"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"></path></svg></button>
+      <button class="a-ico" aria-label="Aprendizaje"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="5" cy="5" r="2"></circle><circle cx="19" cy="5" r="2"></circle><circle cx="5" cy="19" r="2"></circle><circle cx="19" cy="19" r="2"></circle><circle cx="12" cy="12" r="2.5"></circle><path d="m6.5 6.5 4 4M17.5 6.5l-4 4M6.5 17.5l4-4M17.5 17.5l-4-4"></path></svg></button>
+      <div style="width:24px;height:1px;background:#1E232A;margin:4px 0"></div>
+      <button class="a-ico" aria-label="Mantenimiento"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M3 10h18M8 3v4M16 3v4m-7 8 2 2 4-4"></path></svg></button>
+      <button class="a-ico" aria-label="Validación"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="m8 12 3 3 5-6"></path></svg></button>
+      <div style="flex:1"></div>
+      <button class="a-ico" aria-label="Referencia"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 3h10l4 4v14H5z"></path><path d="M9 11h6M9 15h6"></path></svg></button>
+      <button class="a-ico" aria-label="Ajustes y tema"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"></path></svg></button>
+    </nav>
+
+    <!-- Librería -->
+    <aside aria-label="Librería de bloques" style="width:232px;flex:none;display:flex;flex-direction:column;border-right:1px solid #1E232A;background:#0E1114">
+      <div style="padding:12px 12px 8px;display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:11px;font-weight:600;letter-spacing:.08em;color:#7D8592">LIBRERÍA</div>
+        <label style="display:flex;align-items:center;gap:8px;height:30px;border:1px solid #262B33;border-radius:6px;padding:0 8px;background:#0B0D10">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#7D8592" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+          <input aria-label="Filtrar bloques" placeholder="Filtrar…" style="flex:1;min-width:0;background:transparent;border:0;color:#E4E7EC;font:400 13px 'IBM Plex Sans',sans-serif;outline:none">
+        </label>
+      </div>
+      <div style="padding:0 6px;display:flex;flex-direction:column;gap:1px;overflow:hidden">
+        <div style="font-size:11px;color:#7D8592;padding:6px 8px 2px">Recientes</div>
+        <div class="a-cat"><span style="width:8px;height:8px;border-radius:2px;background:#F2A93B"></span>Arreglo FV</div>
+        <div class="a-cat"><span style="width:8px;height:8px;border-radius:2px;background:#F2A93B"></span>Boost</div>
+        <div class="a-cat"><span style="width:8px;height:8px;border-radius:2px;background:#4DB5D9"></span>Control dq</div>
+        <div style="font-size:11px;color:#7D8592;padding:10px 8px 2px">Categorías</div>
+        <div class="a-cat"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 2l4 3-4 3" fill="none" stroke="#7D8592" stroke-width="1.4"></path></svg>Fuentes<span style="margin-left:auto;font:400 11px 'IBM Plex Mono',monospace;color:#5D6471">9</span></div>
+        <div class="a-cat"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 2l4 3-4 3" fill="none" stroke="#7D8592" stroke-width="1.4"></path></svg>Matemática y señales</div>
+        <div class="a-cat"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 2l4 3-4 3" fill="none" stroke="#7D8592" stroke-width="1.4"></path></svg>Continuo y discontinuidades</div>
+        <div class="a-cat"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 2l4 3-4 3" fill="none" stroke="#7D8592" stroke-width="1.4"></path></svg>Sumideros</div>
+        <div class="a-cat"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 2l4 3-4 3" fill="none" stroke="#7D8592" stroke-width="1.4"></path></svg>Eléctrica</div>
+        <div class="a-cat"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 2l4 3-4 3" fill="none" stroke="#7D8592" stroke-width="1.4"></path></svg>Potencia</div>
+        <div class="a-cat" style="color:#EEF1F5"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3l3 4 3-4" fill="none" stroke="#98A0AC" stroke-width="1.4"></path></svg>Fotovoltaica</div>
+        <div style="display:flex;flex-direction:column;gap:1px;padding-left:18px">
+          <div class="a-cat">Arreglo FV</div>
+          <div class="a-cat">Arreglo FV con sombra</div>
+          <div class="a-cat">MPPT</div>
+          <div class="a-cat">Sol en plano inclinado</div>
+        </div>
+        <div class="a-cat"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 2l4 3-4 3" fill="none" stroke="#7D8592" stroke-width="1.4"></path></svg>Subsistemas</div>
+      </div>
+    </aside>
+
+    <!-- Lienzo + dock de resultados -->
+    <main style="flex:1;min-width:0;display:flex;flex-direction:column">
+      <div style="height:40px;flex:none;display:flex;align-items:center;gap:6px;padding:0 10px;border-bottom:1px solid #1E232A">
+        <button class="a-btn" aria-label="Deshacer"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 14 4 9l5-5"></path><path d="M4 9h11a5 5 0 0 1 0 10h-3"></path></svg></button>
+        <button class="a-btn" aria-label="Rehacer"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m15 14 5-5-5-5"></path><path d="M20 9H9a5 5 0 0 0 0 10h3"></path></svg></button>
+        <button class="a-btn">Encuadrar</button>
+        <button class="a-btn">Ordenar cables</button>
+        <button class="a-btn">Linealizar aquí</button>
+        <div style="flex:1"></div>
+        <span style="font-size:12px;color:#7D8592;display:flex;gap:12px;align-items:center">
+          <span style="display:flex;gap:6px;align-items:center"><span style="width:14px;height:2px;background:#F2A93B"></span>eléctrica</span>
+          <span style="display:flex;gap:6px;align-items:center"><span style="width:14px;height:2px;background:#4DB5D9"></span>señal</span>
+          <span style="font-family:'IBM Plex Mono',monospace">100 %</span>
+        </span>
+      </div>
+
+      <div style="flex:1;position:relative;overflow:hidden;background-color:#0B0D10;background-image:radial-gradient(#1C2128 1px,transparent 1px);background-size:16px 16px">
+        <div style="position:absolute;left:28px;top:24px;width:760px;height:430px">
+          <svg width="760" height="430" viewBox="0 0 760 430" fill="none" aria-hidden="true" style="position:absolute;left:0;top:0">
+            <g stroke="#F2A93B" stroke-width="2">
+              <path d="M292 80H324"></path><path d="M442 80H474"></path><path d="M592 80H624"></path>
+              <path d="M683 112V200"></path><path d="M383 112V200"></path>
+            </g>
+            <g stroke="#4DB5D9" stroke-width="1.5">
+              <path d="M142 80H174"></path><path d="M233 112V200"></path>
+              <path d="M292 232C312 232 306 96 324 96"></path>
+              <path d="M383 264V350"></path>
+              <path d="M442 382C458 382 458 240 474 240"></path>
+              <path d="M533 264V350"></path>
+              <path d="M592 382H606V124H575V112"></path>
+              <path d="M683 264V350"></path>
+              <path d="M624 395C600 395 610 250 592 250"></path>
+            </g>
+          </svg>
+          <div class="a-blk" style="left:24px;top:48px"><div class="a-bt">Irradiancia</div><div class="a-bp">Desde CSV</div></div>
+          <div class="a-blk" style="left:174px;top:48px;border-top:2px solid #F2A93B"><div class="a-bt">Arreglo FV</div><div class="a-bp">CS1H-330MS</div></div>
+          <div class="a-blk" style="left:324px;top:48px;border:1px solid #F2A93B;box-shadow:0 0 0 3px rgba(242,169,59,.18);border-top:2px solid #F2A93B"><div class="a-bt">Boost</div><div class="a-bp">L = 0.001 H</div></div>
+          <div class="a-blk" style="left:474px;top:48px;border-top:2px solid #F2A93B"><div class="a-bt">Inversor</div><div class="a-bp">Ron = 0.002 Ω</div></div>
+          <div class="a-blk" style="left:624px;top:48px;border-top:2px solid #F2A93B"><div class="a-bt">Filtro LCL</div><div class="a-bp">L1 = 5e-4 H</div></div>
+          <div class="a-blk" style="left:174px;top:200px;border-top:2px solid #4DB5D9"><div class="a-bt">MPPT</div><div class="a-bp">P&amp;O</div></div>
+          <div class="a-blk" style="left:324px;top:200px;border-top:2px solid #F2A93B"><div class="a-bt">Bus DC</div><div class="a-bp">C = 0.008 F</div></div>
+          <div class="a-blk" style="left:474px;top:200px;border-top:2px solid #4DB5D9"><div class="a-bt">Control dq</div><div class="a-bp">Kp = 1.9</div></div>
+          <div class="a-blk" style="left:624px;top:200px;border-top:2px solid #F2A93B"><div class="a-bt">Red</div><div class="a-bp">VLL = 400 V</div></div>
+          <div class="a-blk" style="left:324px;top:350px;border-top:2px solid #4DB5D9"><div class="a-bt">Control bus DC</div><div class="a-bp">Vref = 750 V</div></div>
+          <div class="a-blk" style="left:474px;top:350px;border-top:2px solid #4DB5D9"><div class="a-bt">SVPWM</div><div class="a-bp">fc = 5000 Hz</div></div>
+          <div class="a-blk" style="left:624px;top:350px;border-top:2px solid #4DB5D9"><div class="a-bt">PLL</div><div class="a-bp">f0 = 50 Hz</div></div>
+        </div>
+        <!-- minimapa -->
+        <div aria-hidden="true" style="position:absolute;right:12px;bottom:12px;width:140px;height:84px;border:1px solid #262B33;border-radius:6px;background:#0E1114;opacity:.9">
+          <div style="position:absolute;left:18px;top:14px;width:96px;height:52px;border:1px solid #F2A93B;border-radius:3px;opacity:.6"></div>
+        </div>
+      </div>
+
+      <!-- Dock inferior -->
+      <section aria-label="Resultados" style="height:250px;flex:none;border-top:1px solid #1E232A;background:#0E1114;display:flex;flex-direction:column">
+        <div style="height:36px;display:flex;align-items:center;gap:2px;padding:0 10px;border-bottom:1px solid #1E232A">
+          <button class="a-btn" style="border-color:transparent;color:#EEF1F5;box-shadow:inset 0 -2px 0 #F2A93B;border-radius:0">Potencias</button>
+          <button class="a-btn" style="border-color:transparent">Bus y entrada</button>
+          <button class="a-btn" style="border-color:transparent">Corrientes</button>
+          <button class="a-btn" style="border-color:transparent">Consola</button>
+          <button class="a-btn" style="border-color:transparent">Diagnóstico <span style="font:400 11px 'IBM Plex Mono',monospace;color:#3FB27F">0</span></button>
+          <div style="flex:1"></div>
+          <span style="font:400 11px 'IBM Plex Mono',monospace;color:#7D8592;white-space:nowrap">20 000 pasos · 0 rechazados · 80 000 eval · 14 estados · 21 bloques</span>
+        </div>
+        <div style="flex:1;display:flex;gap:16px;padding:12px 16px;min-height:0">
+          <div style="flex:1;position:relative;min-width:0">
+            <svg width="100%" height="100%" viewBox="0 0 800 180" preserveAspectRatio="none" role="img" aria-label="Potencias frente al tiempo">
+              <g stroke="#1E232A" stroke-width="1"><path d="M40 20H800M40 70H800M40 120H800M40 160H800"></path></g>
+              <path d="M40 160L60 30L410 28L418 40L428 35L800 35" stroke="#F2A93B" stroke-width="2" fill="none" vector-effect="non-scaling-stroke"></path>
+              <path d="M40 160L62 34L410 32L420 44L430 39L800 39" stroke="#4DB5D9" stroke-width="2" fill="none" vector-effect="non-scaling-stroke"></path>
+              <path d="M40 158H800" stroke="#A78BFA" stroke-width="2" fill="none" vector-effect="non-scaling-stroke"></path>
+            </svg>
+            <div style="position:absolute;left:0;top:10px;font:400 10px 'IBM Plex Mono',monospace;color:#5D6471">50 kW</div>
+            <div style="position:absolute;left:0;bottom:16px;font:400 10px 'IBM Plex Mono',monospace;color:#5D6471">0</div>
+            <div style="position:absolute;right:0;bottom:0;font:400 10px 'IBM Plex Mono',monospace;color:#5D6471">t = 1.0 s</div>
+          </div>
+          <div style="width:200px;flex:none;display:flex;flex-direction:column;gap:8px;font-size:12px">
+            <label style="display:flex;align-items:center;gap:8px;color:#C9CED6"><input type="checkbox" checked aria-label="Arreglo FV: pot"><span style="width:12px;height:2px;background:#F2A93B"></span>Arreglo FV · pot</label>
+            <label style="display:flex;align-items:center;gap:8px;color:#C9CED6"><input type="checkbox" checked aria-label="P"><span style="width:12px;height:2px;background:#4DB5D9"></span>P, Q, FP · P</label>
+            <label style="display:flex;align-items:center;gap:8px;color:#C9CED6"><input type="checkbox" checked aria-label="Q"><span style="width:12px;height:2px;background:#A78BFA"></span>P, Q, FP · Q</label>
+            <div style="flex:1"></div>
+            <div style="display:flex;gap:6px"><button class="a-btn">PNG</button><button class="a-btn">SVG</button><button class="a-btn">CSV</button></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Inspector del bloque seleccionado -->
+    <aside aria-label="Inspector" style="width:280px;flex:none;border-left:1px solid #1E232A;background:#0E1114;display:flex;flex-direction:column">
+      <div style="padding:14px 16px 12px;border-bottom:1px solid #1E232A">
+        <div style="font-size:11px;font-weight:600;letter-spacing:.08em;color:#7D8592">BLOQUE SELECCIONADO</div>
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:6px">
+          <div style="font-size:18px;font-weight:600">Boost</div>
+          <div style="font-size:12px;color:#7D8592">Potencia · Convertidores</div>
+        </div>
+      </div>
+      <div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px;border-bottom:1px solid #1E232A">
+        <div style="display:grid;grid-template-columns:96px 1fr 24px;align-items:center;gap:8px">
+          <label class="a-lbl" for="a-l">Inductancia L</label><input id="a-l" class="a-in" value="0.001"><span class="a-lbl">H</span>
+        </div>
+        <div style="display:grid;grid-template-columns:96px 1fr 24px;align-items:center;gap:8px">
+          <label class="a-lbl" for="a-mod">Modelo</label><input id="a-mod" class="a-in" value="promediado"><span></span>
+        </div>
+        <div>
+          <div class="a-lbl" style="margin-bottom:6px">Puertos</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;font:400 11px 'IBM Plex Mono',monospace">
+            <span style="border:1px solid #2A3039;border-radius:4px;padding:2px 6px;color:#4DB5D9">▸ d</span>
+            <span style="border:1px solid #2A3039;border-radius:4px;padding:2px 6px;color:#F2A93B">■ in</span>
+            <span style="border:1px solid #2A3039;border-radius:4px;padding:2px 6px;color:#F2A93B">■ out</span>
+            <span style="border:1px solid #2A3039;border-radius:4px;padding:2px 6px;color:#F2A93B">■ com</span>
+            <span style="border:1px solid #2A3039;border-radius:4px;padding:2px 6px;color:#4DB5D9">▸ iL</span>
+          </div>
+        </div>
+        <button class="a-btn" style="align-self:flex-start">Ver y editar código</button>
+      </div>
+      <div style="padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+        <div style="font-size:11px;font-weight:600;letter-spacing:.08em;color:#7D8592">ÚLTIMA SIMULACIÓN</div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:13px"><span style="width:7px;height:7px;border-radius:4px;background:#3FB27F"></span>Completada sin avisos</div>
+        <div style="display:grid;grid-template-columns:1fr auto;gap:6px 12px;font-size:12px">
+          <span class="a-lbl">Solver</span><span style="font-family:'IBM Plex Mono',monospace">rk4 · paso fijo</span>
+          <span class="a-lbl">Paso</span><span style="font-family:'IBM Plex Mono',monospace">5e-5 s</span>
+          <span class="a-lbl">Huella</span><span style="font-family:'IBM Plex Mono',monospace;color:#98A0AC">sha256 [HASH]</span>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Barra de estado -->
+  <footer style="height:24px;flex:none;display:flex;align-items:center;gap:16px;padding:0 12px;border-top:1px solid #1E232A;background:#0E1114;font:400 11px 'IBM Plex Mono',monospace;color:#7D8592">
+    <span>Python [VERSIÓN] · NumPy · SciPy · pvlib</span><span style="flex:1"></span><span>12 bloques visibles</span><span>Tema: Instrumento</span>
+  </footer>
+</div>
+</body>
+</html>

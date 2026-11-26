@@ -46,6 +46,8 @@ pub struct Calculo {
     enfocar: bool,
     bajar: bool,
     pub aviso: String,
+    /// Script con cambios sin guardar cuyo cierre espera confirmación
+    cerrar_pendiente: Option<usize>,
 }
 
 const GUION_INICIAL: &str = "# Ejemplo: álgebra lineal, FFT, interpolación, optimización y gráficas.
@@ -98,6 +100,7 @@ impl Calculo {
             id_guardar: None,
             id_escribir: None,
             escritura_fallida: false,
+            cerrar_pendiente: None,
             tabla: None,
             enfocar: false,
             bajar: false,
@@ -305,9 +308,13 @@ impl Calculo {
             self.activo = activa;
         }
         if cerrar {
-            self.guiones.remove(self.activo);
-            self.activo = self.activo.min(self.guiones.len() - 1);
+            if self.guiones[self.activo].sucio {
+                self.cerrar_pendiente = Some(self.activo);
+            } else {
+                self.cerrar_guion(self.activo);
+            }
         }
+        self.confirmar_cierre(ui.ctx());
         if abrir {
             if let Some(r) = rfd::FileDialog::new().add_filter("Python", &["py"]).pick_file() {
                 if let Ok(t) = std::fs::read_to_string(&r) {
@@ -322,6 +329,44 @@ impl Calculo {
         }
         if ejecutar {
             self.correr_guion(motor);
+        }
+    }
+
+    fn cerrar_guion(&mut self, i: usize) {
+        if self.guiones.len() > 1 && i < self.guiones.len() {
+            self.guiones.remove(i);
+            self.activo = self.activo.min(self.guiones.len() - 1);
+        }
+    }
+
+    /// Pide confirmación antes de descartar los cambios sin guardar de un script.
+    fn confirmar_cierre(&mut self, ctx: &egui::Context) {
+        let Some(i) = self.cerrar_pendiente else { return };
+        let nombre = self.guiones.get(i).map(|g| g.nombre.clone()).unwrap_or_default();
+        let mut decision = None;
+        let r = egui::Modal::new(egui::Id::new("cerrar_guion")).show(ctx, |ui| {
+            ui.set_width(420.0);
+            ui.label(egui::RichText::new(format!("¿Cerrar «{nombre}» sin guardar?")).size(16.0).family(tema::semi()));
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Tiene cambios que no se han guardado y se perderán.").color(tema::p().texto_2));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if tema::boton_principal(ui, "Cerrar sin guardar").clicked() {
+                    decision = Some(true);
+                }
+                if ui.button("Cancelar").clicked() {
+                    decision = Some(false);
+                }
+            });
+        });
+        if r.should_close() {
+            decision.get_or_insert(false);
+        }
+        if let Some(si) = decision {
+            self.cerrar_pendiente = None;
+            if si {
+                self.cerrar_guion(i);
+            }
         }
     }
 

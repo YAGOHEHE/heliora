@@ -575,6 +575,7 @@ impl Fig2D {
                 }
                 let scroll = ui.input(|i| i.smooth_scroll_delta.y);
                 if scroll != 0.0 {
+                    crate::ui::consumir_rueda(ui);
                     let k = (-scroll as f64 * 0.003).exp();
                     let nx0 = xv - (xv - x0) * k;
                     let nx1 = xv + (x1 - xv) * k;
@@ -721,8 +722,42 @@ impl Fig2D {
             s += &format!("<line x1=\"{}\" x2=\"{}\" y1=\"{y}\" y2=\"{y}\" stroke=\"#{:02x}{:02x}{:02x}\" stroke-width=\"2\"/><text x=\"{}\" y=\"{}\" font-size=\"12\">{}</text>\n", r - 170.0, r - 150.0, c.r(), c.g(), c.b(), r - 145.0, y + 4.0, esc(&se.nombre));
             y += 16.0;
         }
+        if !self.nota.is_empty() {
+            // La nota explica por qué faltan series: viaja con la figura exportada, centrada en el área
+            let lineas = partir_texto(&self.nota, 80);
+            let alto = lineas.len() as f64 * 16.0 + 12.0;
+            let (cx, cy) = ((l + r) / 2.0, (t + b) / 2.0);
+            s += &format!(
+                "<rect x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"{alto:.1}\" fill=\"#f6f6f6\" stroke=\"#bbb\"/>\n",
+                l + (r - l) * 0.08,
+                cy - alto / 2.0,
+                (r - l) * 0.84
+            );
+            for (k, texto) in lineas.iter().enumerate() {
+                s += &format!(
+                    "<text x=\"{cx:.1}\" y=\"{:.1}\" text-anchor=\"middle\" font-size=\"13\" fill=\"#444\">{}</text>\n",
+                    cy - alto / 2.0 + 20.0 + k as f64 * 16.0,
+                    esc(texto)
+                );
+            }
+        }
         s + "</svg>\n"
     }
+}
+
+/// Parte un texto en líneas de como mucho `ancho` caracteres, sin cortar palabras.
+fn partir_texto(texto: &str, ancho: usize) -> Vec<String> {
+    let mut lineas: Vec<String> = vec![];
+    for palabra in texto.split_whitespace() {
+        match lineas.last_mut() {
+            Some(l) if l.chars().count() + 1 + palabra.chars().count() <= ancho => {
+                l.push(' ');
+                l.push_str(palabra);
+            }
+            _ => lineas.push(palabra.to_string()),
+        }
+    }
+    lineas
 }
 
 fn esc(t: &str) -> String {
@@ -798,6 +833,7 @@ impl Fig3D {
         if resp.hovered() {
             let sc = ui.input(|i| i.smooth_scroll_delta.y);
             if sc != 0.0 {
+                crate::ui::consumir_rueda(ui);
                 self.escala = (self.escala * (sc * 0.003).exp()).clamp(0.3, 4.0);
             }
         }
@@ -1194,5 +1230,17 @@ mod pruebas {
         assert_eq!(etiqueta_log(100.0), "100");
         assert_eq!(etiqueta_log(10_000.0), "10k");
         assert_eq!(etiqueta_log(2_000_000.0), "2M");
+    }
+
+    #[test]
+    fn la_nota_viaja_con_el_svg_exportado() {
+        let mut f = figura(vec![]);
+        f.nota = "Sin días válidos para INV-1: cada día necesita al menos 4 lecturas con irradiancia mayor de 300 W/m² y el inversor en servicio.".into();
+        let svg = f.a_svg();
+        assert!(svg.contains("Sin días válidos para INV-1"));
+        assert!(svg.contains("en servicio."));
+        let lineas = partir_texto(&f.nota, 80);
+        assert!(lineas.len() > 1 && lineas.iter().all(|l| l.chars().count() <= 80));
+        assert_eq!(lineas.join(" "), f.nota);
     }
 }

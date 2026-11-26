@@ -19,3 +19,15 @@ engine/ultima_validacion.json
 .claude/
 CLAUDE.md
 historial/
+
+# Registros y estado locales de herramientas
+agent-session.jsonl
+build-activity.log
+craft.json
+feed.json
+usage.json
+capture/
+inbox/
+pinned/
+investigation.cany/
+desktop.ini
