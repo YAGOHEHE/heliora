@@ -1,7 +1,6 @@
-//! Identidad visual «Sala de control»: modo oscuro «Instrumento» y modo claro «Laboratorio».
-//! Mismos nombres de color en los dos modos; todo widget lee su color de `p()` (la paleta del
-//! modo activo). Un color, un papel: el ámbar para la acción principal, la selección y los cables
-//! eléctricos; el azul para las señales; OK / ALERTA / FALLA solo para estados (con forma y texto).
+//! Identidad visual FLACS: interfaz monocroma, radio 0 y sin sombras, en tema claro y oscuro.
+//! Mismos nombres de color en los dos temas; todo widget lee su color de `p()` (la paleta del
+//! tema activo). El color solo aparece en los puntos de estado y en las gráficas.
 use egui::{Color32, CornerRadius, FontFamily, FontId, Margin, Pos2, Rect, Shadow, Stroke, TextStyle, Vec2};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -28,7 +27,7 @@ impl Modo {
     /// Nombre del modo en la interfaz.
     pub fn nombre(self) -> &'static str {
         match self {
-            Modo::Oscuro => "Instrumento",
+            Modo::Oscuro => "Oscuro",
             Modo::Claro => "Claro",
         }
     }
@@ -58,8 +57,6 @@ pub struct Paleta {
     pub sobre_acento: Color32,
     /// Fondo del módulo activo en el riel y de los elementos seleccionados.
     pub acento_fondo: Color32,
-    /// Texto sobre `acento_fondo` (pestaña lateral o fila activa).
-    pub acento_texto: Color32,
     /// Fondo secundario muy suave: filas alternas de las tablas.
     pub campo_alt: Color32,
     /// Enlaces.
@@ -71,6 +68,10 @@ pub struct Paleta {
     pub falla: Color32,
     pub falla_fondo: Color32,
     pub rejilla: Color32,
+    /// Chip neutro y chip activo (o que identifica un equipo), con su texto.
+    pub chip: Color32,
+    pub chip_activo: Color32,
+    pub sobre_chip_activo: Color32,
     pub series: [Color32; 5],
 }
 
@@ -79,60 +80,67 @@ const fn c(r: u8, g: u8, b: u8) -> Color32 {
 }
 
 pub const OSCURO: Paleta = Paleta {
-    fondo: c(11, 13, 16),           // #0B0D10
-    panel: c(14, 17, 20),           // #0E1114
-    campo: c(17, 21, 26),           // #11151A
-    nodo: c(20, 24, 29),            // #14181D
-    realce: c(23, 27, 33),          // #171B21
-    linea: c(30, 35, 42),           // #1E232A
-    borde: c(38, 43, 51),           // #262B33
-    linea_fuerte: c(42, 48, 57),    // #2A3039
-    texto: c(228, 231, 236),        // #E4E7EC
-    texto_2: c(152, 160, 172),      // #98A0AC
-    texto_3: c(125, 133, 146),      // #7D8592
-    acento: c(242, 169, 59),        // #F2A93B
-    sobre_acento: c(26, 18, 5),     // #1A1205
-    acento_fondo: c(26, 23, 18),    // #1A1712
-    acento_texto: c(255, 196, 107), // #FFC46B
-    campo_alt: c(16, 19, 23),       // #101317
-    acento_2: c(255, 196, 107),     // #FFC46B
-    senal: c(77, 181, 217),         // #4DB5D9
-    electrica: c(242, 169, 59),     // #F2A93B
-    ok: c(63, 178, 127),            // #3FB27F
-    alerta: c(240, 210, 78),        // #F0D24E
-    falla: c(242, 90, 95),          // #F25A5F
-    falla_fondo: c(58, 23, 25),     // #3A1719
-    rejilla: c(28, 33, 40),         // #1C2128
-    series: [c(242, 169, 59), c(77, 181, 217), c(167, 139, 250), c(63, 191, 174), c(159, 180, 200)],
+    fondo: c(0, 0, 0),              // #000000
+    panel: c(18, 18, 18),           // #121212
+    campo: c(30, 30, 30),           // #1E1E1E
+    nodo: c(18, 18, 18),            // #121212
+    realce: c(42, 42, 42),          // #2A2A2A
+    linea: c(42, 42, 42),           // #2A2A2A
+    borde: c(58, 58, 58),           // #3A3A3A
+    linea_fuerte: c(58, 58, 58),    // #3A3A3A
+    texto: c(237, 237, 237),        // #EDEDED
+    texto_2: c(163, 163, 163),      // #A3A3A3
+    texto_3: c(163, 163, 163),      // #A3A3A3
+    acento: c(255, 255, 255),       // #FFFFFF
+    sobre_acento: c(0, 0, 0),       // #000000
+    acento_fondo: c(42, 42, 42),    // #2A2A2A
+    campo_alt: c(22, 22, 22),       // #161616
+    acento_2: c(237, 237, 237),     // #EDEDED
+    senal: c(163, 163, 163),        // #A3A3A3
+    electrica: c(237, 237, 237),    // #EDEDED
+    ok: c(62, 155, 79),             // #3E9B4F
+    alerta: c(229, 103, 92),        // #E5675C
+    falla: c(229, 103, 92),         // #E5675C
+    falla_fondo: c(58, 26, 24),     // #3A1A18
+    rejilla: c(38, 38, 38),         // #262626
+    chip: c(58, 58, 58),            // #3A3A3A
+    chip_activo: c(217, 217, 217),  // #D9D9D9
+    sobre_chip_activo: c(0, 0, 0),  // #000000
+    series: [c(242, 169, 59), c(77, 181, 217), c(164, 139, 240), c(60, 194, 177), c(156, 163, 175)],
 };
 
 pub const CLARO: Paleta = Paleta {
-    fondo: c(243, 244, 246),        // #F3F4F6
-    panel: c(255, 255, 255),        // #FFFFFF
-    campo: c(246, 247, 249),        // #F6F7F9
-    nodo: c(255, 255, 255),         // #FFFFFF
-    realce: c(238, 240, 243),       // #EEF0F3
-    linea: c(227, 230, 234),        // #E3E6EA
-    borde: c(213, 217, 223),        // #D5D9DF
-    linea_fuerte: c(205, 210, 217), // #CDD2D9
-    texto: c(27, 32, 40),           // #1B2028
-    texto_2: c(95, 104, 117),       // #5F6875
-    texto_3: c(95, 104, 117),       // #5F6875
-    acento: c(201, 122, 6),         // #C97A06
-    sobre_acento: c(26, 18, 5),     // #1A1205
-    acento_fondo: c(253, 241, 220), // #FDF1DC
-    acento_texto: c(122, 74, 0),    // #7A4A00
-    campo_alt: c(251, 251, 252),    // #FBFBFC
-    acento_2: c(154, 93, 0),        // #9A5D00
-    senal: c(28, 127, 176),         // #1C7FB0
-    electrica: c(201, 122, 6),      // #C97A06
-    ok: c(30, 158, 99),             // #1E9E63
-    alerta: c(154, 98, 0),          // #9A6200
-    falla: c(196, 43, 43),          // #C42B2B
-    falla_fondo: c(251, 228, 228),  // #FBE4E4
-    rejilla: c(211, 216, 222),      // #D3D8DE
-    series: [c(201, 122, 6), c(28, 127, 176), c(124, 92, 214), c(15, 140, 126), c(91, 100, 114)],
+    fondo: c(255, 255, 255),          // #FFFFFF
+    panel: c(255, 255, 255),          // #FFFFFF
+    campo: c(242, 242, 242),          // #F2F2F2
+    nodo: c(255, 255, 255),           // #FFFFFF
+    realce: c(232, 232, 232),         // #E8E8E8
+    linea: c(224, 224, 224),          // #E0E0E0
+    borde: c(189, 189, 189),          // #BDBDBD
+    linea_fuerte: c(189, 189, 189),   // #BDBDBD
+    texto: c(26, 26, 26),             // #1A1A1A
+    texto_2: c(92, 92, 92),           // #5C5C5C
+    texto_3: c(92, 92, 92),           // #5C5C5C
+    acento: c(0, 0, 0),               // #000000
+    sobre_acento: c(255, 255, 255),   // #FFFFFF
+    acento_fondo: c(232, 232, 232),   // #E8E8E8
+    campo_alt: c(250, 250, 250),      // #FAFAFA
+    acento_2: c(26, 26, 26),          // #1A1A1A
+    senal: c(92, 92, 92),             // #5C5C5C
+    electrica: c(0, 0, 0),            // #000000
+    ok: c(62, 155, 79),               // #3E9B4F
+    alerta: c(229, 103, 92),          // #E5675C
+    falla: c(229, 103, 92),           // #E5675C
+    falla_fondo: c(251, 233, 231),    // #FBE9E7
+    rejilla: c(238, 238, 238),        // #EEEEEE
+    chip: c(217, 217, 217),           // #D9D9D9
+    chip_activo: c(85, 85, 85),       // #555555
+    sobre_chip_activo: c(255, 255, 255), // #FFFFFF
+    series: [c(201, 122, 6), c(28, 127, 176), c(124, 92, 214), c(15, 140, 126), c(75, 85, 99)],
 };
+
+/// Negro de la barra lateral de la portada y de la barra de estado (igual en los dos temas).
+pub const NEGRO: Color32 = c(0, 0, 0);
 
 static CLARO_ACTIVO: AtomicBool = AtomicBool::new(false);
 
@@ -157,16 +165,17 @@ pub fn p() -> &'static Paleta {
     paleta(modo())
 }
 
-/// Radio de botones y campos (6 px) y de ventanas, nodos y tarjetas (8 px).
+/// Radio de botones y campos: el estilo no redondea esquinas.
 pub fn radio() -> u8 {
-    6
+    0
 }
+/// Radio de ventanas, nodos y tarjetas.
 pub fn radio_ventana() -> u8 {
-    8
+    0
 }
 
-/// Radio de las fichas y etiquetas pequeñas (4 px).
-pub const RADIO_FICHA: u8 = 4;
+/// Radio de las fichas y etiquetas pequeñas.
+pub const RADIO_FICHA: u8 = 0;
 
 /// Color de un tipo de orden de mantenimiento: limpieza, inspección, ensayo y mantenimiento anual
 /// usan las series 1 a 4; cualquier otro tipo, la quinta.
@@ -199,15 +208,12 @@ pub fn aplicar(ctx: &egui::Context, m: Modo) {
     v.faint_bg_color = p.campo;
     v.code_bg_color = p.fondo;
     v.hyperlink_color = p.acento_2;
-    v.selection.bg_fill = p.acento.linear_multiply(0.30);
+    v.selection.bg_fill = if m == Modo::Claro { c(200, 200, 200) } else { c(80, 80, 80) };
     v.selection.stroke = Stroke::new(1.0_f32, p.acento);
     v.window_stroke = Stroke::new(1.0_f32, p.borde);
-    v.window_corner_radius = CornerRadius::same(8);
+    v.window_corner_radius = CornerRadius::ZERO;
     v.menu_corner_radius = CornerRadius::same(radio_ventana());
-    v.window_shadow = match m {
-        Modo::Oscuro => Shadow { offset: [0, 4], blur: 16, spread: 0, color: Color32::from_black_alpha(120) },
-        Modo::Claro => Shadow { offset: [0, 4], blur: 14, spread: 0, color: Color32::from_rgba_unmultiplied(16, 24, 40, 28) },
-    };
+    v.window_shadow = Shadow::NONE;
     v.popup_shadow = v.window_shadow;
     let w = &mut v.widgets;
     w.noninteractive.bg_fill = p.panel;
@@ -237,31 +243,33 @@ pub fn aplicar(ctx: &egui::Context, m: Modo) {
         s.spacing.button_padding = Vec2::new(10.0, 4.0);
         s.spacing.interact_size.y = 26.0;
         s.spacing.window_margin = Margin::same(12);
-        s.text_styles.insert(TextStyle::Heading, FontId::new(18.0, FontFamily::Name("titulo".into())));
+        s.text_styles.insert(TextStyle::Heading, FontId::new(20.0, FontFamily::Name("negrita".into())));
         s.text_styles.insert(TextStyle::Body, FontId::new(13.0, FontFamily::Proportional));
         s.text_styles.insert(TextStyle::Button, FontId::new(13.0, FontFamily::Proportional));
-        s.text_styles.insert(TextStyle::Small, FontId::new(11.5, FontFamily::Proportional));
+        s.text_styles.insert(TextStyle::Small, FontId::new(12.0, FontFamily::Proportional));
         s.text_styles.insert(TextStyle::Monospace, FontId::new(12.0, FontFamily::Monospace));
     });
 }
 
-/// IBM Plex Sans + IBM Plex Mono (OFL), incrustadas. Una fuente del sistema queda de respaldo
-/// para los símbolos que Plex no tiene (∫, Σ, ω...).
+/// Roboto (400, 500 y 700) y Roboto Mono (400 y 500), con licencia OFL e incrustadas. Una fuente
+/// del sistema queda de respaldo para los símbolos que Roboto no tiene (∫, Σ, ω...).
 fn configurar_fuentes(ctx: &egui::Context) {
     let mut f = egui::FontDefinitions::default();
-    let fuentes: [(&str, &'static [u8]); 4] = [
-        ("plex", include_bytes!("../fuentes/IBMPlexSans-Regular.ttf")),
-        ("plex_semi", include_bytes!("../fuentes/IBMPlexSans-SemiBold.ttf")),
-        ("plex_mono", include_bytes!("../fuentes/IBMPlexMono-Regular.ttf")),
-        ("plex_mono_med", include_bytes!("../fuentes/IBMPlexMono-Medium.ttf")),
+    let fuentes: [(&str, &'static [u8]); 5] = [
+        ("roboto", include_bytes!("../fuentes/Roboto-Regular.ttf")),
+        ("roboto_medio", include_bytes!("../fuentes/Roboto-Medium.ttf")),
+        ("roboto_negrita", include_bytes!("../fuentes/Roboto-Bold.ttf")),
+        ("roboto_mono", include_bytes!("../fuentes/RobotoMono-Regular.ttf")),
+        ("roboto_mono_medio", include_bytes!("../fuentes/RobotoMono-Medium.ttf")),
     ];
     for (n, d) in fuentes {
         f.font_data.insert(n.into(), egui::FontData::from_static(d).into());
     }
-    f.families.get_mut(&FontFamily::Proportional).unwrap().insert(0, "plex".into());
-    f.families.get_mut(&FontFamily::Monospace).unwrap().insert(0, "plex_mono".into());
-    let mut titulo = vec!["plex_semi".to_string(), "plex".to_string()];
-    let mut dato = vec!["plex_mono_med".to_string(), "plex_mono".to_string()];
+    f.families.get_mut(&FontFamily::Proportional).unwrap().insert(0, "roboto".into());
+    f.families.get_mut(&FontFamily::Monospace).unwrap().insert(0, "roboto_mono".into());
+    let mut titulo = vec!["roboto_medio".to_string(), "roboto".to_string()];
+    let mut negrita = vec!["roboto_negrita".to_string(), "roboto".to_string()];
+    let mut dato = vec!["roboto_mono_medio".to_string(), "roboto_mono".to_string()];
     for ruta in [
         "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
         "/System/Library/Fonts/Supplemental/STIXGeneral.otf",
@@ -272,28 +280,38 @@ fn configurar_fuentes(ctx: &egui::Context) {
             f.font_data.insert("respaldo".into(), egui::FontData::from_owned(datos).into());
             f.families.get_mut(&FontFamily::Proportional).unwrap().push("respaldo".into());
             f.families.get_mut(&FontFamily::Monospace).unwrap().push("respaldo".into());
-            titulo.push("respaldo".into());
-            dato.push("respaldo".into());
+            for v in [&mut titulo, &mut negrita, &mut dato] {
+                v.push("respaldo".into());
+            }
             break;
         }
     }
     // Las fuentes por defecto de egui siguen detrás, como último recurso
     for extra in f.families[&FontFamily::Proportional].clone() {
-        if !titulo.contains(&extra) {
-            titulo.push(extra.clone());
-        }
-        if !dato.contains(&extra) {
-            dato.push(extra);
+        for v in [&mut titulo, &mut negrita, &mut dato] {
+            if !v.contains(&extra) {
+                v.push(extra.clone());
+            }
         }
     }
     f.families.insert(FontFamily::Name("titulo".into()), titulo);
+    f.families.insert(FontFamily::Name("negrita".into()), negrita);
     f.families.insert(FontFamily::Name("dato".into()), dato);
     ctx.set_fonts(f);
 }
 
-/// Familia semibold de Plex Sans (títulos, marca, nodos).
+/// Familia de peso medio de Roboto (500): títulos de tarjeta, marca, nodos.
 pub fn semi() -> FontFamily {
     FontFamily::Name("titulo".into())
+}
+
+/// Familia en negrita de Roboto (700): títulos de pantalla y de panel.
+pub fn negrita() -> FontFamily {
+    FontFamily::Name("negrita".into())
+}
+
+pub fn fuente_negrita(tam: f32) -> FontId {
+    FontId::new(tam, negrita())
 }
 
 pub fn fuente_semi(tam: f32) -> FontId {
@@ -310,10 +328,10 @@ pub fn titulo(ui: &mut egui::Ui, t: &str) {
     ui.label(egui::RichText::new(txt.trim_end()).family(semi()).size(11.0).color(p().texto_3));
 }
 
-/// Única acción primaria por pantalla (p. ej. «Simular»).
+/// Única acción primaria por pantalla: negro con texto blanco (blanco con texto negro en tema oscuro), 34 px.
 pub fn boton_principal(ui: &mut egui::Ui, t: &str) -> egui::Response {
     let p = p();
-    ui.add(egui::Button::new(egui::RichText::new(t).color(p.sobre_acento).family(semi())).fill(p.acento).stroke(Stroke::new(1.0_f32, p.acento)))
+    ui.add(egui::Button::new(egui::RichText::new(t).color(p.sobre_acento).family(semi())).fill(p.acento).stroke(Stroke::new(1.0_f32, p.acento)).corner_radius(0).min_size(Vec2::new(0.0, 34.0)))
 }
 
 /// Grosor de cable del lienzo: eléctrico 2 px, señal 1,5 px; en falla, 1,75 px discontinuo.
@@ -374,24 +392,10 @@ pub fn cuadrado(pt: &egui::Painter, centro: Pos2, color: Color32) {
     pt.rect_filled(Rect::from_center_size(centro, Vec2::splat(8.0)), 2.0, color);
 }
 
-/// El logotipo: un sol que sale sobre el horizonte, en trazo de ACENTO (rejilla de 26 unidades).
+/// El logotipo: `diseno/icono/heliora_icono_pequeno.svg` en tema claro y la misma imagen con blanco
+/// y negro intercambiados en tema oscuro.
 pub fn logo(pt: &egui::Painter, r: Rect) {
-    let s = r.width().min(r.height()) / 26.0;
-    let o = r.center() - Vec2::splat(13.0 * s);
-    let q = |x: f32, y: f32| Pos2::new(o.x + x * s, o.y + y * s);
-    let t = Stroke::new(1.6 * s, p().acento);
-    let arco: Vec<Pos2> = (0..=24)
-        .map(|i| {
-            let a = std::f32::consts::PI * (1.0 + i as f32 / 24.0);
-            q(13.0 + 9.0 * a.cos(), 18.0 + 9.0 * a.sin())
-        })
-        .collect();
-    pt.add(egui::Shape::line(arco, t));
-    for (a, b) in [((13.0, 4.0), (13.0, 7.0)), ((5.5, 7.5), (7.5, 9.5)), ((20.5, 7.5), (18.5, 9.5)), ((2.0, 18.0), (24.0, 18.0)), ((6.0, 22.0), (20.0, 22.0))] {
-        pt.line_segment([q(a.0, a.1), q(b.0, b.1)], t);
-        pt.circle_filled(q(a.0, a.1), 0.8 * s, t.color);
-        pt.circle_filled(q(b.0, b.1), 0.8 * s, t.color);
-    }
+    crate::iconos::logo(pt, r, modo() == Modo::Oscuro);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -420,101 +424,6 @@ pub const MODULOS: [&[(Modulo, &str)]; 5] = [
 /// Nombre de un módulo en la interfaz.
 pub fn nombre_modulo(m: Modulo) -> &'static str {
     MODULOS.iter().flat_map(|g| g.iter()).find(|(x, _)| *x == m).map(|(_, n)| *n).unwrap_or("")
-}
-
-/// Iconos de la barra lateral: trazo uniforme de 1,5 px con extremos redondeados.
-pub fn icono(pt: &egui::Painter, r: Rect, m: Modulo, color: Color32) {
-    let c = r.center();
-    let s = r.width().min(r.height()) / 2.0;
-    let t = Stroke::new(1.5_f32, color);
-    let q = |x: f32, y: f32| Pos2::new(c.x + x * s, c.y + y * s);
-    // Segmento con extremos redondeados: la línea y un punto de radio w/2 en cada extremo
-    let seg = |a: Pos2, b: Pos2| {
-        pt.line_segment([a, b], t);
-        pt.circle_filled(a, 0.75, color);
-        pt.circle_filled(b, 0.75, color);
-    };
-    let caja = |a: Pos2, b: Pos2, radio: f32| {
-        pt.rect_stroke(Rect::from_min_max(a, b), radio, t, egui::StrokeKind::Middle);
-    };
-    match m {
-        Modulo::Inicio => {
-            seg(q(-0.8, 0.0), q(0.0, -0.8));
-            seg(q(0.0, -0.8), q(0.8, 0.0));
-            caja(q(-0.55, 0.0), q(0.55, 0.8), 1.0);
-        }
-        Modulo::Calculo => {
-            caja(q(-0.85, -0.7), q(0.85, 0.7), 2.0);
-            seg(q(-0.55, -0.3), q(-0.15, 0.0));
-            seg(q(-0.15, 0.0), q(-0.55, 0.3));
-            seg(q(0.05, 0.35), q(0.55, 0.35));
-        }
-        Modulo::Bloques => {
-            caja(q(-0.9, -0.75), q(-0.15, -0.1), 1.5);
-            caja(q(0.15, 0.1), q(0.9, 0.75), 1.5);
-            seg(q(-0.5, -0.1), q(-0.5, 0.42));
-            seg(q(-0.5, 0.42), q(0.15, 0.42));
-        }
-        Modulo::Potencia => {
-            let puntos = [q(0.15, -0.9), q(-0.45, 0.1), q(0.0, 0.1), q(-0.15, 0.9), q(0.5, -0.2), q(0.05, -0.2), q(0.15, -0.9)];
-            for w in puntos.windows(2) {
-                seg(w[0], w[1]);
-            }
-        }
-        Modulo::Fotovoltaica => {
-            pt.circle_stroke(q(0.0, 0.0), s * 0.4, t);
-            for i in 0..8 {
-                let a = i as f32 * std::f32::consts::FRAC_PI_4;
-                seg(q(a.cos() * 0.6, a.sin() * 0.6), q(a.cos() * 0.9, a.sin() * 0.9));
-            }
-        }
-        Modulo::Estadistica => {
-            for (i, a) in [0.35, 0.8, 0.5, 0.2].iter().enumerate() {
-                let x = -0.8 + i as f32 * 0.42;
-                caja(q(x, 0.8 - a * 1.6), q(x + 0.3, 0.8), 0.5);
-            }
-        }
-        Modulo::Aprendizaje => {
-            for (x, y) in [(-0.7, -0.6), (-0.7, 0.6), (0.0, 0.0), (0.7, -0.6), (0.7, 0.6)] {
-                pt.circle_stroke(q(x, y), s * 0.17, t);
-            }
-            for (x, y) in [(-0.7, -0.6), (-0.7, 0.6), (0.7, -0.6), (0.7, 0.6)] {
-                seg(q(x * 0.75, y * 0.75), q(x * 0.25, y * 0.25));
-            }
-        }
-        Modulo::Mantenimiento => {
-            caja(q(-0.8, -0.6), q(0.8, 0.8), 1.5);
-            seg(q(-0.8, -0.2), q(0.8, -0.2));
-            seg(q(-0.4, -0.85), q(-0.4, -0.4));
-            seg(q(0.4, -0.85), q(0.4, -0.4));
-            seg(q(-0.4, 0.3), q(-0.1, 0.55));
-            seg(q(-0.1, 0.55), q(0.4, 0.05));
-        }
-        Modulo::Validacion => {
-            pt.circle_stroke(q(0.0, 0.0), s * 0.85, t);
-            seg(q(-0.4, 0.05), q(-0.1, 0.38));
-            seg(q(-0.1, 0.38), q(0.45, -0.35));
-        }
-        Modulo::Referencia => {
-            caja(q(-0.7, -0.85), q(0.7, 0.85), 1.5);
-            seg(q(-0.4, -0.4), q(0.4, -0.4));
-            seg(q(-0.4, 0.0), q(0.4, 0.0));
-            seg(q(-0.4, 0.4), q(0.15, 0.4));
-        }
-    }
-}
-
-/// Icono de ajustes: un engranaje esquemático.
-pub fn icono_ajustes(pt: &egui::Painter, r: Rect, color: Color32) {
-    let c = r.center();
-    let s = r.width().min(r.height()) / 2.0;
-    let t = Stroke::new(1.5_f32, color);
-    pt.circle_stroke(c, s * 0.28, t);
-    for i in 0..8 {
-        let a = i as f32 * std::f32::consts::FRAC_PI_4;
-        let d = Vec2::new(a.cos(), a.sin());
-        pt.line_segment([c + d * s * 0.55, c + d * s * 0.9], t);
-    }
 }
 
 /// Un grupo con superficie PANEL, borde LINEA de 1 px y radio de ventana.

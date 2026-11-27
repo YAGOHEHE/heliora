@@ -8,6 +8,7 @@ mod calculo;
 mod comandos;
 mod grafica;
 mod herramientas;
+mod iconos;
 mod motor;
 mod plan;
 mod tema;

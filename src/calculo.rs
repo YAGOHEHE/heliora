@@ -1,12 +1,14 @@
 //! Módulo 1: consola interactiva, editor de scripts, variables y figuras.
 use crate::app::{Compartido, Variable};
 use crate::grafica::{self, Figura};
+use crate::iconos::Icono;
 use crate::motor::Motor;
 use crate::tema;
 use crate::ui as interfaz;
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Align2, FontId, Key, Pos2, Rect, Sense, Stroke, Vec2};
 use serde_json::{json, Value};
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 
 enum Linea {
@@ -48,6 +50,11 @@ pub struct Calculo {
     pub aviso: String,
     /// Script con cambios sin guardar cuyo cierre espera confirmación
     cerrar_pendiente: Option<usize>,
+    /// Variable seleccionada en la tabla, la que exporta la cinta
+    seleccion: Option<String>,
+    pide_importar: bool,
+    pide_borrar: bool,
+    pedido_figura: Option<grafica::Accion>,
 }
 
 const GUION_INICIAL: &str = "# Ejemplo: álgebra lineal, FFT, interpolación, optimización y gráficas.
@@ -84,6 +91,52 @@ surf(X, Y, np.sin(X) * np.cos(Y), 'Superficie')
 ";
 
 impl Calculo {
+    /// Cinta de Cálculo: script, ejecución, espacio de trabajo y figuras.
+    ///
+    /// Las acciones que necesitan el estado compartido (importar, borrar, exportar figuras) quedan
+    /// pedidas y las atiende `ui`.
+    pub fn cinta(&mut self, ui: &mut egui::Ui, motor: &mut Motor) {
+        interfaz::grupo_cinta(ui, "Script", |ui| {
+            if interfaz::boton_cinta(ui, Icono::NuevoDocumento, "Nuevo script", false).clicked() {
+                self.nuevo_guion();
+            }
+            match interfaz::columna_cinta(ui, &[(Icono::Abrir, "Abrir", true), (Icono::Guardar, "Guardar", true), (Icono::GuardarComo, "Guardar como", true)]) {
+                Some(0) => self.abrir_guion(),
+                Some(1) => self.guardar_guion(motor),
+                Some(2) => self.guardar_guion_como(motor),
+                _ => {}
+            }
+        });
+        interfaz::grupo_cinta(ui, "Ejecutar", |ui| {
+            if interfaz::boton_cinta(ui, Icono::Simular, "Ejecutar F9", false).clicked() {
+                self.correr_guion(motor);
+            }
+        });
+        interfaz::grupo_cinta(ui, "Espacio de trabajo", |ui| {
+            if interfaz::boton_cinta(ui, Icono::Importar, "Importar datos", false).clicked() {
+                self.pide_importar = true;
+            }
+            let con_seleccion = self.seleccion.is_some();
+            match interfaz::columna_cinta(ui, &[(Icono::Descargar, "Exportar variable", con_seleccion), (Icono::Borrar, "Borrar todo", true)]) {
+                Some(0) => {
+                    if let Some(nombre) = self.seleccion.clone() {
+                        Calculo::exportar_variable(motor, &nombre);
+                    }
+                }
+                Some(1) => self.pide_borrar = true,
+                _ => {}
+            }
+        });
+        interfaz::grupo_cinta(ui, "Figuras", |ui| {
+            let es_2d = self.figura_activa_2d();
+            match interfaz::columna_cinta(ui, &[(Icono::Imagen, "Exportar PNG", es_2d), (Icono::Imagen, "Exportar SVG", es_2d)]) {
+                Some(0) => self.pedido_figura = Some(grafica::Accion::Png(Rect::NOTHING)),
+                Some(1) => self.pedido_figura = Some(grafica::Accion::Svg),
+                _ => {}
+            }
+        });
+    }
+
     pub fn nuevo() -> Calculo {
         Calculo {
             historia: vec![Linea::Nota("Consola de Python con NumPy y SciPy. Escribe una expresión y pulsa Intro.".into())],
@@ -101,6 +154,10 @@ impl Calculo {
             id_escribir: None,
             escritura_fallida: false,
             cerrar_pendiente: None,
+            seleccion: None,
+            pide_importar: false,
+            pide_borrar: false,
+            pedido_figura: None,
             tabla: None,
             enfocar: false,
             bajar: false,
@@ -217,6 +274,9 @@ impl Calculo {
     }
 
     pub fn correr_guion(&mut self, motor: &mut Motor) {
+        if self.id_eval.is_some() {
+            return;
+        }
         if let Some(g) = self.guiones.get(self.activo) {
             self.historia.push(Linea::Nota(format!("» ejecutando {}", g.nombre)));
             self.id_eval = Some(motor.llamar("ejecutar_script", json!({"codigo": g.texto, "ruta": g.ruta.as_ref().map(|r| r.display().to_string())})));
@@ -226,115 +286,119 @@ impl Calculo {
 
     pub fn ui(&mut self, ui: &mut egui::Ui, motor: &mut Motor, c: &mut Compartido) {
         let pal = tema::p();
-        egui::TopBottomPanel::top("pestanas_calculo")
-            .exact_height(41.0)
-            .frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(20, 0)).stroke(Stroke::new(1.0_f32, pal.linea)))
-            .show_inside(ui, |ui| self.barra(ui, motor));
+        let borrar = std::mem::take(&mut self.pide_borrar);
+        let importar = std::mem::take(&mut self.pide_importar);
+        self.atender_acciones_variables(motor, c, borrar, importar);
+        let mut ejecutar = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::F9));
         egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.fondo)).show_inside(ui, |ui| {
-            let alturas = interfaz::altos(ui.available_height() - 1.0, 2.0 * interfaz::MARGEN - interfaz::HUECO, &[1.5, 1.0]);
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                interfaz::pagina(ui, |ui| {
-                    let alturas = interfaz::filas_ajustables(ui, "calculo_alturas", [alturas[0], alturas[1]], [200.0, 180.0]);
-                    interfaz::fila_ajustable(ui, "calculo_superior", alturas[0], |i, ui| {
-                        ui.scope_builder(egui::UiBuilder::new().id_salt(("calculo_fila_1", i)), |ui| {
-                            ui.spacing_mut().item_spacing.y = 4.0;
-                            if i == 0 {
-                                let acciones = |ui: &mut egui::Ui| {
-                                    ui.add(egui::Label::new(egui::RichText::new("Python · np, pd, linalg, optimize, interpolate, signal, stats").size(12.0).color(pal.texto_2)).truncate());
-                                };
-                                interfaz::tarjeta_con_titulo(ui, "Script", acciones, |ui| self.editor(ui));
-                            } else {
-                                let (mut borrar, mut importar) = (false, false);
-                                let acciones = |ui: &mut egui::Ui| {
-                                    borrar = ui.small_button("Borrar todo").clicked();
-                                    importar = ui.small_button("Importar datos").on_hover_text("CSV, TSV, TXT o Parquet").clicked();
-                                };
-                                interfaz::tarjeta_con_titulo(ui, "Espacio de trabajo", acciones, |ui| self.variables(ui, motor, c));
-                                self.atender_acciones_variables(motor, c, borrar, importar);
-                            }
-                        });
-                    });
-                    interfaz::fila_ajustable(ui, "calculo_inferior", alturas[1], |i, ui| {
-                        ui.scope_builder(egui::UiBuilder::new().id_salt(("calculo_fila_2", i)), |ui| {
-                            ui.spacing_mut().item_spacing.y = 4.0;
-                            if i == 0 {
-                                let ejecutando = self.id_eval.is_some();
-                                let (mut limpiar, mut detener) = (false, false);
-                                let acciones = |ui: &mut egui::Ui| {
-                                    limpiar = ui.small_button("Limpiar").clicked();
-                                    if ejecutando {
-                                        detener = ui.small_button("Detener").clicked();
-                                        ui.spinner();
-                                    }
-                                };
-                                interfaz::tarjeta_con_titulo(ui, "Consola", acciones, |ui| self.consola(ui, motor));
-                                if limpiar {
-                                    self.historia.clear();
-                                }
-                                if detener {
-                                    motor.llamar("cancelar", json!({}));
-                                }
-                            } else {
-                                interfaz::tarjeta_plena(ui, |ui| self.panel_figuras(ui, c));
-                            }
-                        });
-                    });
-                });
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+            self.pestanas(ui);
+            let (rect, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
+            let area = rect.shrink2(Vec2::new(interfaz::MARGEN, 16.0));
+            // Rejilla 1,55 : 1; a la izquierda script y consola en 1,5 : 1.
+            let [izq, der] = interfaz::dividir(ui, "calculo_columnas", area, true, 14.0, 1.55 / 2.55, [420.0, 300.0]);
+            let [script, consola] = interfaz::dividir(ui, "calculo_izquierda", izq, false, 14.0, 0.6, [160.0, 120.0]);
+            let [espacio, figuras] = interfaz::dividir(ui, "calculo_derecha", der, false, 14.0, 0.38, [140.0, 200.0]);
+            en_celda(ui, script, "calculo_script", |ui| {
+                let titulo = format!("Script · {}", self.guiones.get(self.activo).map_or("", |g| g.nombre.as_str()));
+                let acciones = |ui: &mut egui::Ui| {
+                    ejecutar |= interfaz::boton(ui, interfaz::EstiloBoton::Principal, Some(Icono::SimularLleno), "Ejecutar", "F9", true).clicked();
+                    ui.add(egui::Label::new(egui::RichText::new("Python · np, pd, linalg, optimize, interpolate, signal, stats").size(12.0).color(pal.texto_2)).truncate());
+                };
+                interfaz::tarjeta_con_titulo(ui, &titulo, acciones, |ui| self.editor(ui));
             });
+            en_celda(ui, consola, "calculo_consola", |ui| {
+                let ejecutando = self.id_eval.is_some();
+                let (mut limpiar, mut detener) = (false, false);
+                let acciones = |ui: &mut egui::Ui| {
+                    limpiar = interfaz::boton(ui, interfaz::EstiloBoton::Secundario, None, "Limpiar", "", true).clicked();
+                    if ejecutando {
+                        detener = interfaz::boton(ui, interfaz::EstiloBoton::Secundario, Some(Icono::Detener), "Detener", "", true).clicked();
+                        ui.spinner();
+                    }
+                };
+                interfaz::tarjeta_con_titulo(ui, "Consola", acciones, |ui| self.consola(ui, motor));
+                if limpiar {
+                    self.historia.clear();
+                }
+                if detener {
+                    motor.llamar("cancelar", json!({}));
+                }
+            });
+            en_celda(ui, espacio, "calculo_espacio", |ui| {
+                let (mut borrar, mut importar) = (false, false);
+                let acciones = |ui: &mut egui::Ui| {
+                    borrar = interfaz::boton_icono(ui, Icono::Borrar, 16.0, "Borrar todo el espacio de trabajo").clicked();
+                    importar = interfaz::boton(ui, interfaz::EstiloBoton::Secundario, Some(Icono::Importar), "Importar datos", "", true).on_hover_text("CSV, TSV, TXT o Parquet").clicked();
+                };
+                interfaz::tarjeta_con_titulo(ui, "Espacio de trabajo", acciones, |ui| self.variables(ui, motor, c));
+                self.atender_acciones_variables(motor, c, borrar, importar);
+            });
+            en_celda(ui, figuras, "calculo_figuras", |ui| self.panel_figuras(ui, motor, c));
         });
+        if ejecutar {
+            self.correr_guion(motor);
+        }
+        self.confirmar_cierre(ui.ctx());
         self.ventana_tabla(ui.ctx());
     }
 
-    /// Pestañas de los scripts abiertos y sus acciones: abrir, guardar y ejecutar.
-    fn barra(&mut self, ui: &mut egui::Ui, motor: &mut Motor) {
-        let n = self.guiones.len();
-        let mut nombres: Vec<String> = self.guiones.iter().map(|g| format!("{}{}", g.nombre, if g.sucio { " •" } else { "" })).collect();
-        nombres.push("+".into());
-        let refs: Vec<&str> = nombres.iter().map(String::as_str).collect();
-        let mut activa = self.activo.min(n.saturating_sub(1));
-        let (mut cerrar, mut abrir, mut guardar, mut ejecutar) = (false, false, false, false);
-        interfaz::barra_pestanas(ui, &refs, &mut activa, |ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            ejecutar = tema::boton_principal(ui, "▶ Ejecutar").clicked();
-            guardar = ui.button("Guardar").clicked();
-            abrir = ui.button("Abrir").clicked();
-            cerrar = n > 1 && ui.button("Cerrar script").clicked();
-        });
-        if activa == n {
-            let nombre = nombre_libre(&self.guiones.iter().map(|g| g.nombre.as_str()).collect::<Vec<_>>());
-            self.guiones.push(Guion { nombre, ruta: None, texto: String::new(), sucio: false, motor: false });
-            self.activo = n;
-        } else {
-            self.activo = activa;
-        }
-        if cerrar {
-            if self.guiones[self.activo].sucio {
-                self.cerrar_pendiente = Some(self.activo);
+    /// Pestañas de documento con los scripts abiertos; la cruz cierra el script (con confirmación si tiene cambios).
+    fn pestanas(&mut self, ui: &mut egui::Ui) {
+        let nombres: Vec<String> = self.guiones.iter().map(|g| format!("{}{}", g.nombre, if g.sucio { " •" } else { "" })).collect();
+        let pestanas: Vec<(Icono, &str)> = nombres.iter().map(|n| (Icono::Codigo, n.as_str())).collect();
+        let mut activo = self.activo.min(self.guiones.len().saturating_sub(1));
+        let cerrar = interfaz::pestanas_documento(ui, &pestanas, &mut activo, self.guiones.len() > 1);
+        self.activo = activo;
+        if let Some(i) = cerrar {
+            if self.guiones[i].sucio {
+                self.cerrar_pendiente = Some(i);
             } else {
-                self.cerrar_guion(self.activo);
+                self.cerrar_guion(i);
             }
         }
-        self.confirmar_cierre(ui.ctx());
-        if abrir {
-            if let Some(r) = rfd::FileDialog::new().add_filter("Python", &["py"]).pick_file() {
-                if let Ok(t) = std::fs::read_to_string(&r) {
-                    let nombre = r.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                    self.guiones.push(Guion { nombre, ruta: Some(r), texto: t, sucio: false, motor: false });
-                    self.activo = self.guiones.len() - 1;
-                }
-            }
+    }
+
+    /// Añade un script vacío con un nombre libre y lo activa.
+    fn nuevo_guion(&mut self) {
+        let nombre = nombre_libre(&self.guiones.iter().map(|g| g.nombre.as_str()).collect::<Vec<_>>());
+        self.guiones.push(Guion { nombre, ruta: None, texto: String::new(), sucio: false, motor: false });
+        self.activo = self.guiones.len() - 1;
+    }
+
+    /// Abre un archivo `.py` elegido por el usuario como script nuevo.
+    fn abrir_guion(&mut self) {
+        let Some(r) = rfd::FileDialog::new().add_filter("Python", &["py"]).pick_file() else { return };
+        if let Ok(t) = std::fs::read_to_string(&r) {
+            let nombre = r.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            self.guiones.push(Guion { nombre, ruta: Some(r), texto: t, sucio: false, motor: false });
+            self.activo = self.guiones.len() - 1;
         }
-        if guardar {
-            self.guardar_guion(motor);
-        }
-        if ejecutar {
-            self.correr_guion(motor);
+    }
+
+    /// Guarda el script activo en una ruta elegida por el usuario; el script deja de ser de la librería del motor.
+    fn guardar_guion_como(&mut self, motor: &mut Motor) {
+        let Some(g) = self.guiones.get_mut(self.activo) else { return };
+        let Some(r) = rfd::FileDialog::new().add_filter("Python", &["py"]).set_file_name(&g.nombre).save_file() else { return };
+        g.nombre = r.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        g.ruta = Some(r);
+        g.motor = false;
+        self.guardar_guion(motor);
+    }
+
+    /// Pide la ruta de destino y exporta la variable al motor (CSV o Parquet según la extensión).
+    fn exportar_variable(motor: &mut Motor, nombre: &str) {
+        if let Some(r) = rfd::FileDialog::new().add_filter("CSV", &["csv"]).add_filter("Parquet", &["parquet"]).set_file_name(format!("{nombre}.csv")).save_file() {
+            motor.llamar("guardar_variable", json!({"nombre": nombre, "ruta": r.display().to_string()}));
         }
     }
 
     fn cerrar_guion(&mut self, i: usize) {
         if self.guiones.len() > 1 && i < self.guiones.len() {
             self.guiones.remove(i);
+            if i < self.activo {
+                self.activo -= 1;
+            }
             self.activo = self.activo.min(self.guiones.len() - 1);
         }
     }
@@ -351,10 +415,10 @@ impl Calculo {
             ui.label(egui::RichText::new("Tiene cambios que no se han guardado y se perderán.").color(tema::p().texto_2));
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if tema::boton_principal(ui, "Cerrar sin guardar").clicked() {
+                if interfaz::boton(ui, interfaz::EstiloBoton::Principal, None, "Cerrar sin guardar", "", false).clicked() {
                     decision = Some(true);
                 }
-                if ui.button("Cancelar").clicked() {
+                if interfaz::boton(ui, interfaz::EstiloBoton::Secundario, None, "Cancelar", "", false).clicked() {
                     decision = Some(false);
                 }
             });
@@ -423,7 +487,10 @@ impl Calculo {
     fn consola(&mut self, ui: &mut egui::Ui, motor: &mut Motor) {
         let pal = tema::p();
         ui.spacing_mut().item_spacing.y = 8.0;
-        let alto = (ui.available_height() - 48.0).max(40.0);
+        // El cuerpo de la consola llena la tarjeta de borde a borde sobre fondo gris.
+        let origen = ui.max_rect();
+        ui.painter().rect_filled(Rect::from_min_max(Pos2::new(origen.left() - 15.0, origen.top() - 11.0), Pos2::new(origen.right() + 15.0, origen.bottom() + 9.0)), 0.0, pal.campo);
+        let alto = (ui.available_height() - 40.0).max(40.0);
         egui::ScrollArea::vertical().id_salt("scroll_consola").max_height(alto).auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
             for l in &self.historia {
@@ -447,9 +514,9 @@ impl Calculo {
                 self.bajar = false;
             }
         });
-        egui::Frame::new().fill(pal.campo).stroke(Stroke::new(1.0_f32, pal.borde)).corner_radius(6).inner_margin(egui::Margin::symmetric(10, 4)).show(ui, |ui| {
+        egui::Frame::new().show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("»").monospace().color(pal.acento));
+                ui.label(egui::RichText::new("»").monospace().color(pal.texto_2));
                 let r = ui.add(
                     egui::TextEdit::multiline(&mut self.entrada)
                         .code_editor()
@@ -504,26 +571,45 @@ impl Calculo {
         }
     }
 
-    /// Tabla de variables: nombre (abre su contenido), tipo, tamaño, resumen y acciones de exportar y borrar.
+    /// Tabla de variables: nombre (abre su contenido), tipo, tamaño y resumen. La fila pulsada queda
+    /// seleccionada para exportarla desde la cinta y la cruz de cada fila borra la variable.
     fn variables(&mut self, ui: &mut egui::Ui, motor: &mut Motor, c: &mut Compartido) {
         let pal = tema::p();
+        if self.seleccion.as_ref().is_some_and(|s| !c.variables.iter().any(|v| &v.nombre == s)) {
+            self.seleccion = None;
+        }
         let vars: Vec<Variable> = c.variables.clone();
         if vars.is_empty() {
-            ui.label(egui::RichText::new("Aún no hay variables. Ejecuta el script de ejemplo o escribe en la consola.").color(pal.texto_2));
+            if interfaz::estado_vacio(ui, "Aún no hay variables. Ejecuta un script o importa datos.", "Importar datos") {
+                self.pide_importar = true;
+            }
             return;
         }
+        // La tabla llega hasta el borde de la tarjeta, sin los márgenes del contenido.
+        let origen = ui.max_rect();
+        let marco = Rect::from_min_max(Pos2::new(origen.left() - 15.0, origen.top() - 11.0), Pos2::new(origen.right() + 15.0, origen.bottom() + 9.0));
+        let mut tabla = ui.new_child(egui::UiBuilder::new().max_rect(marco));
+        let ui = &mut tabla;
         ui.spacing_mut().item_spacing.y = 0.0;
         let ancho = ui.available_width();
-        let x = [0.0, ancho * 0.26, ancho * 0.48, ancho * 0.62];
-        let fin_texto = ancho - 56.0;
-        let (cab, _) = ui.allocate_exact_size(Vec2::new(ancho, 26.0), Sense::hover());
+        let x = [16.0, ancho * 0.27, ancho * 0.58, ancho * 0.72];
+        let fin_texto = ancho - 40.0;
+        let (cab, _) = ui.allocate_exact_size(Vec2::new(ancho, 32.0), Sense::hover());
+        ui.painter().rect_filled(cab, 0.0, pal.campo);
+        ui.painter().line_segment([cab.left_bottom(), cab.right_bottom()], Stroke::new(1.0_f32, pal.linea));
         for (t, dx) in ["Nombre", "Tipo", "Tamaño", "Contenido"].into_iter().zip(x) {
-            ui.painter().text(Pos2::new(cab.left() + dx, cab.center().y), Align2::LEFT_CENTER, interfaz::mayusculas(t), tema::fuente_semi(10.5), pal.texto_2);
+            ui.painter().text(Pos2::new(cab.left() + dx, cab.center().y), Align2::LEFT_CENTER, t, FontId::proportional(13.0), pal.texto);
         }
-        tema::separador(ui);
         egui::ScrollArea::vertical().id_salt("scroll_vars").auto_shrink([false, false]).show(ui, |ui| {
             for (i, v) in vars.iter().enumerate() {
                 let (fila, _) = ui.allocate_exact_size(Vec2::new(ancho, 32.0), Sense::hover());
+                let elegida = self.seleccion.as_ref() == Some(&v.nombre);
+                if ui.interact(fila, ui.id().with(("fila_var", &v.nombre)), Sense::click()).clicked() {
+                    self.seleccion = Some(v.nombre.clone());
+                }
+                if elegida {
+                    ui.painter().rect_filled(fila, 0.0, pal.realce);
+                }
                 interfaz::fondo_fila(ui, fila, i);
                 let celda = |dx: f32, fin: f32| Rect::from_min_max(Pos2::new(fila.left() + dx, fila.top()), Pos2::new(fila.left() + fin, fila.bottom()));
                 let p = ui.painter();
@@ -532,28 +618,72 @@ impl Calculo {
                 };
                 let r_nombre = celda(x[0], x[1] - 6.0);
                 texto(r_nombre, &v.nombre, tema::fuente_mono(13.0), pal.texto);
-                texto(celda(x[1], x[2] - 6.0), &v.tipo, FontId::proportional(12.0), pal.texto_2);
-                texto(celda(x[2], x[3] - 6.0), &v.forma, tema::fuente_mono(12.0), pal.texto);
-                texto(celda(x[3], fin_texto), &v.resumen.replace('\n', " "), tema::fuente_mono(12.0), pal.texto_2);
+                texto(celda(x[1], x[2] - 6.0), &v.tipo, tema::fuente_mono(12.0), pal.texto);
+                texto(celda(x[2], x[3] - 6.0), &v.forma, tema::fuente_mono(13.0), pal.texto);
+                texto(celda(x[3], fin_texto), &v.resumen.replace('\n', " "), tema::fuente_mono(13.0), pal.texto_2);
                 if ui.interact(r_nombre, ui.id().with(("var", &v.nombre)), Sense::click()).on_hover_text("Ver contenido").clicked() {
                     self.id_ver = Some((motor.llamar("ver_variable", json!({"nombre": v.nombre})), v.nombre.clone()));
                 }
-                let boton = |n: usize| Rect::from_min_size(Pos2::new(fila.right() - 52.0 + 26.0 * n as f32, fila.center().y - 11.0), Vec2::splat(22.0));
-                if ui.put(boton(0), egui::Button::new("↓").small()).on_hover_text("Exportar a CSV o Parquet").clicked() {
-                    if let Some(r) = rfd::FileDialog::new().add_filter("CSV", &["csv"]).add_filter("Parquet", &["parquet"]).set_file_name(format!("{}.csv", v.nombre)).save_file() {
-                        motor.llamar("guardar_variable", json!({"nombre": v.nombre, "ruta": r.display().to_string()}));
-                    }
+                let zona = Rect::from_center_size(Pos2::new(fila.right() - 20.0, fila.center().y), Vec2::splat(22.0));
+                let borrar = ui.interact(zona, ui.id().with(("borrar_var", &v.nombre)), Sense::click()).on_hover_text("Borrar la variable");
+                if borrar.hovered() {
+                    ui.painter().rect_filled(zona, 0.0, pal.realce);
                 }
-                if ui.put(boton(1), egui::Button::new("×").small()).on_hover_text("Borrar la variable").clicked() {
+                crate::iconos::dibujar(ui.painter(), Rect::from_center_size(zona.center(), Vec2::splat(12.0)), Icono::Cerrar, pal.texto);
+                if borrar.clicked() {
                     c.id_vars = Some(motor.llamar("borrar_variable", json!({"nombre": v.nombre})));
                 }
             }
         });
     }
 
-    /// Figuras en pestañas con la exportación a la derecha de la barra.
-    fn panel_figuras(&mut self, ui: &mut egui::Ui, c: &mut Compartido) {
+    /// Tarjeta de figuras: pestañas con las figuras, exportación a PNG y SVG y cierre en la cabecera.
+    fn panel_figuras(&mut self, ui: &mut egui::Ui, motor: &mut Motor, c: &mut Compartido) {
+        let es_2d = self.figura_activa_2d();
+        let hay = !self.figuras.is_empty();
+        let (png, svg, quitar) = (Cell::new(false), Cell::new(false), Cell::new(false));
+        let acciones = |ui: &mut egui::Ui| {
+            if hay && interfaz::boton_icono(ui, Icono::Cerrar, 14.0, "Cerrar la figura").clicked() {
+                quitar.set(true);
+            }
+            if es_2d {
+                if interfaz::boton(ui, interfaz::EstiloBoton::Secundario, None, "SVG", "", true).on_hover_text("Guardar como SVG").clicked() {
+                    svg.set(true);
+                }
+                if interfaz::boton(ui, interfaz::EstiloBoton::Secundario, None, "PNG", "", true).on_hover_text("Guardar como PNG").clicked() {
+                    png.set(true);
+                }
+            }
+        };
+        interfaz::tarjeta_con_titulo(ui, "Figuras", acciones, |ui| self.cuerpo_figuras(ui, motor, c, png.get(), svg.get()));
+        if quitar.get() {
+            self.figuras.remove(self.fig_activa);
+            self.fig_activa = self.fig_activa.saturating_sub(1);
+        }
+    }
+
+    /// Indica si la figura activa es una gráfica 2D, la única que se exporta a PNG y SVG.
+    fn figura_activa_2d(&self) -> bool {
+        matches!(self.figuras.get(self.fig_activa.min(self.figuras.len().saturating_sub(1))), Some(Figura::D2(_)))
+    }
+
+    /// Pestañas de las figuras y la figura activa; `png` y `svg` piden exportarla.
+    fn cuerpo_figuras(&mut self, ui: &mut egui::Ui, motor: &mut Motor, c: &mut Compartido, png: bool, svg: bool) {
+        let pal = tema::p();
         ui.spacing_mut().item_spacing.y = 0.0;
+        let mut accion = self.pedido_figura.take();
+        if png {
+            accion = Some(grafica::Accion::Png(Rect::NOTHING));
+        }
+        if svg {
+            accion = Some(grafica::Accion::Svg);
+        }
+        if self.figuras.is_empty() {
+            if interfaz::estado_vacio(ui, "Las gráficas aparecerán aquí: prueba plot(x, y) o surf(X, Y, Z).", "Ejecutar script") {
+                self.correr_guion(motor);
+            }
+            return;
+        }
         let nombres: Vec<String> = self
             .figuras
             .iter()
@@ -568,68 +698,37 @@ impl Calculo {
             })
             .collect();
         let refs: Vec<&str> = nombres.iter().map(String::as_str).collect();
-        self.fig_activa = self.fig_activa.min(self.figuras.len().saturating_sub(1));
-        let es_2d = matches!(self.figuras.get(self.fig_activa), Some(Figura::D2(_)));
-        let mut accion = None;
-        egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 0)).show(ui, |ui| {
-            egui::ScrollArea::horizontal().id_salt("pestanas_figuras").auto_shrink([false, true]).show(ui, |ui| {
-                interfaz::barra_pestanas(ui, &refs, &mut self.fig_activa, |_| {});
-            });
+        self.fig_activa = self.fig_activa.min(self.figuras.len() - 1);
+        egui::ScrollArea::horizontal().id_salt("pestanas_figuras").auto_shrink([false, true]).show(ui, |ui| {
+            interfaz::barra_pestanas(ui, &refs, &mut self.fig_activa, |_| {});
         });
         tema::separador(ui);
-        let mut quitar = false;
-        if !refs.is_empty() {
-            egui::Frame::new().inner_margin(egui::Margin { left: 16, right: 16, top: 8, bottom: 0 }).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    if es_2d {
-                        ui.label(egui::RichText::new(self.figuras[self.fig_activa].titulo()).size(12.5).color(tema::p().texto_2));
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        quitar = ui.small_button("×").on_hover_text("Cerrar la figura").clicked();
-                        if es_2d {
-                            if ui.small_button("SVG").on_hover_text("Guardar como SVG").clicked() {
-                                accion = Some(grafica::Accion::Svg);
-                            }
-                            if ui.small_button("PNG").on_hover_text("Guardar como PNG").clicked() {
-                                accion = Some(grafica::Accion::Png(Rect::NOTHING));
-                            }
-                        }
-                    });
-                });
-            });
-        }
-        if quitar {
-            self.figuras.remove(self.fig_activa);
-            self.fig_activa = self.fig_activa.saturating_sub(1);
-            return;
-        }
         let i = self.fig_activa;
-        egui::Frame::new().inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-            let alto = (ui.available_height() - 2.0).max(80.0);
-            let Some(f) = self.figuras.get_mut(i) else {
-                ui.add_space(20.0);
-                ui.vertical_centered(|ui| {
-                    ui.label(egui::RichText::new("Las gráficas aparecerán aquí: prueba plot(x, y) o surf(X, Y, Z).").color(tema::p().texto_2));
-                });
-                return;
-            };
-            match f {
-                Figura::D2(g) => {
-                    let area = ui.available_rect_before_wrap();
-                    let a = g.mostrar_con(ui, alto, false, true);
-                    accion = accion.or(a);
-                    if let Some(grafica::Accion::Png(r)) = &mut accion {
-                        if *r == Rect::NOTHING {
-                            *r = Rect::from_min_size(area.min, Vec2::new(area.width(), alto));
-                        }
+        if matches!(self.figuras[i], Figura::D2(_)) {
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new(self.figuras[i].titulo()).size(13.0).family(tema::semi()).color(pal.texto));
+        } else {
+            accion = None;
+        }
+        ui.add_space(4.0);
+        let alto = (ui.available_height() - 2.0).max(80.0);
+        let Some(f) = self.figuras.get_mut(i) else { return };
+        match f {
+            Figura::D2(g) => {
+                let area = ui.available_rect_before_wrap();
+                let a = g.mostrar_con(ui, alto, false, true);
+                accion = accion.or(a);
+                if let Some(grafica::Accion::Png(r)) = &mut accion {
+                    if *r == Rect::NOTHING {
+                        *r = Rect::from_min_size(area.min, Vec2::new(area.width(), alto));
                     }
                 }
-                Figura::D3(_) => accion = accion.or_else(|| grafica::mostrar(ui, f, egui::Id::new(("fig", i)), alto - 28.0)),
             }
-            if let Some(a) = accion.take() {
-                c.exportar(ui.ctx(), a, f);
-            }
-        });
+            Figura::D3(_) => accion = accion.or_else(|| grafica::mostrar(ui, f, egui::Id::new(("fig", i)), alto - 28.0)),
+        }
+        if let Some(a) = accion.take() {
+            c.exportar(ui.ctx(), a, f);
+        }
     }
 
     fn ventana_tabla(&mut self, ctx: &egui::Context) {
@@ -780,6 +879,14 @@ pub fn resaltar(texto: &str) -> LayoutJob {
         }
     }
     j
+}
+
+
+/// Dibuja `contenido` en un hijo de `ui` limitado al rectángulo `r`.
+fn en_celda(ui: &mut egui::Ui, r: Rect, id: &str, contenido: impl FnOnce(&mut egui::Ui)) {
+    let mut hijo = ui.new_child(egui::UiBuilder::new().id_salt(id).max_rect(r));
+    hijo.set_clip_rect(r.intersect(ui.clip_rect()));
+    contenido(&mut hijo);
 }
 
 #[cfg(test)]

@@ -1,12 +1,14 @@
 //! Páginas de análisis: cada herramienta del motor se muestra como un formulario con su informe.
 use crate::app::{Compartido, Variable};
+use crate::iconos::Icono;
 use crate::grafica::{self, Accion, Decoracion, EstiloMapa, Figura, Franja, MapaCalor, MarcaV, TipoSerie};
 use crate::motor::Motor;
 use crate::tema;
 use crate::ui;
 use egui::{Align, Layout, Pos2, Rect, Sense, Stroke, UiBuilder, Vec2};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone)]
 pub struct Param {
@@ -286,6 +288,14 @@ pub struct Pagina {
     calculados: HashMap<String, HashMap<String, String>>,
     /// Gráfica elegida en cada herramienta con varias.
     figura_sel: HashMap<String, usize>,
+    /// «Calcular» pulsado en la cinta: se atiende en el siguiente dibujo de la página.
+    calcular_pedido: bool,
+    /// Herramientas abiertas como pestañas de documento, en orden de apertura.
+    abiertas: Vec<String>,
+    /// Avisos negros ocultados: herramienta y posición del aviso en el informe.
+    ocultos: HashSet<(String, usize)>,
+    /// Nombre recordado de cada variable de salida desactivada (herramienta, parámetro).
+    salida_apagada: HashMap<(String, String), String>,
 }
 
 /// Estado del buscador de módulos CEC de un parámetro `modulo_cec`.
@@ -348,6 +358,10 @@ impl Pagina {
             busquedas: HashMap::new(),
             calculados: HashMap::new(),
             figura_sel: HashMap::new(),
+            calcular_pedido: false,
+            abiertas: vec![],
+            ocultos: HashSet::new(),
+            salida_apagada: HashMap::new(),
         }
     }
 
@@ -362,6 +376,7 @@ impl Pagina {
                 let mut inf = informe_desde(v);
                 ajustar_informe(&h, &mut inf);
                 self.informes.insert(h.clone(), inf);
+                self.ocultos.retain(|(t, _)| *t != h);
                 self.errores.remove(&h);
                 c.fijar_variables(&v["variables"]);
             } else {
@@ -409,71 +424,112 @@ impl Pagina {
         self.id_activo = Some((motor.llamar("ejecutar_herramienta", json!({"ident": h.id, "valores": Value::Object(m)})), h.id.clone()));
     }
 
-    /// Dibuja la página: barra de pestañas con las herramientas del módulo, fichas de resultados y,
-    /// debajo, la gráfica principal (8 columnas) junto a la tarjeta de parámetros (4 columnas).
+    /// Nombre del módulo para el subtítulo de la pantalla.
+    fn nombre_modulo(&self) -> &str {
+        match self.modulo.as_str() {
+            "potencia" => "Potencia",
+            "fv" => "Solar",
+            "estadistica" => "Estadística",
+            "ml" => "Aprendizaje",
+            "mantenimiento" => "Mantenimiento",
+            _ => &self.titulo,
+        }
+    }
+
+    /// Dibuja la página: pestañas de documento con las herramientas abiertas, título, fichas, tarjeta
+    /// con la gráfica y tablas secundarias, y el panel de parámetros a la derecha (debajo si la
+    /// ventana es estrecha).
     pub fn ui(&mut self, ui: &mut egui::Ui, todas: &[Herramienta], motor: &mut Motor, c: &mut Compartido) {
         let propias: Vec<Herramienta> = todas.iter().filter(|h| h.modulo == self.modulo).cloned().collect();
         if self.seleccion.is_none() {
             self.seleccion = propias.first().map(|h| h.id.clone());
         }
-        let pal = tema::p();
-        egui::TopBottomPanel::top(format!("pestanas_{}", self.modulo)).frame(egui::Frame::new().fill(pal.panel).inner_margin(egui::Margin::symmetric(16, 0))).show_inside(ui, |ui| {
-            let titulos: Vec<&str> = propias.iter().map(|h| h.titulo.as_str()).collect();
-            let mut activa = propias.iter().position(|h| Some(&h.id) == self.seleccion.as_ref()).unwrap_or(0);
-            let cambio = egui::ScrollArea::horizontal().id_salt(("barra", &self.modulo)).auto_shrink([false, true]).show(ui, |ui| ui::barra_pestanas(ui, &titulos, &mut activa, |_| {})).inner;
-            if cambio {
-                self.seleccion = propias.get(activa).map(|h| h.id.clone());
+        self.abiertas.retain(|a| propias.iter().any(|h| h.id == *a));
+        if let Some(s) = self.seleccion.clone() {
+            if !self.abiertas.contains(&s) {
+                self.abiertas.push(s);
             }
-        });
-        let atajo = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter));
+        }
+        let pal = tema::p();
+        let atajo = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter)) || std::mem::take(&mut self.calcular_pedido);
+        let Some(id) = self.seleccion.clone() else { return };
+        let Some(h) = propias.iter().find(|h| h.id == id) else { return };
+        let mut inf = self.informes.remove(&id);
+        let valores = self.calculados.get(&id).cloned().unwrap_or_default();
+        let mut sel = self.figura_sel.get(&id).copied().unwrap_or(0);
+        let vista = inf.as_ref().map(|i| Vista::de(&id, i, &valores, sel));
+        let mut calcular = atajo && !self.ocupada();
+        let lateral = ui.available_width() >= ui::ANCHO_APILAR;
+        if lateral {
+            egui::SidePanel::right(egui::Id::new(("parametros_lateral", &self.modulo))).default_width(360.0).width_range(360.0..=720.0).resizable(true).frame(egui::Frame::new().fill(pal.panel)).show_inside(ui, |ui| {
+                let r = ui.max_rect();
+                ui.painter().line_segment([r.left_top(), r.left_bottom()], Stroke::new(1.0_f32, pal.borde));
+                self.panel_derecho(ui, h, motor, c, inf.as_ref().zip(vista.as_ref()), &mut calcular);
+            });
+        }
         egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.fondo)).show_inside(ui, |ui| {
-            let Some(id) = self.seleccion.clone() else { return };
-            let Some(h) = propias.iter().find(|h| h.id == id) else { return };
+            let pestanas: Vec<(Icono, String)> = self.abiertas.iter().map(|a| presentacion(a, propias.iter().find(|h| h.id == *a).map_or(a.as_str(), |h| h.titulo.as_str()))).collect();
+            let refs: Vec<(Icono, &str)> = pestanas.iter().map(|(i, t)| (*i, t.as_str())).collect();
+            let mut activa = self.abiertas.iter().position(|a| *a == id).unwrap_or(0);
+            let cerrada = ui::pestanas_documento(ui, &refs, &mut activa, self.abiertas.len() > 1);
+            if let Some(k) = cerrada {
+                let quitada = self.abiertas.remove(k);
+                if quitada == id {
+                    self.seleccion = self.abiertas.get(k.min(self.abiertas.len() - 1)).cloned();
+                }
+            } else if self.abiertas.get(activa) != Some(&id) {
+                self.seleccion = self.abiertas.get(activa).cloned();
+            }
             let total = ui.available_height();
-            let mut calcular = atajo && !self.ocupada();
+            let corto = presentacion(&h.id, &h.titulo).1;
             egui::ScrollArea::vertical().id_salt(("pagina", &id)).auto_shrink([false, false]).show(ui, |ui| {
+                let y0 = ui.next_widget_position().y;
                 ui::pagina(ui, |ui| {
-                    let mut inf = self.informes.remove(&id);
-                    let valores = self.calculados.get(&id).cloned().unwrap_or_default();
-                    let mut sel = self.figura_sel.get(&id).copied().unwrap_or(0);
-                    let vista = inf.as_ref().map(|i| Vista::de(&id, i, &valores, sel));
-                    let alto_fichas = 84.0;
-                    if let Some(v) = &vista {
-                        ui::fila(ui, &[2; 6], alto_fichas, |i, ui| {
-                            if let Some(f) = v.fichas.get(i) {
-                                ui::ficha_kpi(ui, &f.etiqueta, &f.valor, &f.unidad, &f.nota, None);
+                    ui::titulo_pantalla(ui, &corto, &format!("{} · {}", self.nombre_modulo(), h.grupo));
+                    match (inf.as_mut(), vista.as_ref()) {
+                        (Some(r), Some(v)) => {
+                            ui::fila(ui, &[2; 6], 84.0, |i, ui| {
+                                if let Some(f) = v.fichas.get(i) {
+                                    ui::ficha_kpi(ui, &f.etiqueta, &f.valor, &f.unidad, &f.nota, None);
+                                }
+                            });
+                            for (k, (_, texto)) in v.avisos.iter().enumerate() {
+                                if !self.ocultos.contains(&(id.clone(), k)) && ui.push_id(k, |ui| ui::aviso_negro(ui, texto)).inner {
+                                    self.ocultos.insert((id.clone(), k));
+                                }
                             }
-                        });
-                    }
-                    let reservado = 2.0 * ui::MARGEN + if vista.is_some() { alto_fichas + ui::HUECO } else { 0.0 };
-                    let alto = (total - reservado).max(460.0);
-                    ui::fila_ajustable(ui, ("herramientas", self.modulo.clone()), alto, |i, ui| {
-                        if i == 0 {
-                            match (inf.as_mut(), vista.as_ref()) {
-                                (Some(r), Some(v)) => columna_resultados(ui, r, v, c, &mut sel, &id),
-                                _ => self.columna_vacia(ui, h),
-                            }
-                        } else {
-                            let res = inf.as_ref().zip(vista.as_ref());
-                            self.tarjeta_parametros(ui, h, motor, c, res, &mut calcular);
+                            let alto = (total - (ui.next_widget_position().y - y0) - ui::MARGEN).max(380.0);
+                            columna_resultados(ui, r, v, c, &mut sel, &id, alto);
                         }
-                    });
-                    self.figura_sel.insert(id.clone(), sel);
-                    if let Some(i) = inf {
-                        self.informes.insert(id.clone(), i);
+                        _ => {
+                            let alto = (total - (ui.next_widget_position().y - y0) - ui::MARGEN).max(300.0);
+                            self.columna_vacia(ui, h, alto, &mut calcular);
+                        }
+                    }
+                    if !lateral {
+                        let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 640.0), Sense::hover());
+                        let mut hijo = ui.new_child(UiBuilder::new().max_rect(r));
+                        hijo.painter().rect(r, 0.0, pal.panel, Stroke::new(1.0_f32, pal.borde), egui::StrokeKind::Inside);
+                        self.panel_derecho(&mut hijo, h, motor, c, inf.as_ref().zip(vista.as_ref()), &mut calcular);
                     }
                 });
             });
-            if calcular && !self.ocupada() {
-                self.ejecutar(h, motor);
-            }
         });
+        self.figura_sel.insert(id.clone(), sel);
+        if let Some(i) = inf {
+            self.informes.insert(id, i);
+        }
+        if calcular && !self.ocupada() {
+            self.ejecutar(h, motor);
+        }
     }
 
-    /// Zona de resultados antes de calcular, mientras se calcula o tras un error.
-    fn columna_vacia(&self, ui: &mut egui::Ui, h: &Herramienta) {
+    /// Tarjeta de la zona de resultados antes de calcular, mientras se calcula o tras un error.
+    fn columna_vacia(&self, ui: &mut egui::Ui, h: &Herramienta, alto: f32, calcular: &mut bool) {
         let calculando = self.id_activo.as_ref().is_some_and(|a| a.1 == h.id);
-        ui::tarjeta_con_titulo(ui, "", |_| {}, |ui| {
+        let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), alto), Sense::hover());
+        let mut hijo = ui.new_child(UiBuilder::new().max_rect(r));
+        ui::tarjeta_con_titulo(&mut hijo, "", |_| {}, |ui| {
             if let Some(e) = self.errores.get(&h.id) {
                 banner(ui, "falla", e);
             }
@@ -483,74 +539,54 @@ impl Pagina {
                     ui.spinner();
                     ui.label(egui::RichText::new("Calculando…").color(tema::p().texto_2));
                 });
-            } else {
-                ui::estado_vacio(ui, &format!("{} · {}\n{}\n\nPulsa «Calcular» para ver los resultados.\n\n{}", self.titulo, h.grupo, self.introduccion, h.doc), "");
+            } else if ui::estado_vacio(ui, &format!("{}\n\nPulsa «Calcular» para ver los resultados.", self.introduccion), "Calcular") {
+                *calcular = true;
             }
         });
     }
 
-    /// Tarjeta de parámetros: cabecera con la herramienta, filas de parámetros y pie con «Calcular».
-    fn tarjeta_parametros(&mut self, ui: &mut egui::Ui, h: &Herramienta, motor: &mut Motor, c: &Compartido, res: Option<(&Informe, &Vista)>, calcular: &mut bool) {
-        let pal = tema::p();
+    /// Panel de parámetros: filas de la herramienta, mapa P(G, T) si el informe lo trae y pie con
+    /// «Exportar informe» y «Calcular».
+    fn panel_derecho(&mut self, ui: &mut egui::Ui, h: &Herramienta, motor: &mut Motor, c: &Compartido, res: Option<(&Informe, &Vista)>, calcular: &mut bool) {
         let ocupada = self.ocupada();
-        ui::tarjeta_plena(ui, |ui| {
-            let r = ui.max_rect();
-            let alto_pie = 60.0;
-            let r_cuerpo = Rect::from_min_max(r.min, Pos2::new(r.right(), r.bottom() - alto_pie));
-            let r_pie = Rect::from_min_max(Pos2::new(r.left(), r.bottom() - alto_pie), r.max);
-            ui.painter().line_segment([r_pie.left_top(), r_pie.right_top()], Stroke::new(1.0_f32, pal.linea));
-            let mut cuerpo = ui.new_child(UiBuilder::new().max_rect(r_cuerpo));
-            cuerpo.set_clip_rect(r_cuerpo.intersect(ui.clip_rect()));
-            egui::ScrollArea::vertical().id_salt(("parametros", &h.id)).auto_shrink([false, false]).show(&mut cuerpo, |ui| {
-                egui::Frame::new().inner_margin(egui::Margin { left: 16, right: 16, top: 12, bottom: 10 }).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.spacing_mut().item_spacing.y = 4.0;
-                    ui.label(egui::RichText::new(ui::mayusculas("Parámetros")).family(tema::semi()).size(11.0).color(pal.texto_2));
-                    ui.label(egui::RichText::new(&h.titulo).family(tema::semi()).size(16.0).color(pal.texto));
-                    if !h.doc.is_empty() {
-                        ui.label(egui::RichText::new(&h.doc).size(12.5).color(pal.texto_2));
-                    }
-                });
-                tema::separador(ui);
-                egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 10)).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    self.parametros(ui, h, motor, c);
-                });
-                if let Some((_, v)) = res.filter(|(_, v)| v.mapa.is_some()) {
-                    tema::separador(ui);
-                    egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 10)).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(ui::mayusculas(&v.mapa_titulo)).family(tema::semi()).size(11.0).color(pal.texto_2));
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                ui.label(egui::RichText::new(&v.mapa_rango).size(12.0).color(pal.texto_2));
-                            });
-                        });
-                        if let Some(m) = &v.mapa {
-                            m.mostrar(ui, 106.0);
-                        }
-                    });
+        let mut pie = |ui: &mut egui::Ui| {
+            ui.add_enabled_ui(!ocupada, |ui| {
+                if ui::boton(ui, ui::EstiloBoton::Principal, None, "Calcular", "Ctrl Intro", false).clicked() {
+                    *calcular = true;
                 }
             });
-            let mut pie = ui.new_child(UiBuilder::new().max_rect(r_pie.shrink2(Vec2::new(16.0, 0.0))).layout(Layout::left_to_right(Align::Center)));
-            pie.spacing_mut().button_padding = Vec2::new(16.0, 7.0);
-            pie.spacing_mut().item_spacing.x = 10.0;
-            if pie.add_enabled_ui(!ocupada, |ui| tema::boton_principal(ui, "Calcular").clicked()).inner {
-                *calcular = true;
-            }
-            if ocupada {
-                pie.spinner();
-            } else {
-                pie.label(egui::RichText::new("Ctrl Intro").font(tema::fuente_mono(11.5)).color(pal.texto_2));
-            }
-            pie.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.add_enabled(res.is_some(), egui::Button::new(egui::RichText::new("Exportar informe").size(13.0).color(pal.texto_2)).frame(false)).on_hover_text("HTML con las tablas y las gráficas en SVG").clicked() {
+            ui.add_enabled_ui(res.is_some(), |ui| {
+                if ui::boton(ui, ui::EstiloBoton::Secundario, None, "Exportar informe", "", false).on_hover_text("HTML con las tablas y las gráficas en SVG").clicked() {
                     if let Some((inf, _)) = res {
                         guardar_informe_html(inf);
                     }
                 }
             });
-        });
+        };
+        ui::panel_parametros(
+            ui,
+            "Parámetros",
+            &h.titulo,
+            &h.doc,
+            |ui| {
+                self.parametros(ui, h, motor, c);
+                if let Some((_, v)) = res.filter(|(_, v)| v.mapa.is_some()) {
+                    ui.add_space(8.0);
+                    tema::separador(ui);
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui::titulo_seccion(ui, &v.mapa_titulo);
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.label(egui::RichText::new(&v.mapa_rango).font(tema::fuente_mono(11.0)).color(tema::p().texto_2));
+                        });
+                    });
+                    if let Some(m) = &v.mapa {
+                        m.mostrar(ui, 190.0);
+                    }
+                }
+            },
+            Some(&mut pie),
+        );
     }
 
     /// Preselecciona la única tabla disponible y reinicia las columnas que no existen en la tabla recién elegida.
@@ -591,46 +627,54 @@ impl Pagina {
             if p.tipo == "salida" && !encabezado_salidas {
                 encabezado_salidas = true;
                 ui.add_space(6.0);
-                tema::titulo(ui, "Guardar en el espacio de trabajo");
+                tema::separador(ui);
+                ui.add_space(6.0);
+                ui::titulo_seccion(ui, "Guardar en el espacio de trabajo");
             }
             let (etiqueta, unidad) = separar_unidad(&p.etiqueta);
             let mut t = valor_de(vals, h, &p.nombre);
             let anterior = t.clone();
             match p.tipo.as_str() {
-                "num" | "entero" | "salida" => {
+                "num" | "entero" => {
                     ui::fila_parametro(ui, etiqueta, &mut t, unidad);
                 }
-                "opcion" => fila_con(ui, etiqueta, 170.0, |ui| {
-                    egui::ComboBox::from_id_salt((&h.id, &p.nombre)).selected_text(&t).width(160.0).truncate().show_ui(ui, |ui| {
-                        for o in &p.opciones {
-                            ui.selectable_value(&mut t, o.clone(), o);
-                        }
-                    });
-                }),
-                "tabla" => fila_con(ui, etiqueta, 210.0, |ui| {
-                    if ui.small_button("Importar…").on_hover_text("Lee un CSV, TSV, TXT o Parquet del ordenador y lo deja en el espacio de trabajo").clicked() {
-                        if let Some(r) = rfd::FileDialog::new().add_filter("Datos", &["csv", "tsv", "txt", "parquet"]).pick_file() {
-                            let nombre = nombre_de_variable(&r);
-                            let id = motor.llamar("importar_tabla", json!({"ruta": r.display().to_string(), "nombre": nombre}));
-                            self.importando = Some((id, h.id.clone(), p.nombre.clone(), nombre));
-                        }
+                "salida" => {
+                    let clave = (h.id.clone(), p.nombre.clone());
+                    let apagada = self.salida_apagada.get(&clave).cloned();
+                    let mut activo = apagada.is_none();
+                    let mut nombre = apagada.unwrap_or_else(|| t.clone());
+                    ui::fila_guardar(ui, &mut activo, &etiqueta_salida(&p.etiqueta), &mut nombre);
+                    if activo {
+                        self.salida_apagada.remove(&clave);
+                        t = nombre;
+                    } else {
+                        self.salida_apagada.insert(clave, nombre);
+                        t.clear();
                     }
-                    egui::ComboBox::from_id_salt((&h.id, &p.nombre)).selected_text(if t.is_empty() { "elegir…" } else { &t }).width(110.0).truncate().show_ui(ui, |ui| {
-                        for (n, _) in &tablas {
-                            ui.selectable_value(&mut t, n.clone(), n);
-                        }
+                }
+                "opcion" => {
+                    ui::desplegable(ui, etiqueta, &p.opciones, &mut t);
+                }
+                "tabla" => {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(etiqueta).size(13.0));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui::boton(ui, ui::EstiloBoton::Secundario, None, "Importar…", "", true).on_hover_text("Lee un CSV, TSV, TXT o Parquet del ordenador y lo deja en el espacio de trabajo").clicked() {
+                                if let Some(r) = rfd::FileDialog::new().add_filter("Datos", &["csv", "tsv", "txt", "parquet"]).pick_file() {
+                                    let nombre = nombre_de_variable(&r);
+                                    let id = motor.llamar("importar_tabla", json!({"ruta": r.display().to_string(), "nombre": nombre}));
+                                    self.importando = Some((id, h.id.clone(), p.nombre.clone(), nombre));
+                                }
+                            }
+                        });
                     });
-                }),
-                "columna" | "columna_opc" => fila_con(ui, etiqueta, 170.0, |ui| {
-                    egui::ComboBox::from_id_salt((&h.id, &p.nombre)).selected_text(if t.is_empty() { "—" } else { &t }).width(160.0).truncate().show_ui(ui, |ui| {
-                        if p.tipo == "columna_opc" {
-                            ui.selectable_value(&mut t, String::new(), "—");
-                        }
-                        for o in &columnas {
-                            ui.selectable_value(&mut t, o.clone(), o);
-                        }
-                    });
-                }),
+                    let nombres: Vec<String> = tablas.iter().map(|(n, _)| n.clone()).collect();
+                    selector(ui, (&h.id, &p.nombre), "elegir…", &mut t, &nombres, false);
+                }
+                "columna" | "columna_opc" => {
+                    ui.label(egui::RichText::new(etiqueta).size(13.0));
+                    selector(ui, (&h.id, &p.nombre), "—", &mut t, &columnas, p.tipo == "columna_opc");
+                }
                 "ruta" => {
                     // Opciones: «guardar», «guardar_si:param=valor» (diálogo de guardar) y «ext:a,b» (filtro de extensiones)
                     let guardar = p.opciones.iter().any(|o| o == "guardar" || o.strip_prefix("guardar_si:").and_then(|c| c.split_once('=')).is_some_and(|(otro, valor)| valor_de(vals, h, otro) == valor));
@@ -710,12 +754,6 @@ impl Pagina {
         self.errores.clear();
     }
 
-    /// Título de la herramienta abierta, para la ruta de la cabecera.
-    pub fn titulo_seleccion(&self, todas: &[Herramienta]) -> Option<String> {
-        let id = self.seleccion.as_deref()?;
-        todas.iter().find(|h| h.id == id).map(|h| h.titulo.clone())
-    }
-
     /// Último informe de una herramienta, si se ha ejecutado con éxito.
     pub fn informe(&self, id: &str) -> Option<&Informe> {
         self.informes.get(id)
@@ -724,6 +762,118 @@ impl Pagina {
     pub fn seleccionar(&mut self, id: &str) {
         self.seleccion = Some(id.to_string());
     }
+
+    /// Cinta del módulo: las herramientas como botones grandes y el grupo Resultados.
+    pub fn cinta(&mut self, ui: &mut egui::Ui, todas: &[Herramienta]) {
+        let propias: Vec<&Herramienta> = todas.iter().filter(|h| h.modulo == self.modulo).collect();
+        if self.seleccion.is_none() {
+            self.seleccion = propias.first().map(|h| h.id.clone());
+        }
+        let grupo = if self.modulo == "mantenimiento" { "Análisis" } else { "Herramientas" };
+        ui::grupo_cinta(ui, grupo, |ui| {
+            for h in &propias {
+                let (icono, corto) = presentacion(&h.id, &h.titulo);
+                if ui::boton_cinta(ui, icono, &corto, self.seleccion.as_deref() == Some(h.id.as_str())).on_hover_text(&h.titulo).clicked() {
+                    self.seleccion = Some(h.id.clone());
+                }
+            }
+        });
+        let hay_informe = self.seleccion.as_ref().is_some_and(|id| self.informes.contains_key(id));
+        let hay_tabla = self.seleccion.as_ref().and_then(|id| self.informes.get(id)).is_some_and(|i| i.secciones.iter().any(|s| matches!(s, Seccion::Tabla(..))));
+        let mut exportar = false;
+        let mut copiar = false;
+        let ocupada = self.ocupada();
+        let mut calcular = false;
+        ui::grupo_cinta(ui, "Resultados", |ui| {
+            calcular = ui::boton_cinta(ui, Icono::Calcular, "Calcular", false).on_hover_text("Calcular · Ctrl Intro").clicked() && !ocupada;
+            match ui::columna_cinta(ui, &[(Icono::Informe, "Exportar informe", hay_informe), (Icono::Descargar, "Copiar CSV", hay_tabla)]) {
+                Some(0) => exportar = true,
+                Some(_) => copiar = true,
+                None => {}
+            }
+        });
+        self.calcular_pedido |= calcular;
+        if let Some(inf) = self.seleccion.as_ref().and_then(|id| self.informes.get(id)) {
+            if exportar {
+                guardar_informe_html(inf);
+            }
+            if copiar {
+                if let Some(Seccion::Tabla(_, col, fil)) = inf.secciones.iter().find(|s| matches!(s, Seccion::Tabla(..))) {
+                    ui.ctx().copy_text(a_csv(col, fil, ','));
+                }
+            }
+        }
+    }
+
+    /// Herramientas con resultado o error, para el esquema del proyecto: id, título corto y estado.
+    pub fn resultados_esquema(&self, todas: &[Herramienta]) -> Vec<(String, String, ui::EstadoNodo, String)> {
+        todas
+            .iter()
+            .filter(|h| h.modulo == self.modulo)
+            .filter_map(|h| {
+                let (_, corto) = presentacion(&h.id, &h.titulo);
+                if self.errores.contains_key(&h.id) {
+                    Some((h.id.clone(), corto, ui::EstadoNodo::Pendiente, "error".to_string()))
+                } else if let Some(inf) = self.informes.get(&h.id) {
+                    let aviso = inf.secciones.iter().any(|s| matches!(s, Seccion::Aviso(n, _) if n == "alerta" || n == "falla"));
+                    Some((h.id.clone(), corto, if aviso { ui::EstadoNodo::Pendiente } else { ui::EstadoNodo::Listo }, if aviso { "aviso".to_string() } else { String::new() }))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Valor de un parámetro con el que se calculó el último informe de una herramienta.
+    pub fn valor_calculado(&self, id: &str, param: &str) -> Option<&str> {
+        self.calculados.get(id)?.get(param).map(String::as_str)
+    }
+
+    /// Herramienta abierta.
+    pub fn seleccion(&self) -> Option<&str> {
+        self.seleccion.as_deref()
+    }
+}
+
+/// Icono y título corto de una herramienta en la cinta y en el esquema del proyecto.
+pub fn presentacion(id: &str, titulo: &str) -> (Icono, String) {
+    let (icono, corto) = match id {
+        "pot_perdidas" => (Icono::Rayo, "Pérdidas del inversor"),
+        "pot_lcl" => (Icono::Onda, "Filtro LCL"),
+        "ctl_bode" => (Icono::Bode, "Bode y márgenes"),
+        "ctl_escalon" => (Icono::Escalon, "Respuesta al escalón"),
+        "ctl_lugar" => (Icono::Raices, "Lugar de las raíces"),
+        "ctl_pi" => (Icono::Pi, "Ajuste de un PI"),
+        "fv_hoja" => (Icono::Informe, "Hoja de datos"),
+        "fv_curvas" => (Icono::Curva, "Curvas I-V y P-V"),
+        "fv_sombra" => (Icono::Sombra, "Sombreado parcial"),
+        "fv_sol" => (Icono::Brujula, "Posición solar"),
+        "es_muestra" => (Icono::Datos, "Datos de ejemplo"),
+        "es_descriptiva" => (Icono::Lista, "Descriptiva"),
+        "es_ajuste" => (Icono::Distribucion, "Ajuste de distribuciones"),
+        "es_weibull" => (Icono::Curva, "Weibull"),
+        "es_hipotesis" => (Icono::Validar, "Pruebas de hipótesis"),
+        "es_regresion" => (Icono::Dispersion, "Regresión lineal"),
+        "es_no_lineal" => (Icono::Onda, "Regresión no lineal"),
+        "es_anova" => (Icono::Histograma, "ANOVA"),
+        "es_serie" => (Icono::Anomalias, "Series y ARIMA"),
+        "es_spc" => (Icono::Grafica, "Control de procesos"),
+        "ml_preparar" => (Icono::Datos, "Preparar datos"),
+        "ml_regresion" => (Icono::Dispersion, "Regresión"),
+        "ml_clasificacion" => (Icono::Clasificacion, "Clasificación"),
+        "ml_clustering" => (Icono::Clustering, "Clustering"),
+        "ml_pca" => (Icono::Pca, "PCA"),
+        "ml_anomalias" => (Icono::Anomalias, "Anomalías"),
+        "ml_guardar" => (Icono::Guardar, "Guardar o cargar"),
+        "ml_predecir" => (Icono::Flecha, "Aplicar modelo"),
+        "mt_muestra" => (Icono::Datos, "Datos de muestra"),
+        "mt_importar" => (Icono::Importar, "Importar SCADA"),
+        "mt_kpi" => (Icono::Grafica, "KPIs de la planta"),
+        "mt_fallas" => (Icono::Anomalias, "Detección de fallas"),
+        "mt_fiabilidad" => (Icono::Curva, "Fiabilidad"),
+        _ => (Icono::Informe, titulo),
+    };
+    (icono, corto.to_string())
 }
 
 
@@ -811,6 +961,27 @@ fn cifras(x: f64) -> String {
     }
 }
 
+/// Etiqueta corta de una variable de salida: «Variable de los valores de diseño» pasa a «Valores de diseño».
+fn etiqueta_salida(e: &str) -> String {
+    let sin = ["Variable de la ", "Variable del ", "Variable de los ", "Variable de las ", "Variable de "].iter().find_map(|p| e.strip_prefix(p)).unwrap_or(e);
+    let mut c = sin.chars();
+    c.next().map_or(String::new(), |a| a.to_uppercase().collect::<String>() + c.as_str())
+}
+
+/// Desplegable de tabla o columna a todo el ancho; `vacio` es el texto mientras no hay valor y
+/// `con_vacio` añade la opción «—».
+fn selector(ui: &mut egui::Ui, id: impl std::hash::Hash, vacio: &str, valor: &mut String, opciones: &[String], con_vacio: bool) {
+    let texto = if valor.is_empty() { vacio.to_string() } else { valor.clone() };
+    egui::ComboBox::from_id_salt(id).width(ui.available_width() - 8.0).selected_text(egui::RichText::new(texto).size(13.0)).truncate().show_ui(ui, |ui| {
+        if con_vacio {
+            ui.selectable_value(valor, String::new(), "—");
+        }
+        for o in opciones {
+            ui.selectable_value(valor, o.clone(), o);
+        }
+    });
+}
+
 /// Separa una etiqueta «Nombre [unidad]» en nombre y unidad.
 fn separar_unidad(e: &str) -> (&str, &str) {
     match e.rfind(" [") {
@@ -892,7 +1063,6 @@ impl Vista {
 
     /// Filtro LCL: marcas de f_red, f_res y f_sw, franja recomendada para f_res y ficha de comprobación.
     fn lcl(&mut self, inf: &Informe, valores: &HashMap<String, String>) {
-        let pal = tema::p();
         let datos = (
             inf.kv("Diseño", "Frecuencia de resonancia").and_then(|k| numero_de(&k.1)),
             valores.get("f0").and_then(|t| numero_de(t)),
@@ -903,17 +1073,19 @@ impl Vista {
         self.deco = Decoracion {
             marcas: vec![
                 MarcaV { x: f0, etiqueta: "f red".into(), color: None },
-                MarcaV { x: fr, etiqueta: "f res".into(), color: Some(pal.acento) },
-                MarcaV { x: fsw, etiqueta: "f sw".into(), color: Some(pal.senal) },
+                MarcaV { x: fr, etiqueta: "f res".into(), color: None },
+                MarcaV { x: fsw, etiqueta: "f sw".into(), color: None },
             ],
             // Sin franja cuando no existe zona recomendada (10·f_red ≥ f_sw/2): sombrearla invertida engañaría
             franjas: if 10.0 * f0 < fsw / 2.0 { vec![Franja { x0: 10.0 * f0, x1: fsw / 2.0 }] } else { vec![] },
         };
-        self.nota = "franja: zona recomendada para f_res".into();
+        if !self.deco.franjas.is_empty() {
+            self.nota = "zona recomendada para f_res".into();
+        }
         self.principal = Principal::Figuras(vec![fig]);
         let cumple = 10.0 * f0 < fr && fr < fsw / 2.0;
         self.fichas.truncate(5);
-        self.fichas.push(Ficha::nueva("Comprobación", if cumple { "✓" } else { "✗" }, "", &format!("{} < {} < {} Hz", cifras(10.0 * f0), cifras(fr), cifras(fsw / 2.0))));
+        self.fichas.push(Ficha::nueva("Comprobación", if cumple { "Correcto" } else { "Incumple" }, "", &format!("{} < {} < {} Hz", cifras(10.0 * f0), cifras(fr), cifras(fsw / 2.0))));
     }
 
     /// Curvas solares: I-V y P-V juntas, mapa P(G, T) bajo los parámetros y fichas con la potencia máxima.
@@ -1036,38 +1208,6 @@ fn guardar_informe_html(inf: &Informe) {
     }
 }
 
-/// Cabecera de una tarjeta: contenido a la izquierda y acciones a la derecha, sin que un título
-/// largo empuje las acciones fuera de la tarjeta.
-fn cabecera(ui: &mut egui::Ui, izquierda: impl FnOnce(&mut egui::Ui), derecha: impl FnOnce(&mut egui::Ui)) {
-    ui.horizontal(|ui| {
-        ui.set_min_height(24.0);
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            derecha(ui);
-            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 12.0;
-                izquierda(ui);
-            });
-        });
-    });
-}
-
-/// Fila de 30 px con la etiqueta a la izquierda y un control de `ancho` px alineado a la derecha.
-fn fila_con(ui: &mut egui::Ui, etiqueta: &str, ancho: f32, control: impl FnOnce(&mut egui::Ui)) {
-    let pal = tema::p();
-    let total = ui.available_width();
-    let (r, _) = ui.allocate_exact_size(Vec2::new(total, 30.0), Sense::hover());
-    let ancho = ancho.min(total * 0.66);
-    let r_control = Rect::from_min_size(Pos2::new(r.right() - ancho, r.top()), Vec2::new(ancho, 30.0));
-    ui.painter().with_clip_rect(Rect::from_min_max(r.min, Pos2::new(r_control.left() - 8.0, r.bottom()))).text(Pos2::new(r.left(), r.center().y), egui::Align2::LEFT_CENTER, etiqueta, egui::FontId::proportional(13.0), pal.texto);
-    let mut hijo = ui.new_child(UiBuilder::new().max_rect(r_control).layout(Layout::right_to_left(Align::Center)));
-    control(&mut hijo);
-}
-
-/// Botón de texto sin marco, para las acciones de las cabeceras de tarjeta.
-fn enlace(ui: &mut egui::Ui, texto: &str) -> egui::Response {
-    ui.add(egui::Button::new(egui::RichText::new(texto).size(12.5).color(tema::p().texto_2)).frame(false))
-}
-
 /// Aviso del informe sobre la gráfica: punto de estado y texto, con el fondo del nivel.
 fn banner(ui: &mut egui::Ui, nivel: &str, texto: &str) {
     let pal = tema::p();
@@ -1087,16 +1227,19 @@ fn banner(ui: &mut egui::Ui, nivel: &str, texto: &str) {
 /// Acciones CSV de la cabecera de una tabla (se llama dentro de un diseño de derecha a izquierda).
 fn acciones_tabla(ui: &mut egui::Ui, titulo: &str, col: &[String], fil: &[Vec<String>]) {
     for (etiqueta, sep) in [("CSV ;", ';'), ("CSV ,", ',')] {
-        if enlace(ui, etiqueta).on_hover_text(format!("Guarda la tabla en un archivo CSV separado por «{sep}»")).clicked() {
+        if ui::boton(ui, ui::EstiloBoton::Secundario, None, etiqueta, "", true).on_hover_text(format!("Guarda la tabla en un archivo CSV separado por «{sep}»")).clicked() {
             if let Some(r) = rfd::FileDialog::new().add_filter("CSV", &["csv"]).set_file_name(format!("{}.csv", nombre_de_archivo(if titulo.is_empty() { "tabla" } else { titulo }))).save_file() {
                 let _ = crate::app::escribir_atomico(&r, a_csv(col, fil, sep).as_bytes());
             }
         }
     }
-    if enlace(ui, "Copiar CSV").clicked() {
+    if ui::boton(ui, ui::EstiloBoton::Secundario, None, "Copiar CSV", "", true).clicked() {
         ui.ctx().copy_text(a_csv(col, fil, ','));
     }
 }
+
+/// Filas de una tabla secundaria que se muestran sin desplazamiento vertical.
+const FILAS_VISIBLES: usize = 12;
 
 /// Tarjeta con una tabla desplazable y sus acciones CSV.
 fn tarjeta_tabla(ui: &mut egui::Ui, titulo: &str, col: &[String], fil: &[Vec<String>], id: impl std::hash::Hash) {
@@ -1112,56 +1255,35 @@ fn tarjeta_tabla(ui: &mut egui::Ui, titulo: &str, col: &[String], fil: &[Vec<Str
 
 /// Alto natural de una tarjeta con una tabla de `filas` filas.
 fn alto_natural(filas: usize) -> f32 {
-    28.0 + 28.0 + 26.0 * (filas + 1) as f32 + 8.0
+    44.0 + 12.0 + 10.0 + 26.0 * (filas.min(FILAS_VISIBLES) + 1) as f32 + 12.0
 }
 
-/// Columna de 8: tarjeta principal y, debajo, las tablas secundarias con su alto natural (con desplazamiento si no caben).
-fn columna_resultados(ui: &mut egui::Ui, inf: &mut Informe, v: &Vista, c: &mut Compartido, sel: &mut usize, base: &str) {
-    let r = ui.max_rect();
-    let natural: Vec<f32> = v
-        .secundarias
-        .iter()
-        .map(|s| match s {
+/// Tarjeta principal con la altura `alto` y, debajo, las tablas secundarias a su altura natural.
+fn columna_resultados(ui: &mut egui::Ui, inf: &mut Informe, v: &Vista, c: &mut Compartido, sel: &mut usize, base: &str, alto: f32) {
+    let ancho = ui.available_width();
+    let (r, _) = ui.allocate_exact_size(Vec2::new(ancho, alto), Sense::hover());
+    let mut principal = ui.new_child(UiBuilder::new().max_rect(r));
+    tarjeta_principal(&mut principal, inf, v, c, sel, base);
+    for s in &v.secundarias {
+        let (titulo, col, fil, clave) = match s {
             Secundaria::Tabla(i) => match &inf.secciones[*i] {
-                Seccion::Tabla(_, _, fil) => alto_natural(fil.len()),
-                _ => 0.0,
+                Seccion::Tabla(t, col, fil) => (t.clone(), col.clone(), fil.clone(), ("t", *i)),
+                _ => continue,
             },
             Secundaria::Kv(i) => match &inf.secciones[*i] {
-                Seccion::Kv(_, it) => alto_natural(it.len()),
-                _ => 0.0,
+                Seccion::Kv(t, items) => (
+                    if t.is_empty() { "Resultados".into() } else { t.clone() },
+                    vec!["Magnitud".into(), "Valor".into(), "Unidad".into()],
+                    items.iter().map(|(a, b, u)| vec![a.clone(), b.clone(), u.clone()]).collect(),
+                    ("kv", *i),
+                ),
+                _ => continue,
             },
-        })
-        .collect();
-    let suma = natural.iter().sum::<f32>() + ui::HUECO * natural.len().saturating_sub(1) as f32;
-    let alto_sec = if natural.is_empty() { 0.0 } else { suma.min((r.height() * 0.28).max(130.0)) };
-    let alto_principal = r.height() - if alto_sec > 0.0 { alto_sec + ui::HUECO } else { 0.0 };
-    let mut principal = ui.new_child(UiBuilder::new().max_rect(Rect::from_min_size(r.min, Vec2::new(r.width(), alto_principal))));
-    tarjeta_principal(&mut principal, inf, v, c, sel, base);
-    if alto_sec <= 0.0 {
-        return;
+        };
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(ancho, alto_natural(fil.len())), Sense::hover());
+        let mut hijo = ui.new_child(UiBuilder::new().max_rect(rect));
+        tarjeta_tabla(&mut hijo, &titulo, &col, &fil, (base, clave));
     }
-    let r_sec = Rect::from_min_max(Pos2::new(r.left(), r.bottom() - alto_sec), r.max);
-    let mut zona = ui.new_child(UiBuilder::new().max_rect(r_sec));
-    egui::ScrollArea::vertical().id_salt(("secundarias", base)).auto_shrink([false, false]).show(&mut zona, |ui| {
-        ui.spacing_mut().item_spacing.y = ui::HUECO;
-        for (k, s) in v.secundarias.iter().enumerate() {
-            let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), natural[k]), Sense::hover());
-            let mut hijo = ui.new_child(UiBuilder::new().max_rect(rect));
-            match s {
-                Secundaria::Tabla(i) => {
-                    if let Seccion::Tabla(t, col, fil) = &inf.secciones[*i] {
-                        tarjeta_tabla(&mut hijo, t, col, fil, (base, "t", i));
-                    }
-                }
-                Secundaria::Kv(i) => {
-                    if let Seccion::Kv(t, items) = &inf.secciones[*i] {
-                        let fil: Vec<Vec<String>> = items.iter().map(|(a, b, u)| vec![a.clone(), b.clone(), u.clone()]).collect();
-                        tarjeta_tabla(&mut hijo, if t.is_empty() { "Resultados" } else { t }, &["Magnitud".into(), "Valor".into(), "Unidad".into()], &fil, (base, "kv", i));
-                    }
-                }
-            }
-        }
-    });
 }
 
 /// Gráfica de la sección `i`, si lo es.
@@ -1172,52 +1294,30 @@ fn figura_mut(inf: &mut Informe, i: usize) -> Option<&mut Figura> {
     }
 }
 
-/// Tarjeta grande de la zona de resultados: cabecera, avisos y gráfica, mapa o tabla principal.
+/// Tarjeta grande de la zona de resultados: gráfica, matriz de confusión o tabla principal.
 fn tarjeta_principal(ui: &mut egui::Ui, inf: &mut Informe, v: &Vista, c: &mut Compartido, sel: &mut usize, base: &str) {
-    ui::tarjeta_con_titulo(
-        ui,
-        "",
-        |_| {},
-        |ui| {
-            if v.selector.len() > 1 {
-                ui.horizontal_wrapped(|ui| {
-                    for (k, (_, t)) in v.selector.iter().enumerate() {
-                        if ui.selectable_label(k == *sel, t).clicked() {
-                            *sel = k;
-                        }
-                    }
-                });
-            }
-            match &v.principal {
-                Principal::Figuras(idx) => dibujar_figuras(ui, inf, v, idx, c),
-                Principal::Confusion(i) => dibujar_confusion(ui, inf, v, *i),
-                Principal::Tabla(i) => {
-                    if let Seccion::Tabla(t, col, fil) = &inf.secciones[*i] {
-                        cabecera(
-                            ui,
-                            |ui| {
-                                ui.label(egui::RichText::new(t).family(tema::semi()).size(14.5).color(tema::p().texto));
-                            },
-                            |ui| acciones_tabla(ui, t, col, fil),
-                        );
-                        avisos(ui, v);
+    match &v.principal {
+        Principal::Figuras(idx) => dibujar_figuras(ui, inf, v, idx, c, sel),
+        Principal::Confusion(i) => dibujar_confusion(ui, inf, v, *i),
+        Principal::Tabla(i) => {
+            if let Seccion::Tabla(t, col, fil) = &inf.secciones[*i] {
+                ui::tarjeta_con_titulo(
+                    ui,
+                    t,
+                    |ui| acciones_tabla(ui, t, col, fil),
+                    |ui| {
+                        textos(ui, v);
                         egui::ScrollArea::both().id_salt((base, "principal")).auto_shrink([false, false]).show(ui, |ui| tabla(ui, col, fil));
-                    }
-                }
-                Principal::Ninguna => {
-                    avisos(ui, v);
-                }
+                    },
+                );
             }
-        },
-    );
+        }
+        Principal::Ninguna => ui::tarjeta_con_titulo(ui, "", |_| {}, |ui| textos(ui, v)),
+    }
 }
 
-/// Avisos y textos del informe, uno bajo otro.
-fn avisos(ui: &mut egui::Ui, v: &Vista) {
-    for (n, t) in &v.avisos {
-        banner(ui, n, t);
-        ui.add_space(6.0);
-    }
+/// Textos del informe, uno bajo otro.
+fn textos(ui: &mut egui::Ui, v: &Vista) {
     for t in &v.textos {
         ui.label(egui::RichText::new(t).size(13.0).color(tema::p().texto_2));
     }
@@ -1233,108 +1333,124 @@ fn pie(ui: &mut egui::Ui, v: &Vista) {
     });
 }
 
-/// Una gráfica, o dos lado a lado, con su cabecera, leyenda y acciones.
-fn dibujar_figuras(ui: &mut egui::Ui, inf: &mut Informe, v: &Vista, idx: &[usize], c: &mut Compartido) {
+/// Una gráfica, o dos lado a lado, en una tarjeta con título, leyenda y botones «Encuadrar», «PNG» y «SVG».
+fn dibujar_figuras(ui: &mut egui::Ui, inf: &mut Informe, v: &Vista, idx: &[usize], c: &mut Compartido, sel: &mut usize) {
     let pal = tema::p();
     let titulo = if v.titulo.is_empty() { idx.first().and_then(|i| figura_mut(inf, *i)).map(|f| f.titulo().to_string()).unwrap_or_default() } else { v.titulo.clone() };
-    let mut accion: Option<Accion> = None;
-    let mut encuadrar = false;
-    cabecera(
+    let accion: RefCell<Option<Accion>> = RefCell::new(None);
+    let encuadrar = Cell::new(false);
+    let doble = idx.len() > 1;
+    ui::tarjeta_con_titulo(
         ui,
+        &titulo,
         |ui| {
-            ui.label(egui::RichText::new(&titulo).family(tema::semi()).size(14.5).color(pal.texto));
-            if let Some(Figura::D2(f)) = idx.first().and_then(|i| figura_mut(inf, *i)) {
-                f.leyenda_en_linea(ui, 6);
+            if !doble {
+                if ui::boton(ui, ui::EstiloBoton::Secundario, None, "SVG", "", true).on_hover_text("Guardar como SVG").clicked() {
+                    *accion.borrow_mut() = Some(Accion::Svg);
+                }
+                if ui::boton(ui, ui::EstiloBoton::Secundario, None, "PNG", "", true).on_hover_text("Guardar como PNG").clicked() {
+                    *accion.borrow_mut() = Some(Accion::Png(Rect::NOTHING));
+                }
             }
-            if !v.nota.is_empty() {
-                ui.label(egui::RichText::new(format!("· {}", v.nota)).size(12.0).color(pal.texto_2));
+            if ui::boton(ui, ui::EstiloBoton::Secundario, Some(Icono::Encuadrar), "Encuadrar", "", true).on_hover_text("Volver a ver todos los datos (o doble clic)").clicked() {
+                encuadrar.set(true);
             }
         },
         |ui| {
-            if idx.len() == 1 {
-                if enlace(ui, "SVG").on_hover_text("Guardar como SVG").clicked() {
-                    accion = Some(Accion::Svg);
-                }
-                if enlace(ui, "PNG").on_hover_text("Guardar como PNG").clicked() {
-                    accion = Some(Accion::Png(Rect::NOTHING));
-                }
-            }
-            if enlace(ui, "Encuadrar").on_hover_text("Volver a ver todos los datos (o doble clic)").clicked() {
-                encuadrar = true;
-            }
-        },
-    );
-    avisos(ui, v);
-    let alto = (ui.available_height() - if v.pie.is_empty() { 0.0 } else { 26.0 }).max(120.0);
-    let ancho = ui.available_width();
-    let (zona, _) = ui.allocate_exact_size(Vec2::new(ancho, alto), Sense::hover());
-    let celdas = ui::celdas(ancho, 2, ui::HUECO, &[1, 1]);
-    for (k, &i) in idx.iter().enumerate() {
-        let rect = if idx.len() == 1 { zona } else { Rect::from_min_size(Pos2::new(zona.left() + celdas[k].0, zona.top()), Vec2::new(celdas[k].1, alto)) };
-        let mut hijo = ui.new_child(UiBuilder::new().max_rect(rect));
-        let Some(f) = figura_mut(inf, i) else { continue };
-        let mut propia: Option<Accion> = if idx.len() == 1 { accion.take() } else { None };
-        if idx.len() > 1 {
-            hijo.horizontal(|ui| {
-                ui.label(egui::RichText::new(f.titulo().trim_start_matches("Curvas ")).family(tema::semi()).size(12.5).color(pal.texto));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if enlace(ui, "SVG").clicked() {
-                        propia = Some(Accion::Svg);
-                    }
-                    if enlace(ui, "PNG").clicked() {
-                        propia = Some(Accion::Png(Rect::NOTHING));
+            ui.spacing_mut().item_spacing.y = 6.0;
+            if v.selector.len() > 1 {
+                ui.horizontal_wrapped(|ui| {
+                    for (k, (_, t)) in v.selector.iter().enumerate() {
+                        if ui.selectable_label(k == *sel, t).clicked() {
+                            *sel = k;
+                        }
                     }
                 });
-            });
-        }
-        if encuadrar {
-            if let Figura::D2(g) = f {
-                g.vista = None;
             }
-        }
-        let arriba = hijo.cursor().top();
-        let alto_figura = rect.bottom() - arriba;
-        let lanzada = match f {
-            Figura::D2(g) => g.mostrar_decorada(&mut hijo, alto_figura, false, false, &v.deco),
-            Figura::D3(g) => g.mostrar(&mut hijo, alto_figura - 28.0),
-        };
-        let area_png = Rect::from_min_max(Pos2::new(rect.left(), arriba), rect.right_bottom());
-        let pedida = propia.map(|a| if let Accion::Png(_) = a { Accion::Png(area_png) } else { a });
-        for a in lanzada.into_iter().chain(pedida) {
-            c.exportar(hijo.ctx(), a, f);
-        }
-    }
-    ui.horizontal(|ui| pie(ui, v));
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 14.0;
+                if let Some(Figura::D2(f)) = idx.first().and_then(|i| figura_mut(inf, *i)) {
+                    f.leyenda_en_linea(ui, 6);
+                }
+                if !v.nota.is_empty() {
+                    if v.deco.franjas.is_empty() {
+                        ui.label(egui::RichText::new(&v.nota).size(12.0).color(pal.texto_2));
+                    } else {
+                        ui::leyenda(ui, pal.borde, &v.nota, ui::Muestra::Rayada);
+                    }
+                }
+            });
+            let alto = (ui.available_height() - if v.pie.is_empty() { 0.0 } else { 26.0 }).max(120.0);
+            let ancho = ui.available_width();
+            let (zona, _) = ui.allocate_exact_size(Vec2::new(ancho, alto), Sense::hover());
+            let celdas = ui::celdas(ancho, 2, ui::HUECO, &[1, 1]);
+            for (k, &i) in idx.iter().enumerate() {
+                let rect = if doble { Rect::from_min_size(Pos2::new(zona.left() + celdas[k].0, zona.top()), Vec2::new(celdas[k].1, alto)) } else { zona };
+                let mut hijo = ui.new_child(UiBuilder::new().max_rect(rect));
+                let Some(f) = figura_mut(inf, i) else { continue };
+                let mut propia: Option<Accion> = if doble { None } else { accion.borrow_mut().take() };
+                if doble {
+                    hijo.horizontal(|ui| {
+                        ui.label(egui::RichText::new(f.titulo().trim_start_matches("Curvas ")).family(tema::semi()).size(13.0).color(pal.texto));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui::boton(ui, ui::EstiloBoton::Secundario, None, "SVG", "", true).clicked() {
+                                propia = Some(Accion::Svg);
+                            }
+                            if ui::boton(ui, ui::EstiloBoton::Secundario, None, "PNG", "", true).clicked() {
+                                propia = Some(Accion::Png(Rect::NOTHING));
+                            }
+                        });
+                    });
+                }
+                if encuadrar.get() {
+                    if let Figura::D2(g) = f {
+                        g.vista = None;
+                    }
+                }
+                let arriba = hijo.cursor().top();
+                let alto_figura = rect.bottom() - arriba;
+                let lanzada = match f {
+                    Figura::D2(g) => g.mostrar_decorada(&mut hijo, alto_figura, false, false, &v.deco),
+                    Figura::D3(g) => g.mostrar(&mut hijo, alto_figura - 28.0),
+                };
+                let area_png = Rect::from_min_max(Pos2::new(rect.left(), arriba), rect.right_bottom());
+                let pedida = propia.map(|a| if let Accion::Png(_) = a { Accion::Png(area_png) } else { a });
+                for a in lanzada.into_iter().chain(pedida) {
+                    c.exportar(hijo.ctx(), a, f);
+                }
+            }
+            ui.horizontal(|ui| pie(ui, v));
+        },
+    );
 }
 
 /// Matriz de confusión como mapa de calor, con su leyenda y las variables creadas al pie.
 fn dibujar_confusion(ui: &mut egui::Ui, inf: &Informe, v: &Vista, i: usize) {
     let pal = tema::p();
     let Seccion::Tabla(t, col, fil) = &inf.secciones[i] else { return };
-    cabecera(
+    let (titulo, nota) = t.split_once(" (").map_or((t.as_str(), ""), |(a, b)| (a, b.trim_end_matches(')')));
+    ui::tarjeta_con_titulo(
         ui,
-        |ui| {
-            ui.label(egui::RichText::new(t).family(tema::semi()).size(14.5).color(pal.texto));
-        },
+        titulo,
         |ui| acciones_tabla(ui, t, col, fil),
+        |ui| {
+            if !nota.is_empty() {
+                ui.label(egui::RichText::new(nota).size(12.0).color(pal.texto_2));
+            }
+            let alto = (ui.available_height() - if v.pie.is_empty() { 44.0 } else { 78.0 }).max(120.0);
+            match mapa_confusion(col, fil) {
+                Some(m) => m.mostrar(ui, alto),
+                None => tabla(ui, col, fil),
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 14.0;
+                ui::leyenda(ui, pal.series[1], "aciertos (diagonal)", ui::Muestra::Cuadrado);
+                ui::leyenda(ui, pal.series[0], "confusiones", ui::Muestra::Cuadrado);
+            });
+            ui.horizontal(|ui| pie(ui, v));
+        },
     );
-    avisos(ui, v);
-    let alto = (ui.available_height() - 30.0).max(120.0);
-    match mapa_confusion(col, fil) {
-        Some(m) => m.mostrar(ui, alto),
-        None => tabla(ui, col, fil),
-    }
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-        for (color, texto) in [(pal.senal, "aciertos (diagonal)"), (pal.acento, "confusiones")] {
-            let (r, _) = ui.allocate_exact_size(Vec2::new(10.0, 14.0), Sense::hover());
-            ui.painter().rect_filled(Rect::from_center_size(r.center(), Vec2::splat(10.0)), 2.0, color);
-            ui.label(egui::RichText::new(texto).size(12.5).color(pal.texto));
-            ui.add_space(10.0);
-        }
-        pie(ui, v);
-    });
 }
 
 /// ¿Parece un número (con unidad o porcentaje)? Se alinea a la derecha en mono.
@@ -1493,12 +1609,12 @@ mod pruebas {
     fn la_comprobacion_del_lcl_usa_los_valores_con_que_se_calculo() {
         let v = Vista::de("pot_lcl", &informe_lcl("2095.4"), &valores(&[("f0", "50.0"), ("fsw", "5000.0")]), 0);
         assert_eq!(v.fichas.len(), 6);
-        assert_eq!(v.fichas[5], Ficha::nueva("Comprobación", "✓", "", "500 < 2095.4 < 2500 Hz"));
+        assert_eq!(v.fichas[5], Ficha::nueva("Comprobación", "Correcto", "", "500 < 2095.4 < 2500 Hz"));
         assert_eq!(v.deco.marcas.iter().map(|m| m.x).collect::<Vec<_>>(), vec![50.0, 2095.4, 5000.0]);
         assert_eq!((v.deco.franjas[0].x0, v.deco.franjas[0].x1), (500.0, 2500.0));
         assert!(v.pie.starts_with("Variables creadas") && v.avisos.is_empty());
         let fuera = Vista::de("pot_lcl", &informe_lcl("3000"), &valores(&[("f0", "50"), ("fsw", "5000")]), 0);
-        assert_eq!(fuera.fichas[5].valor, "✗");
+        assert_eq!(fuera.fichas[5].valor, "Incumple");
     }
 
     #[test]
@@ -1544,6 +1660,13 @@ mod pruebas {
         let m = mapa_confusion(col, fil).unwrap();
         assert_eq!((m.filas, m.columnas, m.z), (vec!["A".to_string(), "B".to_string()], vec!["A".to_string(), "B".to_string()], vec![vec![5.0, 1.0], vec![2.0, 7.0]]));
         assert!(mapa_confusion(&["Clase".to_string(), "A".to_string()], &[vec!["A".to_string(), "x".to_string()]]).is_none());
+    }
+
+    #[test]
+    fn la_etiqueta_de_una_variable_de_salida_se_acorta_y_se_capitaliza() {
+        assert_eq!(etiqueta_salida("Variable de los valores de diseño (SI)"), "Valores de diseño (SI)");
+        assert_eq!(etiqueta_salida("Variable de la respuesta en frecuencia"), "Respuesta en frecuencia");
+        assert_eq!(etiqueta_salida("Curva guardada"), "Curva guardada");
     }
 
     #[test]

@@ -61,9 +61,12 @@ Heliora 将光伏电站的工程工作集中在一个窗口中：
 
 ### 首页
 
-进入各模块，查看当前项目、电站 KPI、即将到期的工单和验证状态。如果自上次验证以来计算引擎或测试集发生了变化，
-该结果会被标记为“历史结果”，并提示重新验证。顶部栏提供命令面板（`Ctrl K`），并可在任何模块中点击
-“Simular”（仿真，`F5`）。
+首页带侧边栏（首页、新建、打开、参考、设置）：显示当前项目及其框图、电站 KPI、验证状态、可筛选的即将到期工单，
+以及各模块入口。如果自上次验证以来计算引擎或测试集发生了变化，该结果会被标记为“历史结果”，并提示重新验证。
+
+其他模块共用一个工作区：顶部栏提供命令面板（`Ctrl K`）和“Simular”（仿真，`F5`），其下是模块菜单、
+按模块显示工具的功能区（ribbon）、左侧的项目大纲（框图、脚本、数据、分析、维护计划和验证及其状态）、
+右侧的参数面板和状态栏。界面为单色，提供浅色和深色主题；颜色只用于状态和图表。
 
 ![首页](docs/capturas/inicio.png)
 
@@ -149,7 +152,7 @@ flowchart LR
 
 | 组件 | 技术 |
 |---|---|
-| 窗口 | Rust，[egui/eframe](https://github.com/emilk/egui) 0.33 |
+| 窗口 | Rust，[egui/eframe](https://github.com/emilk/egui) 0.33；SVG 图标使用 `egui_extras`；字体 Roboto 与 Roboto Mono（OFL） |
 | 计算引擎 | Python 3.12，使用 NumPy、SciPy、pandas、scikit-learn、statsmodels 和 pvlib |
 | 项目格式 | 包含规范化 JSON、CSV 或 Parquet 以及 `.py` 脚本的文件夹，便于用 Git 管理 |
 | 安装包 | python-build-standalone、Inno Setup（Windows）、`.app`/`.dmg`（macOS） |
@@ -190,7 +193,7 @@ heliora/
 |---|---|
 | [docs/desarrollo.md](docs/desarrollo.md) | 本地环境、文件索引、测试、结果溯源、项目与 Git、持续集成 |
 | [MECHANICS.md](MECHANICS.md) | 模型中每个数值的来源，以及哪些是估计值 |
-| [docs/diseno_motor_dae.md](docs/diseno_motor_dae.md) | DAE 引擎的设计方案（尚未实现） |
+| [docs/diseno_motor_dae.md](docs/diseno_motor_dae.md) | DAE 引擎的设计。引擎已实现，正在评审：修复 B1-B4 在 PR #2 中等待合并，设计文档待人工评审 |
 
 ## 许可证
 

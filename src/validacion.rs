@@ -1,4 +1,5 @@
 //! Página de validación: pruebas por fases, con el error numérico de cada medida.
+use crate::iconos::Icono;
 use crate::motor::Motor;
 use crate::tema;
 use crate::ui;
@@ -21,9 +22,38 @@ pub struct Validacion {
     categoria: String,
     solo_fallan: bool,
     prueba_sel: Option<String>,
+    aviso_oculto: bool,
 }
 
 impl Validacion {
+    /// Cinta de Validación: ejecutar (todas o hasta la fase elegida), detener, filtrar y refrescar el catálogo.
+    pub fn cinta(&mut self, ui: &mut egui::Ui, motor: &mut Motor) {
+        let libre = !self.ocupada();
+        ui::grupo_cinta(ui, "Ejecutar", |ui| {
+            if ui::boton_cinta(ui, Icono::Simular, "Ejecutar todas", false).clicked() && libre {
+                self.ejecutar(motor, 4);
+            }
+            let botones = [(Icono::Simular, "Ejecutar esta", libre && motor.listo), (Icono::Detener, "Detener", !libre)];
+            match ui::columna_cinta(ui, &botones) {
+                Some(0) => self.ejecutar(motor, self.fase_sel as u64 + 1),
+                Some(1) => {
+                    motor.llamar("cancelar", json!({}));
+                }
+                _ => {}
+            }
+        });
+        ui::grupo_cinta(ui, "Filtro", |ui| match ui::columna_cinta(ui, &[(Icono::Filtro, "Solo las que fallan", true), (Icono::Lista, "Todas las categorías", true)]) {
+            Some(0) => self.solo_fallan = !self.solo_fallan,
+            Some(1) => self.categoria.clear(),
+            _ => {}
+        });
+        ui::grupo_cinta(ui, "Banco", |ui| {
+            if ui::boton_cinta(ui, Icono::Validar, "Actualizar catálogo", false).clicked() {
+                self.pedir_catalogo(motor);
+            }
+        });
+    }
+
     pub fn nueva() -> Validacion {
         // El último resultado guardado, para verlo sin esperar a repetir las pruebas
         let carpeta = crate::motor::carpeta_motor();
@@ -37,7 +67,7 @@ impl Validacion {
                 procedencia = v["procedencia"].clone();
             }
         }
-        Validacion { resultado, id: None, avance: 0.0, texto: String::new(), error: String::new(), cuando, catalogo: Value::Null, id_catalogo: None, procedencia, fase_sel: 0, categoria: String::new(), solo_fallan: false, prueba_sel: None }
+        Validacion { resultado, id: None, avance: 0.0, texto: String::new(), error: String::new(), cuando, catalogo: Value::Null, id_catalogo: None, procedencia, fase_sel: 0, categoria: String::new(), solo_fallan: false, prueba_sel: None, aviso_oculto: false }
     }
 
     /// Pide al motor el catálogo de pruebas por fase.
@@ -80,6 +110,7 @@ impl Validacion {
                 self.procedencia = v["procedencia"].clone();
                 self.cuando = v["cuando"].as_str().unwrap_or("").to_string();
                 self.error.clear();
+                self.aviso_oculto = false;
             } else {
                 self.error = err.to_string();
             }
@@ -129,31 +160,31 @@ impl Validacion {
         self.resultado.as_array()?.iter().find(|x| x["fase"].as_u64() == Some(n))
     }
 
+    /// Pantalla de Validación: título, fichas de fase, tabla de pruebas y detalle de la prueba elegida.
     pub fn ui(&mut self, ui: &mut egui::Ui, motor: &mut Motor) {
-        let pal = tema::p();
         ui::pagina(ui, |ui| {
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 2.0;
-                ui.label(egui::RichText::new("Validación por fases").size(22.0).family(tema::semi()).color(pal.texto));
-                ui.label(egui::RichText::new("Una fase no se ejecuta hasta que la anterior pasa todas sus pruebas · alrededor de dos minutos").color(pal.texto_2));
+            ui.horizontal(|ui| {
+                ui::titulo_pantalla(ui, "Validación por fases", "Una fase no se ejecuta hasta que la anterior pasa todas sus pruebas · alrededor de dos minutos");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| self.accion_principal(ui, motor));
             });
             if !self.error.is_empty() {
                 tema::estado(ui, tema::Nivel::Falla, &self.error.clone());
             }
-            if let Some(m) = self.historica() {
-                tema::estado(ui, tema::Nivel::Alerta, &format!("Resultados históricos: {m} desde esta ejecución. Vuelve a validar para comprobar la versión actual."));
+            if let Some(m) = self.historica().filter(|_| !self.aviso_oculto) {
+                if ui::aviso_negro(ui, &format!("Resultados históricos: {m} desde esta ejecución. Vuelve a validar para comprobar la versión actual.")) {
+                    self.aviso_oculto = true;
+                }
             }
             let resumen = self.resumen_fases();
             ui::fila(ui, &[2, 2, 2, 2, 4], 84.0, |i, ui| {
                 if i < 4 {
-                    let r = &resumen[i];
-                    if ficha_fase(ui, i as u64 + 1, r, self.fase_sel == i).clicked() {
+                    if self.ficha_fase(ui, i, &resumen[i]).clicked() {
                         self.fase_sel = i;
                         self.categoria.clear();
                         self.prueba_sel = None;
                     }
                 } else {
-                    self.ficha_ultima(ui, motor);
+                    self.ficha_ultima(ui);
                 }
             });
             let alto = (ui.available_height() - ui::MARGEN).max(420.0);
@@ -169,46 +200,54 @@ impl Validacion {
         });
     }
 
-    fn ficha_ultima(&mut self, ui: &mut egui::Ui, motor: &mut Motor) {
+    /// Botón principal del título: ejecutar todas las fases o, durante la ejecución, detenerla.
+    fn accion_principal(&mut self, ui: &mut egui::Ui, motor: &mut Motor) {
+        if self.ocupada() {
+            if ui::boton(ui, ui::EstiloBoton::Secundario, Some(Icono::Detener), "Detener", "", false).clicked() {
+                motor.llamar("cancelar", json!({}));
+            }
+        } else {
+            let texto = if self.historica().is_some() { "Volver a validar" } else { "Ejecutar todas" };
+            if ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::SimularLleno), texto, "", false).clicked() {
+                self.ejecutar(motor, 4);
+            }
+        }
+    }
+
+    /// Ficha seleccionable de una fase: estado con su punto, pruebas superadas sobre el total y nombre.
+    fn ficha_fase(&self, ui: &mut egui::Ui, i: usize, r: &ResumenFase) -> egui::Response {
         let pal = tema::p();
-        ui::tarjeta_con_titulo(
-            ui,
-            "",
-            |_| {},
-            |ui| {
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 3.0;
-                        ui.label(egui::RichText::new("Última ejecución").size(12.5).color(pal.texto_2));
-                        if self.id.is_some() {
-                            ui.add(egui::ProgressBar::new(self.avance).desired_width(150.0).show_percentage());
-                            ui.label(egui::RichText::new(&self.texto).size(11.5).color(pal.texto_2));
-                        } else if self.cuando.is_empty() {
-                            ui.label(egui::RichText::new("Sin ejecutar").font(tema::fuente_mono(15.0)).color(pal.texto));
-                        } else {
-                            ui.label(egui::RichText::new(&self.cuando).font(tema::fuente_mono(16.0)).color(pal.texto));
-                            if let Some(h) = self.procedencia["sha256"].as_str() {
-                                let linea = format!("banco {} · motor {}", &h[..h.len().min(12)], self.procedencia["version"].as_str().unwrap_or("?"));
-                                let (linea, color, ayuda) = match self.historica() {
-                                    Some(m) => (format!("{linea} · histórica"), pal.alerta, format!("{m}\n{h}")),
-                                    None => (linea, pal.texto_3, h.to_string()),
-                                };
-                                ui.label(egui::RichText::new(linea).font(tema::fuente_mono(11.0)).color(color)).on_hover_text(ayuda);
-                            }
-                        }
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if self.id.is_some() {
-                            if ui.button("■ Detener").clicked() {
-                                motor.llamar("cancelar", json!({}));
-                            }
-                        } else if tema::boton_principal(ui, if self.historica().is_some() { "▶ Volver a validar" } else { "▶ Ejecutar todas" }).clicked() {
-                            self.ejecutar(motor, 4);
-                        }
-                    });
-                });
-            },
-        );
+        let rect = ui.max_rect();
+        let (color, texto) = match r.nivel {
+            Some(tema::Nivel::Ok) => (pal.ok, "Superada"),
+            Some(tema::Nivel::Alerta) => (pal.alerta, "Bloqueada"),
+            Some(tema::Nivel::Falla) => (pal.falla, "Con fallos"),
+            None => (pal.texto_3, "Sin ejecutar"),
+        };
+        let cuenta = match (r.bien, r.total) {
+            (Some(b), Some(t)) => format!("{b}/{t}"),
+            (None, Some(t)) => format!("—/{t}"),
+            _ => String::new(),
+        };
+        // Los espacios iniciales dejan sitio al punto de estado, que se dibuja sobre la ficha.
+        let resp = ui::ficha_kpi(ui, &format!("    Fase {} · {texto}", i + 1), &cuenta, "", TITULOS_FASE[i], Some(self.fase_sel == i));
+        ui.painter().circle_filled(Pos2::new(rect.left() + 17.0, rect.top() + 18.0), 4.0, color);
+        resp
+    }
+
+    /// Ficha de la última ejecución: fecha, huella del banco y versión del motor; avance mientras se ejecuta.
+    fn ficha_ultima(&self, ui: &mut egui::Ui) {
+        if self.ocupada() {
+            ui::ficha_kpi(ui, "Última ejecución", &format!("{:.0} %", self.avance * 100.0), "", &self.texto, None);
+        } else if self.cuando.is_empty() {
+            ui::ficha_kpi(ui, "Última ejecución", "Sin ejecutar", "", "", None);
+        } else {
+            let nota = self.procedencia["sha256"].as_str().map_or(String::new(), |h| {
+                let linea = format!("banco {} · motor {}", &h[..h.len().min(12)], self.procedencia["version"].as_str().unwrap_or("?"));
+                if self.historica().is_some() { format!("{linea} · histórica") } else { linea }
+            });
+            ui::ficha_kpi(ui, "Última ejecución", &self.cuando, "", &nota, None);
+        }
     }
 
     /// Pruebas de la fase elegida tras aplicar el filtro de categoría y «Solo las que fallan».
@@ -227,40 +266,47 @@ impl Validacion {
         ui::tarjeta_plena(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             let ancho = ui.available_width();
-            ui.allocate_ui(Vec2::new(ancho, 52.0), |ui| {
+            ui.allocate_ui(Vec2::new(ancho, 44.0), |ui| {
                 ui.horizontal_centered(|ui| {
                     ui.add_space(16.0);
                     ui.label(egui::RichText::new(titulo).size(15.0).family(tema::semi()).color(pal.texto));
-                    ui.add_space(8.0);
                     if let Some(f) = &fase {
-                        let mut cats: Vec<(String, usize)> = vec![];
-                        for p in f["pruebas"].as_array().into_iter().flatten() {
-                            let c = categoria(p);
-                            match cats.iter_mut().find(|(k, _)| *k == c) {
-                                Some(e) => e.1 += 1,
-                                None => cats.push((c, 1)),
-                            }
-                        }
-                        cats.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-                        if filtro(ui, "Todas", self.categoria.is_empty()).clicked() {
-                            self.categoria.clear();
-                        }
-                        for (c, _) in cats.iter().take(4) {
-                            if filtro(ui, c, self.categoria == *c).clicked() {
-                                self.categoria = c.clone();
-                            }
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.add_space(16.0);
-                            ui.checkbox(&mut self.solo_fallan, "Solo las que fallan");
-                        });
+                        let total = f["pruebas"].as_array().map_or(0, Vec::len);
+                        ui.label(egui::RichText::new(format!("{total} pruebas")).size(12.5).color(pal.texto_2));
                     }
                 });
             });
+            if let Some(f) = &fase {
+                let mut cats: Vec<(String, usize)> = vec![];
+                for p in f["pruebas"].as_array().into_iter().flatten() {
+                    let c = categoria(p);
+                    match cats.iter_mut().find(|(k, _)| *k == c) {
+                        Some(e) => e.1 += 1,
+                        None => cats.push((c, 1)),
+                    }
+                }
+                cats.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                ui.allocate_ui(Vec2::new(ancho, 44.0), |ui| {
+                    ui.horizontal_centered(|ui| {
+                        ui.add_space(16.0);
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        if ui::chip(ui, "Todas", self.categoria.is_empty()).clicked() {
+                            self.categoria.clear();
+                        }
+                        for (c, _) in cats.iter().take(5) {
+                            if ui::chip(ui, c, self.categoria == *c).clicked() {
+                                self.categoria = c.clone();
+                            }
+                        }
+                        ui.add_space(8.0);
+                        ui.checkbox(&mut self.solo_fallan, "Solo las que fallan");
+                    });
+                });
+            }
             let (linea, _) = ui.allocate_exact_size(Vec2::new(ancho, 1.0), Sense::hover());
             ui.painter().rect_filled(linea, 0.0, pal.linea);
             let Some(f) = fase else {
-                ui::estado_vacio(ui, "Esta fase aún no se ha ejecutado. Pulsa «Ejecutar todas» para comprobar el motor.", "");
+                ui::estado_vacio(ui, "Esta fase aún no se ha ejecutado.", "");
                 return;
             };
             if let Some(m) = f["motivo"].as_str() {
@@ -283,27 +329,26 @@ impl Validacion {
                 }
                 for (i, p) in visibles.iter().enumerate() {
                     let nombre = p["nombre"].as_str().unwrap_or("");
-                    let (r, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 38.0), Sense::click());
+                    let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 43.0), Sense::hover());
                     let marcada = self.prueba_sel.as_deref() == Some(nombre);
                     if marcada {
-                        ui.painter().rect_filled(r, 0.0, pal.acento_fondo);
-                    } else {
-                        ui::fondo_fila(ui, r, i);
-                    }
-                    if resp.hovered() && !marcada {
+                        ui.painter().rect_filled(r, 0.0, pal.campo);
+                    } else if ui.rect_contains_pointer(r) {
                         ui.painter().rect_filled(r, 0.0, pal.realce);
                     }
+                    ui::fondo_fila(ui, r, i);
                     let ok = p["ok"].as_bool() == Some(true);
                     let (c_nombre, c_cat, c_err) = columnas(r);
-                    ui.painter().circle_filled(Pos2::new(r.left() + 24.0, r.center().y), 3.5, if ok { pal.ok } else { pal.falla });
-                    ui.painter().with_clip_rect(c_nombre).text(Pos2::new(c_nombre.left(), r.center().y), Align2::LEFT_CENTER, nombre, FontId::proportional(13.0), if ok { pal.texto } else { pal.falla });
-                    let g = ui.painter().layout_no_wrap(categoria(p), FontId::proportional(12.0), pal.texto);
-                    let rc = Rect::from_min_size(Pos2::new(c_cat.left(), r.center().y - 11.0), Vec2::new((g.size().x + 16.0).min(c_cat.width()), 22.0));
-                    ui.painter().rect(rc, egui::CornerRadius::same(11), pal.panel, Stroke::new(1.0_f32, pal.linea), egui::StrokeKind::Inside);
-                    ui.painter().with_clip_rect(rc).galley(Pos2::new(rc.left() + 8.0, r.center().y - g.size().y / 2.0), g, pal.texto);
+                    ui::punto_estado(ui.painter(), Pos2::new(r.left() + 24.0, r.center().y), if ok { ui::EstadoNodo::Listo } else { ui::EstadoNodo::Pendiente });
+                    ui.painter().with_clip_rect(c_nombre).text(Pos2::new(c_nombre.left(), r.center().y), Align2::LEFT_CENTER, nombre, FontId::proportional(13.0), pal.texto);
+                    let rc = Rect::from_min_size(Pos2::new(c_cat.left(), r.center().y - 11.0), Vec2::new(c_cat.width(), 22.0));
+                    let mut chip = ui.new_child(egui::UiBuilder::new().max_rect(rc));
+                    chip.set_clip_rect(rc.intersect(ui.clip_rect()));
+                    ui::chip(&mut chip, &categoria(p), false);
                     let err = peor_error(p).unwrap_or_else(|| "—".into());
-                    ui.painter().text(Pos2::new(c_err.right(), r.center().y), Align2::RIGHT_CENTER, err, tema::fuente_mono(12.5), if ok { pal.texto_2 } else { pal.falla });
-                    if resp.clicked() {
+                    ui.painter().text(Pos2::new(c_err.right(), r.center().y), Align2::RIGHT_CENTER, err, tema::fuente_mono(12.5), pal.texto);
+                    // La interacción se crea la última para que la fila reciba el clic sobre el chip.
+                    if ui.interact(r, ui.id().with(("fila_prueba", i)), Sense::click()).clicked() {
                         self.prueba_sel = Some(nombre.to_string());
                     }
                 }
@@ -313,10 +358,11 @@ impl Validacion {
 
     fn cabecera_columnas(&self, ui: &mut egui::Ui) {
         let pal = tema::p();
-        let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::hover());
+        let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::hover());
+        ui.painter().rect_filled(r, 0.0, pal.fondo);
         let (c_nombre, c_cat, c_err) = columnas(r);
         for (t, x, a) in [("Prueba", c_nombre.left(), Align2::LEFT_CENTER), ("Categoría", c_cat.left(), Align2::LEFT_CENTER), ("Error numérico", c_err.right(), Align2::RIGHT_CENTER)] {
-            ui.painter().text(Pos2::new(x, r.center().y), a, ui::mayusculas(t), FontId::proportional(10.5), pal.texto_2);
+            ui.painter().text(Pos2::new(x, r.center().y), a, t, FontId::new(13.0, tema::semi()), pal.texto);
         }
         ui.painter().line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0_f32, pal.linea));
     }
@@ -325,59 +371,54 @@ impl Validacion {
         let pal = tema::p();
         let n = self.fase_sel as u64 + 1;
         let prueba = self.fase(n).and_then(|f| f["pruebas"].as_array()).and_then(|a| a.iter().find(|p| p["nombre"].as_str() == self.prueba_sel.as_deref())).cloned();
-        ui::tarjeta_plena(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            let Some(p) = prueba else {
-                ui::estado_vacio(ui, "Elige una prueba de la tabla para ver lo esperado y lo medido.", "");
-                return;
-            };
-            let ok = p["ok"].as_bool() == Some(true);
-            let alto_pie = 52.0;
-            let alto_cuerpo = (ui.available_height() - alto_pie).max(100.0);
-            let ancho = ui.available_width();
-            ui.allocate_ui(Vec2::new(ancho, alto_cuerpo), |ui| {
-                egui::ScrollArea::vertical().id_salt("val_detalle").auto_shrink([false, false]).show(ui, |ui| {
-                    egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 14)).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.spacing_mut().item_spacing.y = 4.0;
-                        ui.horizontal(|ui| {
-                            ui::etiqueta(ui, &categoria(&p), pal.texto_2);
-                            tema::estado(ui, if ok { tema::Nivel::Ok } else { tema::Nivel::Falla }, if ok { "Superada" } else { "Con fallos" });
-                        });
-                        ui.add_space(6.0);
-                        ui.label(egui::RichText::new(p["nombre"].as_str().unwrap_or("")).size(16.0).family(tema::semi()).color(pal.texto));
-                        if let Some(d) = p["doc"].as_str().filter(|d| !d.is_empty()) {
-                            ui.label(egui::RichText::new(d).color(pal.texto_2));
-                        }
-                        if let Some(r) = p["referencia"].as_str().filter(|r| !r.is_empty()) {
-                            ui.label(egui::RichText::new(format!("Referencia: {r}")).font(tema::fuente_mono(11.5)).color(pal.acento_texto));
-                        }
-                        ui.add_space(10.0);
-                        medidas(ui, &p);
-                        if let Some(ex) = p["excepcion"].as_str() {
-                            ui.add_space(6.0);
-                            ui.label(egui::RichText::new(ex).font(tema::fuente_mono(11.0)).color(pal.falla));
-                        }
+        ui::tarjeta_con_titulo(
+            ui,
+            "Prueba",
+            |_| {},
+            |ui| {
+                let Some(p) = prueba else {
+                    ui::estado_vacio(ui, "Elige una prueba de la tabla para ver lo esperado y lo medido.", "");
+                    return;
+                };
+                let ok = p["ok"].as_bool() == Some(true);
+                let alto = (ui.available_height() - 50.0).max(100.0);
+                egui::ScrollArea::vertical().id_salt("val_detalle").max_height(alto).auto_shrink([false, false]).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        ui::chip(ui, &categoria(&p), false);
+                        let (r, _) = ui.allocate_exact_size(Vec2::new(10.0, 22.0), Sense::hover());
+                        ui::punto_estado(ui.painter(), r.center(), if ok { ui::EstadoNodo::Listo } else { ui::EstadoNodo::Pendiente });
+                        ui.label(egui::RichText::new(if ok { "Superada" } else { "Con fallos" }).size(13.0).color(pal.texto));
                     });
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new(p["nombre"].as_str().unwrap_or("")).size(16.0).family(tema::semi()).color(pal.texto));
+                    if let Some(d) = p["doc"].as_str().filter(|d| !d.is_empty()) {
+                        ui.label(egui::RichText::new(d).color(pal.texto_2));
+                    }
+                    if let Some(r) = p["referencia"].as_str().filter(|r| !r.is_empty()) {
+                        ui.label(egui::RichText::new(format!("Referencia: {r}")).font(tema::fuente_mono(11.5)).color(pal.texto_2));
+                    }
+                    ui.add_space(10.0);
+                    medidas(ui, &p);
+                    if let Some(ex) = p["excepcion"].as_str() {
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new(ex).font(tema::fuente_mono(11.0)).color(pal.texto));
+                    }
                 });
-            });
-            let (linea, _) = ui.allocate_exact_size(Vec2::new(ancho, 1.0), Sense::hover());
-            ui.painter().rect_filled(linea, 0.0, pal.linea);
-            ui.allocate_ui(Vec2::new(ancho, alto_pie), |ui| {
-                ui.horizontal_centered(|ui| {
-                    ui.add_space(16.0);
+                ui.add_space(8.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let libre = !self.ocupada() && motor.listo;
-                    let r = ui.add_enabled(libre, egui::Button::new("Ejecutar esta"));
-                    let r = r.on_hover_text(format!("El motor solo ejecuta por fases: esto ejecuta las fases 1 a {n}, no solo esta prueba."));
-                    if r.clicked() {
+                    let ayuda = format!("El motor solo ejecuta por fases: esto ejecuta las fases 1 a {n}, no solo esta prueba.");
+                    let r = ui.add_enabled_ui(libre, |ui| ui::boton(ui, ui::EstiloBoton::Principal, Some(Icono::Simular), "Ejecutar esta", "", false)).inner;
+                    if r.on_hover_text(&ayuda).on_disabled_hover_text(&ayuda).clicked() {
                         self.ejecutar(motor, n);
                     }
                 });
-            });
-        });
+            },
+        );
     }
 }
-
 /// Resumen de una fase para la portada.
 /// Compara la procedencia de una validación guardada con la huella actual del banco y del motor.
 ///
@@ -465,56 +506,6 @@ fn columnas(r: Rect) -> (Rect, Rect, Rect) {
     (c_nombre, c_cat, c_err)
 }
 
-/// Filtro de categoría: texto con fondo de acento cuando está activo.
-fn filtro(ui: &mut egui::Ui, texto: &str, activo: bool) -> egui::Response {
-    let pal = tema::p();
-    let g = ui.painter().layout_no_wrap(texto.to_string(), FontId::proportional(13.0), pal.texto);
-    let (r, resp) = ui.allocate_exact_size(Vec2::new(g.size().x + 22.0, 28.0), Sense::click());
-    if activo {
-        ui.painter().rect(r, tema::radio() as f32, pal.acento_fondo, Stroke::new(1.0_f32, pal.acento), egui::StrokeKind::Inside);
-    } else if resp.hovered() {
-        ui.painter().rect_filled(r, tema::radio() as f32, pal.realce);
-    }
-    ui.painter().text(r.center(), Align2::CENTER_CENTER, texto, FontId::proportional(13.0), if activo { pal.acento_texto } else { pal.texto_2 });
-    resp
-}
-
-/// Ficha seleccionable de una fase: número y estado arriba, nombre y pruebas superadas abajo.
-fn ficha_fase(ui: &mut egui::Ui, n: u64, r: &ResumenFase, activa: bool) -> egui::Response {
-    let pal = tema::p();
-    let rect = ui.max_rect();
-    let resp = ui.interact(rect, ui.id().with(("ficha_fase", n)), Sense::click());
-    let fondo = if activa {
-        pal.acento_fondo
-    } else if resp.hovered() {
-        pal.realce
-    } else {
-        pal.panel
-    };
-    ui.painter().rect(rect, tema::radio_ventana() as f32, fondo, Stroke::new(1.0_f32, if activa { pal.acento } else { pal.linea }), egui::StrokeKind::Inside);
-    let p = ui.painter_at(rect.shrink(1.0));
-    let x = rect.left() + 14.0;
-    p.text(Pos2::new(x, rect.top() + 12.0), Align2::LEFT_TOP, format!("Fase {n}"), FontId::proportional(12.0), pal.texto_2);
-    let (color, texto) = match r.nivel {
-        Some(tema::Nivel::Ok) => (pal.ok, "Superada"),
-        Some(tema::Nivel::Alerta) => (pal.alerta, "Bloqueada"),
-        Some(tema::Nivel::Falla) => (pal.falla, "Con fallos"),
-        None => (pal.texto_3, "Sin ejecutar"),
-    };
-    let g = p.layout_no_wrap(texto.to_string(), FontId::proportional(12.0), color);
-    let xr = rect.right() - 14.0;
-    p.circle_filled(Pos2::new(xr - g.size().x - 10.0, rect.top() + 19.0), 3.5, color);
-    p.galley(Pos2::new(xr - g.size().x, rect.top() + 12.0), g, color);
-    p.text(Pos2::new(x, rect.top() + 32.0), Align2::LEFT_TOP, TITULOS_FASE[n as usize - 1], tema::fuente_semi(14.0), pal.texto);
-    let cuenta = match (r.bien, r.total) {
-        (Some(b), Some(t)) => format!("{b}/{t}"),
-        (None, Some(t)) => format!("—/{t}"),
-        _ => String::new(),
-    };
-    p.text(Pos2::new(x, rect.bottom() - 12.0), Align2::LEFT_BOTTOM, cuenta, tema::fuente_mono(12.0), pal.texto_2);
-    resp
-}
-
 /// Esperado frente a medido de cada comprobación y, si hay varias, su error relativo a la tolerancia.
 fn medidas(ui: &mut egui::Ui, p: &Value) {
     let pal = tema::p();
@@ -523,16 +514,21 @@ fn medidas(ui: &mut egui::Ui, p: &Value) {
         ui.label(egui::RichText::new("Esta prueba no devuelve medidas numéricas.").color(pal.texto_2));
         return;
     }
-    ui.label(egui::RichText::new(ui::mayusculas("Esperado frente a medido")).size(10.5).family(tema::semi()).color(pal.texto_2));
+    ui::titulo_seccion(ui, "Esperado frente a medido");
     ui.add_space(4.0);
     for m in &ms {
         let mok = m["ok"].as_bool() == Some(true);
         let num = |k: &str| crate::grafica::numero(m[k].as_f64().unwrap_or(f64::NAN));
-        ui.label(egui::RichText::new(m["nombre"].as_str().unwrap_or("")).color(if mok { pal.texto } else { pal.falla }));
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let (r, _) = ui.allocate_exact_size(Vec2::new(10.0, 18.0), Sense::hover());
+            ui::punto_estado(ui.painter(), r.center(), if mok { ui::EstadoNodo::Listo } else { ui::EstadoNodo::Pendiente });
+            ui.label(egui::RichText::new(m["nombre"].as_str().unwrap_or("")).color(pal.texto));
+        });
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 14.0;
             if es_booleana(m) {
-                tema::estado(ui, if mok { tema::Nivel::Ok } else { tema::Nivel::Falla }, if mok { "se cumple" } else { "no se cumple" });
+                ui.label(egui::RichText::new(if mok { "se cumple" } else { "no se cumple" }).font(tema::fuente_mono(12.0)).color(pal.texto));
             } else {
                 let relativo = m["relativo"].as_bool() == Some(true);
                 let unidad = if relativo { "" } else { m["unidad"].as_str().unwrap_or("") };
@@ -540,7 +536,7 @@ fn medidas(ui: &mut egui::Ui, p: &Value) {
                 let tol = if relativo { format!("{:.2} %", tol * 100.0) } else { format!("{tol:.1e}") };
                 ui.label(egui::RichText::new(format!("esp. {}", num("referencia"))).font(tema::fuente_mono(12.0)).color(pal.texto_2));
                 ui.label(egui::RichText::new(format!("med. {} {unidad}", num("valor"))).font(tema::fuente_mono(12.0)).color(pal.texto));
-                ui.label(egui::RichText::new(format!("err. {} / {tol}", texto_error(m))).font(tema::fuente_mono(12.0)).color(if mok { pal.ok } else { pal.falla }));
+                ui.label(egui::RichText::new(format!("err. {} / {tol}", texto_error(m))).font(tema::fuente_mono(12.0)).color(pal.texto));
             }
         });
         ui.add_space(6.0);

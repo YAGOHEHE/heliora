@@ -61,10 +61,16 @@ Se descargan desde [Releases](https://github.com/YAGOHEHE/heliora/releases) (ver
 
 ### Inicio
 
-Acceso a los módulos, el proyecto abierto, los KPIs de la planta, las próximas órdenes de trabajo y el
-estado de la validación. Si el motor o el banco de pruebas cambiaron desde la última validación, se
-marca como histórica y ofrece volver a validar. La barra superior lleva el buscador de comandos
-(`Ctrl K`) y «Simular» (`F5`) desde cualquier módulo.
+Portada con barra lateral (Inicio, Nuevo, Abrir, Referencia, Ajustes): el proyecto abierto con su
+diagrama, los KPIs de la planta, el estado de la validación, las próximas órdenes de trabajo con
+filtros y el acceso a los módulos. Si el motor o el banco de pruebas cambiaron desde la última
+validación, se marca como histórica y ofrece volver a validar.
+
+El resto de módulos comparte un espacio de trabajo: barra superior con el buscador de comandos
+(`Ctrl K`) y «Simular» (`F5`), menú de módulos, cinta con las herramientas de cada módulo, esquema del
+proyecto a la izquierda (diagramas, scripts, datos, análisis, plan de mantenimiento y validación, con
+su estado), panel de parámetros a la derecha y barra de estado. La interfaz es monocroma, con temas
+claro y oscuro; el color se reserva para los estados y las gráficas.
 
 ![Inicio](docs/capturas/inicio.png)
 
@@ -158,7 +164,7 @@ flowchart LR
 
 | Componente | Tecnología |
 |---|---|
-| Ventana | Rust, [egui/eframe](https://github.com/emilk/egui) 0.33 |
+| Ventana | Rust, [egui/eframe](https://github.com/emilk/egui) 0.33; iconos SVG con `egui_extras`; Roboto y Roboto Mono (OFL) |
 | Motor de cálculo | Python 3.12 con NumPy, SciPy, pandas, scikit-learn, statsmodels y pvlib |
 | Formato de proyecto | Carpeta con JSON canónico, CSV o Parquet y scripts `.py`, pensada para Git |
 | Instaladores | python-build-standalone, Inno Setup (Windows), `.app`/`.dmg` (macOS) |
@@ -197,7 +203,7 @@ heliora/
 |---|---|
 | [docs/desarrollo.md](docs/desarrollo.md) | Entorno local, mapa de archivos, pruebas, procedencia de resultados, proyectos y Git, CI |
 | [MECHANICS.md](MECHANICS.md) | De dónde sale cada valor del modelo y cuáles son estimados |
-| [docs/diseno_motor_dae.md](docs/diseno_motor_dae.md) | Diseño propuesto del motor DAE (sin construir) |
+| [docs/diseno_motor_dae.md](docs/diseno_motor_dae.md) | Diseño del motor DAE. El motor está construido y en revisión: los arreglos B1-B4 esperan en el PR #2 y el diseño, la revisión humana |
 
 ## Licencia
 

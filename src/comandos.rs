@@ -106,7 +106,7 @@ pub fn comandos_fijos() -> Vec<Entrada> {
         ),
         Entrada::nueva(
             "Comando",
-            "Tema Instrumento (oscuro)",
+            "Tema oscuro",
             "Apariencia",
             Accion::Tema(Modo::Oscuro),
         ),
