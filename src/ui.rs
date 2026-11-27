@@ -739,6 +739,8 @@ pub enum Muestra {
 pub fn dibujar_muestra(pt: &egui::Painter, r: Rect, color: Color32, m: Muestra) {
     let pal = tema::p();
     let c = r.center();
+    // Las marcas cuadradas ocupan el rectángulo menos 1 px por lado, entre 6 y 12 px
+    let lado = (r.width().min(r.height()) - 2.0).clamp(6.0, 12.0);
     match m {
         Muestra::Linea => {
             pt.line_segment([Pos2::new(r.left(), c.y), Pos2::new(r.right(), c.y)], Stroke::new(2.0_f32, color));
@@ -756,13 +758,14 @@ pub fn dibujar_muestra(pt: &egui::Painter, r: Rect, color: Color32, m: Muestra) 
             }
         }
         Muestra::Cuadrado => {
-            pt.rect_filled(Rect::from_center_size(c, Vec2::splat(9.0)), 0.0, color);
+            pt.rect_filled(Rect::from_center_size(c, Vec2::splat(lado)), 0.0, color);
         }
         Muestra::CuadradoContorno => {
-            pt.rect(Rect::from_center_size(c, Vec2::splat(9.0)), 0.0, color.gamma_multiply(0.35), Stroke::new(1.5_f32, color), StrokeKind::Inside);
+            pt.rect(Rect::from_center_size(c, Vec2::splat(lado)), 0.0, color.gamma_multiply(0.35), Stroke::new(1.5_f32, color), StrokeKind::Inside);
         }
         Muestra::Rombo => {
-            let d = 5.5;
+            // Un cuadrado del mismo lado girado 45° y reducido al 80 %
+            let d = lado * 0.8 * std::f32::consts::FRAC_1_SQRT_2;
             pt.add(egui::Shape::convex_polygon(vec![c + Vec2::new(0.0, -d), c + Vec2::new(d, 0.0), c + Vec2::new(0.0, d), c + Vec2::new(-d, 0.0)], color, Stroke::NONE));
         }
     }
@@ -773,7 +776,7 @@ pub fn leyenda(ui: &mut Ui, color: Color32, texto: &str, m: Muestra) {
     let pal = tema::p();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        let (r, _) = ui.allocate_exact_size(Vec2::new(18.0, 14.0), Sense::hover());
+        let (r, _) = ui.allocate_exact_size(Vec2::new(18.0, 12.0), Sense::hover());
         dibujar_muestra(ui.painter(), r, color, m);
         ui.label(egui::RichText::new(texto).size(12.0).color(pal.texto));
     });

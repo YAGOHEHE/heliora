@@ -885,6 +885,7 @@ impl Fig3D {
     fn dibujar(&mut self, ui: &mut egui::Ui, alto: f32) -> (Option<Accion>, Rect) {
         let mut accion = None;
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
             ui.label(egui::RichText::new(&self.titulo).strong());
             ui.label(egui::RichText::new("arrastra para girar · rueda para acercar").small().color(tema::p().texto_2));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

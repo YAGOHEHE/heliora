@@ -408,8 +408,8 @@ impl Mantenimiento {
             }
         });
         ui::grupo_cinta(ui, "Informe", |ui| {
-            let r = ui::boton_cinta(ui, Icono::Informe, "Informe O&M", false).on_hover_text("Indicadores, hallazgos, órdenes y calendario de 30 días en HTML y PDF");
-            if r.clicked() && informe_libre {
+            let r = ui.add_enabled_ui(informe_libre, |ui| ui::boton_cinta(ui, Icono::Informe, "Informe O&M", false)).inner.on_hover_text("Indicadores, hallazgos, órdenes y calendario de 30 días en HTML y PDF");
+            if r.clicked() {
                 self.cinta_pendiente = Some(AccionCinta::Informe);
             }
         });
@@ -672,7 +672,7 @@ impl Mantenimiento {
         let ordenes: Vec<Value> = self.estado["ordenes"].as_array().cloned().unwrap_or_default();
         if plan_abierto {
             if matches!(self.pestana, Pestana::Tablero | Pestana::Ordenes) {
-                egui::SidePanel::right("panel_mant").default_width(360.0).width_range(280.0..=720.0).resizable(true).frame(egui::Frame::new().fill(pal.panel).stroke(egui::Stroke::new(1.0_f32, pal.linea))).show_inside(ui, |ui| {
+                egui::SidePanel::right("panel_mant").default_width(360.0).width_range(360.0..=720.0).resizable(true).frame(egui::Frame::new().fill(pal.panel).stroke(egui::Stroke::new(1.0_f32, pal.linea))).show_inside(ui, |ui| {
                     ui.add_enabled_ui(!ocupado, |ui| {
                         if self.pestana == Pestana::Tablero {
                             self.panel_calendario(ui, &ordenes, &mut acciones);

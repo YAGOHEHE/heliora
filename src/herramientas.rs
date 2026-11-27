@@ -461,7 +461,7 @@ impl Pagina {
         let mut calcular = atajo && !self.ocupada();
         let lateral = ui.available_width() >= ui::ANCHO_APILAR;
         if lateral {
-            egui::SidePanel::right(egui::Id::new(("parametros_lateral", &self.modulo))).default_width(360.0).width_range(280.0..=720.0).resizable(true).frame(egui::Frame::new().fill(pal.panel)).show_inside(ui, |ui| {
+            egui::SidePanel::right(egui::Id::new(("parametros_lateral", &self.modulo))).default_width(360.0).width_range(360.0..=720.0).resizable(true).frame(egui::Frame::new().fill(pal.panel)).show_inside(ui, |ui| {
                 let r = ui.max_rect();
                 ui.painter().line_segment([r.left_top(), r.left_bottom()], Stroke::new(1.0_f32, pal.borde));
                 self.panel_derecho(ui, h, motor, c, inf.as_ref().zip(vista.as_ref()), &mut calcular);
@@ -769,7 +769,8 @@ impl Pagina {
         if self.seleccion.is_none() {
             self.seleccion = propias.first().map(|h| h.id.clone());
         }
-        ui::grupo_cinta(ui, "Herramientas", |ui| {
+        let grupo = if self.modulo == "mantenimiento" { "Análisis" } else { "Herramientas" };
+        ui::grupo_cinta(ui, grupo, |ui| {
             for h in &propias {
                 let (icono, corto) = presentacion(&h.id, &h.titulo);
                 if ui::boton_cinta(ui, icono, &corto, self.seleccion.as_deref() == Some(h.id.as_str())).on_hover_text(&h.titulo).clicked() {
@@ -821,6 +822,11 @@ impl Pagina {
                 }
             })
             .collect()
+    }
+
+    /// Valor de un parámetro con el que se calculó el último informe de una herramienta.
+    pub fn valor_calculado(&self, id: &str, param: &str) -> Option<&str> {
+        self.calculados.get(id)?.get(param).map(String::as_str)
     }
 
     /// Herramienta abierta.
@@ -1431,7 +1437,7 @@ fn dibujar_confusion(ui: &mut egui::Ui, inf: &Informe, v: &Vista, i: usize) {
             if !nota.is_empty() {
                 ui.label(egui::RichText::new(nota).size(12.0).color(pal.texto_2));
             }
-            let alto = (ui.available_height() - 44.0).max(120.0);
+            let alto = (ui.available_height() - if v.pie.is_empty() { 44.0 } else { 78.0 }).max(120.0);
             match mapa_confusion(col, fil) {
                 Some(m) => m.mostrar(ui, alto),
                 None => tabla(ui, col, fil),
@@ -1441,8 +1447,8 @@ fn dibujar_confusion(ui: &mut egui::Ui, inf: &Informe, v: &Vista, i: usize) {
                 ui.spacing_mut().item_spacing.x = 14.0;
                 ui::leyenda(ui, pal.series[1], "aciertos (diagonal)", ui::Muestra::Cuadrado);
                 ui::leyenda(ui, pal.series[0], "confusiones", ui::Muestra::Cuadrado);
-                pie(ui, v);
             });
+            ui.horizontal(|ui| pie(ui, v));
         },
     );
 }

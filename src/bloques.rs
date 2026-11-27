@@ -1190,7 +1190,7 @@ impl Editor {
             ui.painter().line_segment([r.right_top(), r.right_bottom()], Stroke::new(1.0_f32, pal.linea));
             self.panel_libreria(ui);
         });
-        egui::SidePanel::right("panel_inspector").default_width(360.0).width_range(280.0..=720.0).resizable(true).frame(egui::Frame::new().fill(pal.panel)).show_inside(ui, |ui| {
+        egui::SidePanel::right("panel_inspector").default_width(360.0).width_range(360.0..=720.0).resizable(true).frame(egui::Frame::new().fill(pal.panel)).show_inside(ui, |ui| {
             let r = ui.max_rect();
             ui.painter().line_segment([r.left_top(), r.left_bottom()], Stroke::new(1.0_f32, pal.linea));
             egui::TopBottomPanel::bottom("panel_diagnostico").default_height(140.0).height_range(80.0..=480.0).resizable(true).frame(egui::Frame::new().fill(pal.panel)).show_inside(ui, |ui| {

@@ -1430,7 +1430,8 @@ impl App {
                 v
             })
             .unwrap_or_default();
-        let subtitulo = if kpis.is_empty() { "Indicadores de la planta a partir de una tabla SCADA." } else { "Indicadores calculados a partir de la tabla scada." };
+        let tabla = self.mantenimiento.analisis.valor_calculado("mt_kpi", "tabla").unwrap_or("").to_string();
+        let subtitulo = if kpis.is_empty() || tabla.is_empty() { "Indicadores de la planta a partir de una tabla SCADA.".to_string() } else { format!("Indicadores calculados a partir de la tabla {tabla}.") };
         tarjeta_portada(
             ui,
             "Planta · datos SCADA",
@@ -1440,7 +1441,7 @@ impl App {
                 }
             },
             |ui| {
-                ui.label(egui::RichText::new(subtitulo).size(13.0).color(tema::p().texto_2));
+                ui.label(egui::RichText::new(&subtitulo).size(13.0).color(tema::p().texto_2));
             },
             |ui| {
                 if kpis.is_empty() {
@@ -1565,7 +1566,6 @@ impl App {
     fn lista_ordenes(&mut self, ui: &mut egui::Ui) {
         let pal = tema::p();
         let hoy = self.mantenimiento.hoy.clone();
-        let t = &self.mantenimiento.tablero;
         let mut ir_plan = false;
         let mut ir_tablero = false;
         let mut abrir: Option<String> = None;
@@ -1579,11 +1579,26 @@ impl App {
             });
         });
         ui.add_space(14.0);
-        let estados = [("vencidas", t["vencidas"].as_u64(), "vencidas"), ("30", t["proximas_30"].as_u64(), "en 30 días"), ("pendientes", t["pendientes"].as_u64(), "pendientes")];
+        // Órdenes abiertas del tipo elegido: de ellas salen a la vez las cuentas de los chips y la lista
+        let limite = sumar_dias(&hoy, 30);
+        let en_estado = |o: &Value, clave: &str| {
+            let f = o["fecha"].as_str().unwrap_or("");
+            match clave {
+                "vencidas" => f < hoy.as_str(),
+                "30" => f >= hoy.as_str() && limite.as_deref().is_none_or(|l| f <= l),
+                _ => true,
+            }
+        };
+        let abiertas: Vec<Value> = self.mantenimiento.estado["ordenes"]
+            .as_array()
+            .map(|a| a.iter().filter(|o| o["estado"].as_str() != Some("cerrada")).filter(|o| self.tipo_inicio.as_deref().is_none_or(|t| tipo_orden(o["nombre"].as_str().unwrap_or("")) == t)).cloned().collect())
+            .unwrap_or_default();
+        let hay_plan = !self.mantenimiento.estado.is_null();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            for (clave, n, texto) in estados {
-                if let Some(n) = n {
+            for (clave, texto) in [("vencidas", "vencidas"), ("30", "en 30 días"), ("pendientes", "pendientes")] {
+                if hay_plan {
+                    let n = abiertas.iter().filter(|o| en_estado(o, clave)).count();
                     if ui::chip(ui, &format!("{n} {texto}"), self.filtro_inicio == clave).clicked() {
                         self.filtro_inicio = clave.to_string();
                     }
@@ -1609,20 +1624,7 @@ impl App {
             });
         });
         ui.add_space(10.0);
-        let limite = sumar_dias(&hoy, 30);
-        let mut ordenes: Vec<&Value> = self.mantenimiento.estado["ordenes"]
-            .as_array()
-            .map(|a| a.iter().filter(|o| o["estado"].as_str() != Some("cerrada")).collect())
-            .unwrap_or_default();
-        ordenes.retain(|o| {
-            let f = o["fecha"].as_str().unwrap_or("");
-            let por_estado = match self.filtro_inicio.as_str() {
-                "vencidas" => f < hoy.as_str(),
-                "30" => f >= hoy.as_str() && limite.as_deref().is_none_or(|l| f <= l),
-                _ => true,
-            };
-            por_estado && self.tipo_inicio.as_deref().is_none_or(|t| tipo_orden(o["nombre"].as_str().unwrap_or("")) == t)
-        });
+        let mut ordenes: Vec<&Value> = abiertas.iter().filter(|o| en_estado(o, &self.filtro_inicio)).collect();
         if self.orden_inicio_equipo {
             ordenes.sort_by(|a, b| a["equipo"].as_str().cmp(&b["equipo"].as_str()).then(a["fecha"].as_str().cmp(&b["fecha"].as_str())));
         } else {
@@ -2185,6 +2187,15 @@ fn dibujar_vista_previa(p: egui::Painter, r: Rect, v: &bloques::VistaPrevia) {
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    #[test]
+    fn sumar_dias_cruza_meses_anios_y_bisiestos() {
+        assert_eq!(sumar_dias("2026-11-26", 30).as_deref(), Some("2026-12-26"));
+        assert_eq!(sumar_dias("2026-12-15", 30).as_deref(), Some("2027-01-14"));
+        assert_eq!(sumar_dias("2028-02-28", 1).as_deref(), Some("2028-02-29"));
+        assert_eq!(sumar_dias("2027-02-28", 1).as_deref(), Some("2027-03-01"));
+        assert_eq!(sumar_dias("fecha", 1), None);
+    }
 
     #[test]
     fn la_escritura_atomica_reemplaza_y_no_deja_temporales() {
